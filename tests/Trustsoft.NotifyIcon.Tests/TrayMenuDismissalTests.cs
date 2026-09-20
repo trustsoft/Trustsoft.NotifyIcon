@@ -715,6 +715,9 @@ internal static class TrayMenuScenario
 /// </remarks>
 internal static class Win32TestInput
 {
+    /// <summary><c>MOUSEEVENTF_MOVE</c>: the mouse moved by the given deltas.</summary>
+    private const uint MouseEventMove = 0x0001;
+
     /// <summary><c>MOUSEEVENTF_RIGHTDOWN</c>: the right button is pressed.</summary>
     private const uint MouseEventRightDown = 0x0008;
 
@@ -736,6 +739,38 @@ internal static class Win32TestInput
 
         /// <summary>The y coordinate, in physical screen pixels.</summary>
         public int Y;
+    }
+
+    /// <summary>
+    /// Gives this process the right to set the foreground window, by nudging the cursor one pixel and
+    /// putting it straight back.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Measured, and load-bearing for the menu proofs.</b> Windows grants
+    /// <c>SetForegroundWindow</c> only to a process that is the foreground process, was started by it,
+    /// or <em>received the last input event</em> - and the anchor being foreground is what gives a
+    /// popup its owner (measured: without it the popup is ownerless and an outside click leaves it
+    /// open). A real user moves the pointer to the tray icon before right-clicking, so the production
+    /// path always has that right; a test that <em>injects a message</em> into the host window does
+    /// not, and it does not control what owns the desktop's foreground at that moment either.
+    /// Measured on this machine: with the taskbar (<c>Shell_TrayWnd</c>) as the foreground window the
+    /// plain call is refused (<c>granted=False</c>), and one synthetic mouse move - the smallest input
+    /// event there is, with no button pressed and the cursor left exactly where it started - makes the
+    /// same call succeed (<c>granted=True</c>). That is why this moves the mouse rather than clicking:
+    /// nothing is activated and nothing on the desktop changes.
+    /// </para>
+    /// <para>
+    /// The right, once held, stays with this process until some other input event occurs, so a test
+    /// class that grants it before every open also frees the rest of the process's run from the
+    /// desktop's ambient state - which matters because a refused foreground call is a measurement
+    /// artifact here, not a product defect.
+    /// </para>
+    /// </remarks>
+    internal static void GrantLastInputToThisProcess()
+    {
+        mouse_event(MouseEventMove, 1, 0, 0, IntPtr.Zero);
+        mouse_event(MouseEventMove, unchecked((uint)-1), 0, 0, IntPtr.Zero);
     }
 
     /// <summary>Moves the cursor to a screen point.</summary>

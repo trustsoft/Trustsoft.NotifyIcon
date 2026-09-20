@@ -18,6 +18,11 @@ Working today:
 - `TrayIcon`, a `FrameworkElement` that registers an icon (`NIM_ADD` followed by
   `NIM_SETVERSION(NOTIFYICON_VERSION_4)`), shows a tooltip, replaces the displayed image, removes
   the icon and disposes cleanly.
+- Click and mouse events on the icon: four click types, each with a cancellable `Preview` twin.
+- `TrayIcon.ContextMenu`, the consumer's own menu, opened at the icon by a right click and dismissed
+  by an outside click — from a process that owns no visible window, because the popup is owned by a
+  1×1 activating anchor window placed at the icon. Placement reads the shell's own icon rectangle
+  and the monitor's effective DPI, so the physical-to-offset scale factor is applied exactly once.
 - `TrayIcon.IconSource` accepts any WPF `ImageSource` (bitmap or vector drawing) and converts it to
   an `HICON` with strict GDI handle ownership. **Repeated replacement is flat for a bitmap source**
   (measured: 0 GDI objects across 50 replacements) **and for a frozen vector source**: a frozen
@@ -45,8 +50,14 @@ distinct images an application hands over, not to the number of replacements. No
 
 **Planned, not implemented** — nothing below exists yet, so do not code against it:
 
-- click and mouse events on the icon, and a context menu (S02, S04);
-- balloon notifications and icon/tooltip sizing for DPI and shell settings (S03);
+- click and mouse events on the icon are implemented (S02); the `ContextMenu` a right click opens
+  at the icon is implemented (S03) — assign one and it opens, or set `MenuActivation="None"` to keep
+  the right click a pure event;
+- balloon notifications (S04) — and, explicitly **not delivered in S03**, icon and tooltip sizing for
+  DPI and shell settings: the menu placement reads the monitor's DPI, but the `HICON` is still
+  rasterized at a fixed 16 px, so a display at a scale above 100 % gets a correctly placed menu with
+  a scaled-up icon. That is the named follow-up the milestone roadmap carries, not a silently dropped
+  clause;
 - explorer-restart recovery and the process-exit fallback (S05);
 - XAML usage, `NotifyIcon`-style markup support (S06);
 - NuGet packaging, licence metadata and the CI release pipeline (S07).

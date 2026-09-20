@@ -1,8 +1,10 @@
+using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using System.Windows;
 using Xunit;
 
 namespace Trustsoft.NotifyIcon.Tests;
@@ -185,6 +187,63 @@ public class PackagePurityTests
             $"The public surface must be exactly {{{string.Join(", ", expected.Select(type => type.FullName))}}}. "
             + $"Observed exported types: [{observedNames}] (compiler-generated types excluded). "
             + "If a new public type is intended, that is a deliberate API decision: update this test and D002/D010 together.");
+    }
+
+    /// <summary>
+    /// <see cref="TrayIcon"/> exposes a real <c>ContextMenu</c> dependency property and the
+    /// deliberate decision behind it - the exported type set did not grow for it - is recorded rather
+    /// than assumed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the S03-to-S06 half of the surface contract, and it is asserted here rather than only
+    /// in the boundary tests because of <em>what was not added</em>: the natural way to give an
+    /// element a menu is to introduce a menu type of one's own, and that type would become public API
+    /// this project has to support for the rest of its life (D002/D010/D015). WPF's own
+    /// <see cref="System.Windows.Controls.ContextMenu"/> is used directly instead, so the exported
+    /// type set stays exactly the five documented types and only the property appears on
+    /// <see cref="TrayIcon"/>.
+    /// </para>
+    /// <para>
+    /// The property is asserted to be owned by <see cref="TrayIcon"/> with a <see langword="null"/>
+    /// default and a resolvable <see cref="DependencyPropertyDescriptor"/>, because those three are
+    /// what makes it usable from C# <em>and</em> from a resource dictionary - the shape S06 resolves
+    /// a <c>StaticResource</c> holding a menu through.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type()
+    {
+        DependencyProperty property = TrayIcon.ContextMenuProperty;
+
+        Assert.Equal("ContextMenu", property.Name);
+        Assert.Equal(typeof(System.Windows.Controls.ContextMenu), property.PropertyType);
+        Assert.Equal(typeof(TrayIcon), property.OwnerType);
+        Assert.False(property.ReadOnly);
+        Assert.Null(property.DefaultMetadata.DefaultValue);
+        Assert.Null(property.GetMetadata(typeof(TrayIcon)).DefaultValue);
+
+        // What a markup consumer looks through, exactly as the S01 property contract test does.
+        DependencyPropertyDescriptor? descriptor = DependencyPropertyDescriptor.FromProperty(property, typeof(TrayIcon));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal("ContextMenu", descriptor!.Name);
+        Assert.Equal(property, descriptor.DependencyProperty);
+
+        // The property is a member of TrayIcon, and no type was added to carry it: the observed set
+        // still has to be exactly the five documented types.
+        Type[] exported = [.. typeof(TrayIcon).Assembly.GetExportedTypes().Where(type => !IsCompilerGenerated(type))];
+
+        Assert.Equal(
+            new[]
+            {
+                typeof(TrayIcon),
+                typeof(TrayIconException),
+                typeof(TrayErrorEventArgs),
+                typeof(TrayIconClickEventArgs),
+                typeof(TrayMenuActivation),
+            }.OrderBy(type => type.FullName, StringComparer.Ordinal),
+            exported.OrderBy(type => type.FullName, StringComparer.Ordinal));
     }
 
     /// <summary>

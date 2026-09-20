@@ -71,6 +71,15 @@ internal sealed class GdiShellApi : IShellApi
         _real.ShellNotifyIconGetRect(ref identifier, out rectangle);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Delegated to the real export: reading the pointer position touches no notification-area state
+    /// and creates no visible artifact, so delegating keeps the real call on the code path a menu
+    /// placement actually uses. No test in this class is about the cursor - the placement fallback is
+    /// scripted through <see cref="FakeShellApi"/> - so the real value is the honest default.
+    /// </remarks>
+    public bool GetCursorPosition(out int x, out int y) => _real.GetCursorPosition(out x, out y);
+
+    /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         IntPtr icon = _real.CreateIconIndirect(ref iconInfo);

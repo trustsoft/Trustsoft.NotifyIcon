@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -90,7 +92,9 @@ namespace Trustsoft.NotifyIcon;
 /// <b>Disposal is mandatory and idempotent.</b> A tray-resident application must remove its icon
 /// before it exits, or an orphaned icon stays in the notification area until the user hovers over
 /// it. <see cref="Dispose"/> removes the registration, destroys the retained handle and destroys
-/// the host window. S05 layers the process-exit fallback on top of it.
+/// the host window - and it also closes an open <see cref="ContextMenu"/> and destroys the anchor
+/// window that menu was owned by, in that order, so nothing this element owns outlives it. S05
+/// layers the process-exit fallback on top of it.
 /// </para>
 /// </remarks>
 public class TrayIcon : FrameworkElement, IDisposable
@@ -324,6 +328,33 @@ public class TrayIcon : FrameworkElement, IDisposable
         new PropertyMetadata(TrayMenuActivation.RightClick));
 
     /// <summary>
+    /// Identifies the <see cref="ContextMenu"/> dependency property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Registered with no change callback for the same reason <see cref="MenuActivationProperty"/> is:
+    /// assigning a menu applies nothing eagerly - it is read when a right click arrives, and a
+    /// notification-area click opens it there. Assigning it therefore does not go through
+    /// <c>SetPropertyOnDispatcher</c> either; see <see cref="ContextMenu"/> for the full contract.
+    /// </para>
+    /// <para>
+    /// <b>A library-owned property, not the inherited <see cref="FrameworkElement.ContextMenu"/>.</b>
+    /// The base framework property is the same type with the same default, but it belongs to
+    /// <c>ContextMenuService</c>'s automatic opening, which is driven by input events this element
+    /// never receives. Reusing it would give an instance two independently settable menu values -
+    /// one resolved by markup or a binding through the base property and one read by the click path -
+    /// and nothing would say which one a consumer set. Owning the property makes "the menu" a single
+    /// unambiguous value on this type, which is what the click path reads and what S06 resolves from
+    /// a resource dictionary.
+    /// </para>
+    /// </remarks>
+    public static new readonly DependencyProperty ContextMenuProperty = DependencyProperty.Register(
+        nameof(ContextMenu),
+        typeof(ContextMenu),
+        typeof(TrayIcon),
+        new PropertyMetadata(null));
+
+    /// <summary>
     /// The number of times a failed runtime shell call is retried before the failure is surfaced.
     /// </summary>
     /// <remarks>
@@ -390,6 +421,58 @@ public class TrayIcon : FrameworkElement, IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// The menu currently opened by this instance, or <see langword="null"/> when none is open.
+    /// </summary>
+    /// <remarks>
+    /// The same instance the consumer assigned, held so a second right click while it is open is a
+    /// no-op instead of a second open, and so disposal can close what is showing. It is instance
+    /// state on purpose: no menu state is static or process-wide, which is what lets S05's recovery
+    /// path re-create the icon without disturbing a menu (D027).
+    /// </remarks>
+    private ContextMenu? _openMenu;
+
+    /// <summary>
+    /// The anchor window the open menu is owned by, or <see langword="null"/> when none is open.
+    /// </summary>
+    /// <remarks>
+    /// Created when the menu opens and destroyed when it closes, so a consumer that never opens a
+    /// menu never owns this window. It is deliberately not the tray host: the host is the shell
+    /// registration window, and the measurement in M001/S03 showed a popup owned by it is ownerless
+    /// and undismissable (<see cref="TrayMenuAnchorWindow"/>).
+    /// </remarks>
+    private TrayMenuAnchorWindow? _menuAnchor;
+
+    /// <summary>
+    /// The <c>HRESULT</c> of the last <see cref="IShellApi.ShellNotifyIconGetRect"/> call made for
+    /// menu placement, or <see langword="null"/> when the call was not attempted because the icon
+    /// was not registered.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It exists because
+    /// the documented fallback ("the shell could not locate the icon, so the cursor is used") is
+    /// otherwise indistinguishable from an implementation that never asked the shell at all.
+    /// </remarks>
+    private int? _lastIconRectHresult;
+
+    /// <summary>
+    /// Whether the last menu placement had to fall back to the cursor position.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    private bool _lastMenuPlacementUsedCursorFallback;
+
+    /// <summary>
+    /// The monitor reader the menu path asks for the icon monitor's work area and DPI, created on
+    /// first use and injectable for verification.
+    /// </summary>
+    /// <remarks>
+    /// Lazily created, like the host window: an instance that never opens a menu never asks a
+    /// monitor question, so it never allocates the reader either. The verification constructor
+    /// supplies one whose answers are scripted, which is the only way to exercise the documented
+    /// "the DPI could not be read" degradation on a machine whose monitors do answer.
+    /// </remarks>
+    private MonitorInfoProvider? _monitorInfo;
+
+    /// <summary>
     /// Set while a property is being put back to its previous value, so the revert itself does not
     /// re-enter the change callbacks.
     /// </summary>
@@ -446,11 +529,34 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// </remarks>
     /// <exception cref="ArgumentNullException"><paramref name="shell"/> is <see langword="null"/>.</exception>
     internal TrayIcon(IShellApi shell, Dispatcher? dispatcher)
+        : this(shell, dispatcher, monitorInfo: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance over the given seam, dispatcher and monitor reader.
+    /// </summary>
+    /// <param name="shell">The seam to talk to the shell through.</param>
+    /// <param name="dispatcher">The dispatcher that owns the instance, or <see langword="null"/>; see the overload above.</param>
+    /// <param name="monitorInfo">
+    /// The monitor reader the menu path uses, or <see langword="null"/> to create the real one when
+    /// a menu is first opened.
+    /// </param>
+    /// <remarks>
+    /// Exists for verification (D009), exactly as the shell seam constructor does: the menu path's
+    /// degradation rules ("no work area" and "no DPI reading") describe what happens when Windows
+    /// cannot answer, which is not a state a test can produce on a live machine - so the reader is a
+    /// seam too, and the tests script its answers. The shipped public surface is still the
+    /// parameterless constructor.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="shell"/> is <see langword="null"/>.</exception>
+    internal TrayIcon(IShellApi shell, Dispatcher? dispatcher, MonitorInfoProvider? monitorInfo)
     {
         ArgumentNullException.ThrowIfNull(shell);
 
         _shell = shell;
         _dispatcher = dispatcher;
+        _monitorInfo = monitorInfo;
     }
 
     /// <summary>
@@ -644,6 +750,14 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// changes nothing that has already been applied to the shell and applies nothing eagerly.
     /// </para>
     /// <para>
+    /// <b><see cref="TrayMenuActivation.None"/> opens nothing and raises everything.</b> The two
+    /// right-click routed events - <see cref="PreviewTrayRightClickEvent"/> and
+    /// <see cref="TrayRightClickEvent"/> - are raised exactly as they are for any other value,
+    /// because they report what the shell delivered rather than what the library decided to do about
+    /// it. With <see cref="TrayMenuActivation.None"/> the click simply has no library-provided
+    /// default action, which is the opt-out a consumer that opens its own UI needs.
+    /// </para>
+    /// <para>
     /// <b>Deliberately not marshalled.</b> The other three dependency properties route their
     /// assignments through <c>SetPropertyOnDispatcher</c> because an assignment has to reach the
     /// shell on the thread that owns the host window (R015). This property applies nothing, so
@@ -659,6 +773,58 @@ public class TrayIcon : FrameworkElement, IDisposable
     {
         get => (TrayMenuActivation)GetValue(MenuActivationProperty);
         set => SetValue(MenuActivationProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the context menu a right click opens, or <see langword="null"/> (the default)
+    /// for "this element has no menu".
+    /// </summary>
+    /// <value>
+    /// The consumer's own <see cref="System.Windows.Controls.ContextMenu"/> instance, never a copy of
+    /// it. <see langword="null"/> by default, and assignable from markup (a <c>StaticResource</c>
+    /// resolves through a dependency property, which is why this is one).
+    /// </value>
+    /// <remarks>
+    /// <para>
+    /// <b>It is the caller's menu, and it is never cloned (R009).</b> The instance assigned here is
+    /// the instance that opens: a clone would break the caller's <c>DataContext</c>, its item
+    /// templates and every handler it wired up, because a clone has none of them. Nothing in this
+    /// library inspects, re-parents or mutates the menu's items; the menu's data context, its
+    /// handlers and its items are entirely the caller's business.
+    /// </para>
+    /// <para>
+    /// <b>The value is read when a right click arrives.</b> Assigning a different menu between two
+    /// clicks takes effect on the next click, and assigning <see langword="null"/> means "no menu":
+    /// a right click then raises the click events and does nothing else, which is exactly the
+    /// behaviour of an element that never mentions a menu at all.
+    /// </para>
+    /// <para>
+    /// <b>Opened when <see cref="MenuActivation"/> is
+    /// <see cref="TrayMenuActivation.RightClick"/> (the default).</b> With
+    /// <see cref="TrayMenuActivation.None"/>, or when a Preview handler cancels the click, or when a
+    /// main-event handler marks it handled, an assigned menu stays closed and the click is report
+    /// only. The library never opens a menu the consumer asked it not to open.
+    /// </para>
+    /// <para>
+    /// <b>Assigning one instance to two <see cref="TrayIcon"/> instances is unsupported.</b> A WPF
+    /// <see cref="System.Windows.Controls.ContextMenu"/> can only be open in one place at a time, so
+    /// the second icon that tries to open it while the first has it open does not get a second
+    /// popup - it reports a failure through <c>TrayError</c> and opens nothing, leaving the first
+    /// icon's menu exactly where it is. Give each icon its own menu instance.
+    /// </para>
+    /// <para>
+    /// <b>Not marshalled, unlike <see cref="IconSource"/>, <see cref="ToolTipText"/> and
+    /// <see cref="Visible"/>.</b> Those three apply something to the shell, which must happen on the
+    /// thread that owns the host window (D019). This property applies nothing: it is read at click
+    /// time on the dispatcher thread that received the click, so there is no work to marshal. Markup
+    /// assigns it directly, and WPF's own thread check governs an assignment from a foreign thread,
+    /// exactly as it does for <see cref="MenuActivation"/>.
+    /// </para>
+    /// </remarks>
+    public new ContextMenu? ContextMenu
+    {
+        get => (ContextMenu?)GetValue(ContextMenuProperty);
+        set => SetValue(ContextMenuProperty, value);
     }
 
     /// <summary>
@@ -685,6 +851,64 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// <value>The <c>HWND</c> of the hidden top-level host window.</value>
     /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
     internal IntPtr HostHandle => _host?.Handle ?? IntPtr.Zero;
+
+    /// <summary>
+    /// Gets the icon id this instance registered with the shell, or <c>0</c> before the first
+    /// registration.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is the id the
+    /// shell reports in <c>HIWORD(lParam)</c> of a callback, so a test that injects a callback has to
+    /// encode this value - and reading it from the instance is what keeps the test from guessing.
+    /// </remarks>
+    internal uint IconId => _iconId;
+
+    /// <summary>
+    /// Gets the menu currently opened by this instance, or <see langword="null"/> when none is open.
+    /// </summary>
+    /// <value>The consumer's own menu instance while it is showing.</value>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is what a test
+    /// reads to assert "the instance that opened is the instance that was assigned" and "disposal
+    /// left nothing open", without reaching into the menu's own <c>IsOpen</c>.
+    /// </remarks>
+    internal ContextMenu? OpenContextMenu => _openMenu;
+
+    /// <summary>
+    /// Gets a value indicating whether a menu opened by this instance is currently showing.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    internal bool IsMenuOpen => _openMenu is not null;
+
+    /// <summary>
+    /// Gets the handle of the anchor window the open menu is owned by, or
+    /// <see cref="IntPtr.Zero"/> when no menu is open.
+    /// </summary>
+    /// <value>The 1x1 <c>WS_POPUP</c> window the popup's owner relationship runs through.</value>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It turns the
+    /// dismissal contract into an identity assertion - the popup's <c>GW_OWNER</c> must be this
+    /// handle - and lets a test assert that the window is gone once the menu closed.
+    /// </remarks>
+    internal IntPtr MenuAnchorHandle => _menuAnchor?.Handle ?? IntPtr.Zero;
+
+    /// <summary>
+    /// Gets the <c>HRESULT</c> the last menu placement got from
+    /// <see cref="IShellApi.ShellNotifyIconGetRect"/>, or <see langword="null"/> when that call was
+    /// not made because the icon was not registered.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is the recorded
+    /// reason of the documented fallback: a test can tell "the shell refused to locate the icon"
+    /// (a code) from "there was nothing to locate" (no call) from "the shell answered" (<c>0</c>).
+    /// </remarks>
+    internal int? LastIconRectHresult => _lastIconRectHresult;
+
+    /// <summary>
+    /// Gets a value indicating whether the last menu placement fell back to the cursor position.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    internal bool LastMenuPlacementUsedCursorFallback => _lastMenuPlacementUsedCursorFallback;
 
     /// <summary>
     /// Removes the icon from the notification area, releases the retained <c>HICON</c> and
@@ -1230,16 +1454,17 @@ public class TrayIcon : FrameworkElement, IDisposable
     }
 
     /// <summary>
-    /// Releases everything this instance owns: the registration, the retained <c>HICON</c> and the
-    /// host window.
+    /// Releases everything this instance owns: the registration, the retained <c>HICON</c>, an open
+    /// context menu and its anchor window, and the host window.
     /// </summary>
     /// <remarks>
     /// Runs on the owning dispatcher thread (see <see cref="Dispose"/>). The order matters: the
     /// shell is told about the removal while the host window still exists, the icon handle is
-    /// released next, and the window is destroyed last. The retained handle is released even when
-    /// the shell refused the removal: disposal is terminal, so holding on to the handle could only
-    /// leak it, and the registration it belonged to is being abandoned either way. Every field is
-    /// cleared before this method returns, so a second disposal cannot repeat any of it.
+    /// released next, the menu and its anchor are torn down, and the window is destroyed last. The
+    /// retained handle is released even when the shell refused the removal: disposal is terminal, so
+    /// holding on to the handle could only leak it, and the registration it belonged to is being
+    /// abandoned either way. Every field is cleared before this method returns, so a second disposal
+    /// cannot repeat any of it.
     /// </remarks>
     private void DisposeCore()
     {
@@ -1263,6 +1488,12 @@ public class TrayIcon : FrameworkElement, IDisposable
         }
 
         ReleaseRegisteredIcon();
+
+        // The menu goes before the host window is destroyed: the popup is owned by the anchor rather
+        // than by the host, but the click that opened it arrived through the host, so the resource
+        // that can still call back into this instance is released while the shell registration that
+        // named it is already gone - the same ordering discipline the three steps above follow.
+        CloseMenu();
 
         _host = null;
         host?.Dispose();
@@ -1374,8 +1605,8 @@ public class TrayIcon : FrameworkElement, IDisposable
     }
 
     /// <summary>
-    /// Runs the default action for a click that still stands. This is the seam the context-menu
-    /// behaviour overrides.
+    /// Runs the default action for a click that still stands: a right click with a menu assigned and
+    /// menu activation enabled opens that menu at the icon.
     /// </summary>
     /// <param name="e">
     /// The arguments of the main click event that was just raised - the button, the click count and
@@ -1383,23 +1614,467 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// </param>
     /// <remarks>
     /// <para>
-    /// <b>Deliberately narrow.</b> The click events report what the user did and
-    /// <see cref="MenuActivation"/> says which click should activate the menu; acting on that -
-    /// opening the element's context menu at a rectangle taken from the shell - belongs to the class
-    /// that owns the menu. This hook exists so that behaviour has one documented place to attach,
-    /// instead of the element subscribing to its own public event (which would make the library's
-    /// default action look like a consumer of itself and would depend on subscription order).
+    /// <b>Deliberately narrow (D027).</b> The click events report what the user did,
+    /// <see cref="MenuActivation"/> says which click should activate the menu, and
+    /// <see cref="ContextMenu"/> says what to open; this method is the whole of the policy. It reads
+    /// the property at click time, so a menu assigned or replaced between two clicks takes effect on
+    /// the next one, and the state it keeps lives on this instance - never in a static field - so a
+    /// recovery path can re-create the icon without disturbing a menu.
     /// </para>
     /// <para>
-    /// Called on the thread that owns the host window, after the main event has been raised, and only
-    /// while the click still stands: not when a Preview handler cancelled it, and not when a handler
-    /// of the main event marked it <see cref="RoutedEventArgs.Handled"/> - WPF's own convention, where
-    /// a handled input event means the default action is not wanted. An override must call
-    /// <c>base.OnTrayClick(e)</c> so behaviour added to this class later keeps working.
+    /// <b>Called on the thread that owns the host window</b>, after the main event has been raised,
+    /// and only while the click still stands: not when a Preview handler cancelled it, and not when a
+    /// handler of the main event marked it <see cref="RoutedEventArgs.Handled"/> - WPF's own
+    /// convention, where a handled input event means the default action is not wanted. That is why
+    /// cancellation needs no code here: by the time this method runs, the click has already survived
+    /// both suppression points. An override must call <c>base.OnTrayClick(e)</c> so behaviour added
+    /// to this class keeps working.
     /// </para>
     /// </remarks>
     protected virtual void OnTrayClick(TrayIconClickEventArgs e)
     {
+        // No base call: this *is* the base implementation of the hook - the element's only ancestor
+        // is FrameworkElement, which has no such member. The contract for a subclass that overrides
+        // this method is the opposite one: it must call base.OnTrayClick(e) so this behaviour keeps
+        // running for the clicks it does not handle itself.
+        if (e.Button != MouseButton.Right || e.ClickCount != 1)
+        {
+            // The default action is a right-click menu. A click count of 2 is the shell reporting a
+            // double click, and acting on it would rebuild the anchor underneath the menu the first
+            // click already opened; left and middle clicks have no library-provided action at all.
+            return;
+        }
+
+        ContextMenu? menu = ContextMenu;
+
+        if (menu is null)
+        {
+            // No menu assigned, which is the property's default: the click stays a pure event,
+            // exactly as it was before this element had a menu property. A consumer that draws its
+            // own UI depends on that.
+            return;
+        }
+
+        if (MenuActivation != TrayMenuActivation.RightClick)
+        {
+            // Read here, on every click, rather than cached in a field: assigning the value between
+            // two clicks must take effect on the next one. This check sits after the events were
+            // raised, so MenuActivation = None still reports the click - it only declines the action.
+            return;
+        }
+
+        if (_openMenu is not null)
+        {
+            // This instance already has a menu open. A second open would fight the live popup for
+            // its placement target and build a second anchor window under the first one, and the
+            // consumer's click means "it is already showing" rather than "show it twice".
+            return;
+        }
+
+        OpenMenu(menu);
+    }
+
+    /// <summary>
+    /// Opens <paramref name="menu"/> at the icon, owned by a freshly created anchor window, and
+    /// records it as this instance's open menu.
+    /// </summary>
+    /// <param name="menu">
+    /// The consumer's own menu, already known to be assigned, activated and not currently open by
+    /// this instance.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>Already on the owning dispatcher thread, on purpose.</b> <see cref="OnTrayClick"/> runs
+    /// inside the host window's message sink, which is the thread that owns this instance's
+    /// dispatcher, so nothing here goes through <c>ApplyOnDispatcher</c>: marshalling the open would
+    /// only post it back to the queue the click is already running on, and a WPF popup cannot be
+    /// opened from inside the pump that is opening it.
+    /// </para>
+    /// <para>
+    /// <b>The placement chain, in this order.</b> The anchor rectangle comes from the shell
+    /// (<see cref="IShellApi.ShellNotifyIconGetRect"/>), never from the click's own anchor point,
+    /// which the shell documents as undefined for <c>WM_CONTEXTMENU</c> (D028); the monitor that owns
+    /// that rectangle supplies the work area and the DPI (D026);
+    /// <see cref="TrayIconPlacement"/> turns the three into the offset the placement engine consumes,
+    /// applying the physical-to-DIP scale exactly once; and <see cref="TrayMenuAnchorWindow"/> is what
+    /// gives the popup a real owner, which is what makes an outside click dismiss it.
+    /// </para>
+    /// <para>
+    /// <b>It never throws, and it never leaves a half-open menu behind.</b> A click arrives as a
+    /// window message, so an exception escaping this method would not be a report - it would be a
+    /// crash in a window procedure. Any failure - no anchor at all, a refused foreground call, a WPF
+    /// refusal to open - therefore tears down whatever was built and is reported through the same
+    /// channels the runtime shell failures use: one trace line and the <see cref="TrayError"/> event.
+    /// </para>
+    /// </remarks>
+    private void OpenMenu(ContextMenu menu)
+    {
+        if (_disposed)
+        {
+            // Disposal already tore the icon down; an open menu here would outlive its owner.
+            return;
+        }
+
+        if (menu.IsOpen)
+        {
+            // The menu is open somewhere this instance does not own it: another TrayIcon was given
+            // the same instance, or the consumer opened it itself. A WPF ContextMenu can only be
+            // open in one place at a time, so adopting it - reassigning its placement target to this
+            // icon's anchor - would move a live popup away from the owner that can still tear it
+            // down, and leave that owner holding a window this instance is about to destroy.
+            ReportMenuFailure(
+                win32ErrorCode: 0,
+                "The assigned ContextMenu is already open, so this TrayIcon cannot adopt it. "
+                + "Use one ContextMenu instance per TrayIcon; the menu that is showing is left untouched.");
+            return;
+        }
+
+        TrayMenuAnchorWindow? anchor = null;
+
+        try
+        {
+            NativeRect iconRect = ResolveIconRectangle();
+            MonitorInfoProvider monitorInfo = _monitorInfo ??= new MonitorInfoProvider();
+            NativeRect workArea = ResolveWorkArea(monitorInfo, iconRect);
+            uint dpi = ResolveDpi(monitorInfo, iconRect);
+
+            double scale = TrayIconPlacement.ScaleFor(dpi);
+            Point offset = TrayIconPlacement.Calculate(iconRect, workArea, dpi);
+
+            // The anchor window sits at the same physical point the offset names. That point is the
+            // icon rectangle's bottom-left already clamped into the work area, and the two are kept
+            // consistent by construction: the offset is this point divided by the scale, so
+            // multiplying it back - which is exactly what the placement engine does - lands on the
+            // anchor. Rounding is safe here because the value is a screen coordinate in pixels and
+            // the identity above is the definition, not an approximation of it (the offset itself is
+            // deliberately left fractional; see TrayIconPlacement).
+            int anchorX = (int)Math.Round(offset.X * scale, MidpointRounding.AwayFromZero);
+            int anchorY = (int)Math.Round(offset.Y * scale, MidpointRounding.AwayFromZero);
+
+            anchor = new TrayMenuAnchorWindow(anchorX, anchorY);
+
+            // The foreground call is load-bearing rather than etiquette: measured, the identical
+            // anchor with this call omitted produces an ownerless popup that an outside click does
+            // not close. Its result is therefore surfaced in the trace line instead of assumed.
+            bool foreground = anchor.MakeForeground();
+
+            menu.PlacementTarget = anchor.RootVisual;
+            menu.Placement = PlacementMode.AbsolutePoint;
+            menu.HorizontalOffset = offset.X;
+            menu.VerticalOffset = offset.Y;
+            menu.Closed += OnContextMenuClosed;
+
+            // The fields are assigned before the menu is opened, so a Closed event raised while
+            // IsOpen is being set still finds the state it has to tear down.
+            _menuAnchor = anchor;
+            _openMenu = menu;
+
+            menu.IsOpen = true;
+
+            // Ownership moved to the fields; the handler must not also dispose it.
+            anchor = null;
+
+            NotifyIconTrace.Verbose(string.Create(
+                CultureInfo.InvariantCulture,
+                $"TrayIcon menu opened: iconRect=({iconRect.left},{iconRect.top},{iconRect.right},{iconRect.bottom}) source={(_lastMenuPlacementUsedCursorFallback ? "cursor" : "shell")} workArea=({workArea.left},{workArea.top},{workArea.right},{workArea.bottom}) dpi={dpi} scale={scale:0.###} offset=({offset.X:0.###},{offset.Y:0.###}) anchor=0x{MenuAnchorHandle.ToInt64():X} foreground={foreground}."));
+        }
+        catch (Exception ex)
+        {
+            // Everything, deliberately: this runs on the window-procedure path, where an escaping
+            // exception is a process failure rather than a report. Whatever was built is torn down
+            // first so the fields and the window list are left clean, and the failure is then
+            // reported through the channels a windowless consumer can actually observe.
+            TearDownMenu();
+            anchor?.Dispose();
+
+            // A TrayIconException already carries the operation, the code and the sentence that
+            // explains the failure (the cursor path throws one when it has no anchor at all); anything
+            // else is reported with a code of 0, because no Win32 call produced it.
+            if (ex is TrayIconException trayException)
+            {
+                ReportMenuFailure(trayException);
+            }
+            else
+            {
+                ReportMenuFailure(
+                    win32ErrorCode: 0,
+                    $"The context menu could not be opened: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolves the physical rectangle the menu is anchored to.
+    /// </summary>
+    /// <returns>
+    /// The shell's icon rectangle in physical screen pixels, or - when the shell cannot produce one -
+    /// a 1x1 rectangle whose bottom-left corner is the cursor position.
+    /// </returns>
+    /// <exception cref="TrayIconException">
+    /// Neither the shell nor the cursor could produce a rectangle, so there is no legal anchor. The
+    /// caller reports it; it never reaches a consumer as an exception.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>The cursor fallback is the designed answer, not a degradation to hide.</b> A failing
+    /// <c>Shell_NotifyIconGetRect</c> is a legitimate, expected outcome - the icon may be in the
+    /// notification-area overflow flyout or hidden - and the click's own anchor point is officially
+    /// undefined for <c>WM_CONTEXTMENU</c> (D028), so it is never a substitute. A menu that opened at
+    /// the cursor is better than a menu that did not open, and both the reason and the fact of the
+    /// fallback are recorded (a Verbose line plus <see cref="LastIconRectHresult"/> and
+    /// <see cref="LastMenuPlacementUsedCursorFallback"/>) rather than inferred.
+    /// </para>
+    /// <para>
+    /// The fallback rectangle is the 1x1 rectangle whose <em>bottom-left</em> is the cursor, because
+    /// that is the corner <see cref="TrayIconPlacement"/> anchors on: handing it the cursor and
+    /// nothing else keeps this conversion in one place instead of teaching the calculator a second
+    /// input shape.
+    /// </para>
+    /// </remarks>
+    private NativeRect ResolveIconRectangle()
+    {
+        TrayMessageWindow? host = _host;
+
+        if (_registered && host is not null)
+        {
+            // The identifier names the icon the way the shell locates it: the registration window
+            // and the icon id, with guidItem left null (see NOTIFYICONIDENTIFIER.Create).
+            var identifier = NOTIFYICONIDENTIFIER.Create(host.Handle, _iconId);
+            int hresult = _shell.ShellNotifyIconGetRect(ref identifier, out NativeRect rectangle);
+
+            _lastIconRectHresult = hresult;
+
+            if (hresult == 0 && !rectangle.IsEmpty)
+            {
+                _lastMenuPlacementUsedCursorFallback = false;
+                return rectangle;
+            }
+
+            NotifyIconTrace.Verbose(string.Create(
+                CultureInfo.InvariantCulture,
+                $"TrayIcon could not read the icon rectangle from the shell (HRESULT 0x{hresult:X8}, rectangle empty={rectangle.IsEmpty}); falling back to the cursor position, because the version-4 right-click anchor is undefined."));
+        }
+        else
+        {
+            // Not registered: Shell_NotifyIconGetRect has nothing to locate, so the call is not made
+            // at all. Recorded as "not attempted" rather than as a code, because there is no HRESULT.
+            _lastIconRectHresult = null;
+
+            NotifyIconTrace.Verbose(
+                "TrayIcon is not registered, so the shell has no icon rectangle to report; falling back to the cursor position.");
+        }
+
+        _lastMenuPlacementUsedCursorFallback = true;
+
+        if (!_shell.GetCursorPosition(out int cursorX, out int cursorY))
+        {
+            // No shell rectangle and no cursor: there is no legal anchor left, and opening a menu at
+            // the origin is the measured "no visible popup" failure rather than a fallback. Reported
+            // by the caller through the trace channel and TrayError, never as an exception here.
+            int error = _shell.GetLastError();
+
+            throw new TrayIconException(
+                TrayIconException.OperationOpenMenu,
+                error,
+                "Neither the shell's icon rectangle nor the cursor position could be read, so there is no anchor to place the menu at.");
+        }
+
+        return new NativeRect
+        {
+            left = cursorX,
+            top = cursorY - 1,
+            right = cursorX + 1,
+            bottom = cursorY,
+        };
+    }
+
+    /// <summary>
+    /// Reads the work area of the monitor that owns <paramref name="iconRect"/>.
+    /// </summary>
+    /// <param name="monitorInfo">The monitor reader to ask.</param>
+    /// <param name="iconRect">The icon rectangle whose monitor is wanted.</param>
+    /// <returns>
+    /// The monitor's work area, or the icon rectangle's own bounding area when the reading fails.
+    /// </returns>
+    /// <remarks>
+    /// The fallback is the icon rectangle itself, which is the smallest area that is guaranteed to
+    /// contain the anchor: the anchor is then clamped to the icon's own bottom-left, so a menu still
+    /// opens at the icon with a legal offset instead of being placed against a guess about the screen
+    /// it is on. Degrading is deliberate - this runs on the click path - and the Verbose line names
+    /// the recorded error so a support log can tell a defaulted work area from a real one.
+    /// </remarks>
+    private static NativeRect ResolveWorkArea(MonitorInfoProvider monitorInfo, NativeRect iconRect)
+    {
+        if (monitorInfo.TryGetWorkArea(iconRect, out NativeRect workArea))
+        {
+            return workArea;
+        }
+
+        NotifyIconTrace.Verbose(string.Create(
+            CultureInfo.InvariantCulture,
+            $"TrayIcon could not read the monitor work area (status 0x{monitorInfo.LastError:X8}); using the icon rectangle ({iconRect.left},{iconRect.top},{iconRect.right},{iconRect.bottom}) as the placement boundary."));
+
+        return iconRect;
+    }
+
+    /// <summary>
+    /// Reads the effective DPI of the monitor that owns <paramref name="iconRect"/>.
+    /// </summary>
+    /// <param name="monitorInfo">The monitor reader to ask.</param>
+    /// <param name="iconRect">The icon rectangle whose monitor is wanted.</param>
+    /// <returns>The monitor's effective DPI, or <see cref="TrayIconPlacement.UserDefaultScreenDpi"/> (96) when the reading fails.</returns>
+    /// <remarks>
+    /// 96 is 100 % - the scale at which the offset equals the physical point - so a missing reading
+    /// produces a menu placed as if the display had no scaling rather than no menu at all. The
+    /// library never has a second source for this value: <c>GetDpiForWindow</c> would answer for the
+    /// anchor window rather than for the monitor the icon is on (D026), and the process's own
+    /// awareness is not the library's to set.
+    /// </remarks>
+    private static uint ResolveDpi(MonitorInfoProvider monitorInfo, NativeRect iconRect)
+    {
+        if (monitorInfo.TryGetDpi(iconRect, out uint dpi))
+        {
+            return dpi;
+        }
+
+        NotifyIconTrace.Verbose(string.Create(
+            CultureInfo.InvariantCulture,
+            $"TrayIcon could not read the monitor DPI (status 0x{monitorInfo.LastError:X8}); using USER_DEFAULT_SCREEN_DPI ({TrayIconPlacement.UserDefaultScreenDpi}) for the menu placement."));
+
+        return TrayIconPlacement.UserDefaultScreenDpi;
+    }
+
+    /// <summary>
+    /// The menu's <c>Closed</c> handler: the teardown that runs whenever the menu stops showing, by
+    /// whatever route - an outside click, Escape, an item being chosen, another window taking
+    /// activation, or this instance's own disposal.
+    /// </summary>
+    /// <param name="sender">The menu; unused, because the state lives on this instance.</param>
+    /// <param name="e">The event payload; unused.</param>
+    private void OnContextMenuClosed(object? sender, RoutedEventArgs e) => TearDownMenu();
+
+    /// <summary>
+    /// Releases the open menu's anchor window and clears the menu state. Idempotent, and safe to
+    /// call when nothing is open.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The unsubscribe comes first.</b> Teardown clears the menu's placement target and destroys
+    /// the anchor, and it must not be re-entered by a close that its own work happens to raise; the
+    /// same reasoning is why the fields are cleared before the anchor is destroyed - a second call
+    /// then finds nothing and does nothing, which is what makes <see cref="CloseMenu"/> safe in
+    /// disposal and in the failure path of the open itself.
+    /// </para>
+    /// <para>
+    /// <b>The placement target is detached before the anchor is destroyed.</b> The popup is owned by
+    /// the anchor window, and a menu still pointing at a destroyed visual is exactly the half-torn
+    /// state this method exists to prevent - the order mirrors the anchor's own "release what can be
+    /// called, then destroy" discipline.
+    /// </para>
+    /// </remarks>
+    private void TearDownMenu()
+    {
+        ContextMenu? menu = _openMenu;
+        TrayMenuAnchorWindow? anchor = _menuAnchor;
+
+        if (menu is null && anchor is null)
+        {
+            // Nothing is open: a close that arrived twice, or the first teardown of an instance that
+            // never opened a menu. Not traced, so disposal of a menu-less icon stays silent.
+            return;
+        }
+
+        if (menu is not null)
+        {
+            menu.Closed -= OnContextMenuClosed;
+        }
+
+        _openMenu = null;
+        _menuAnchor = null;
+
+        if (menu is not null)
+        {
+            menu.PlacementTarget = null;
+        }
+
+        // Read before disposal: a disposed anchor reports no handle, and the line has to name the
+        // window that was destroyed rather than 0x0.
+        IntPtr destroyedAnchor = anchor?.Handle ?? IntPtr.Zero;
+
+        anchor?.Dispose();
+
+        NotifyIconTrace.Verbose(string.Create(
+            CultureInfo.InvariantCulture,
+            $"TrayIcon menu closed; anchor 0x{destroyedAnchor.ToInt64():X} destroyed."));
+    }
+
+    /// <summary>
+    /// Closes the open menu if it is showing, then tears the menu state down.
+    /// </summary>
+    /// <remarks>
+    /// Closing raises <c>Closed</c>, which runs <see cref="TearDownMenu"/> - so the user-facing route
+    /// and the disposal route are the same code. The explicit teardown afterwards is the idempotent
+    /// remainder: a menu that was open but whose close raised nothing must still not leave its anchor
+    /// window behind.
+    /// </remarks>
+    private void CloseMenu()
+    {
+        ContextMenu? menu = _openMenu;
+
+        if (menu is not null && menu.IsOpen)
+        {
+            menu.IsOpen = false;
+        }
+
+        TearDownMenu();
+    }
+
+    /// <summary>
+    /// Reports a failure of the menu path through the same channels a runtime shell failure uses, and
+    /// never throws.
+    /// </summary>
+    /// <param name="win32ErrorCode">
+    /// The Win32 error code behind the failure, or <c>0</c> when no Win32 call failed.
+    /// </param>
+    /// <param name="detail">The English sentence that says what could not be done.</param>
+    /// <remarks>
+    /// No retry: the runtime shell policy retries once because the shell occasionally refuses an
+    /// update while Explorer is busy, and none of those reasons apply to a menu that could not be
+    /// placed. The failure is still reported twice, exactly as the shell failures are - one trace
+    /// line for the log and one routed event for the consumer - because a windowless host has no
+    /// third channel. <c>Retried</c> is <see langword="false"/>: nothing was retried.
+    /// </remarks>
+    private void ReportMenuFailure(int win32ErrorCode, string detail)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(detail);
+
+        ReportMenuFailure(new TrayIconException(TrayIconException.OperationOpenMenu, win32ErrorCode, detail));
+    }
+
+    /// <summary>
+    /// Reports a menu failure whose exception already describes it, so the code the failing call
+    /// reported reaches the consumer unaltered.
+    /// </summary>
+    /// <param name="exception">
+    /// The failure, carrying the operation, the code and the detail sentence.
+    /// </param>
+    /// <remarks>
+    /// The two overloads exist so a failure discovered by the menu path's own code is reported as the
+    /// same <see cref="TrayIconException"/> the trace line and the event both name - rebuilding an
+    /// equivalent exception instead would drop the error code the call actually produced, which is the
+    /// one number a support log needs.
+    /// </remarks>
+    private void ReportMenuFailure(TrayIconException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        NotifyIconTrace.Error(exception.Operation, exception.Win32ErrorCode, exception, retried: false);
+        RaiseEvent(new TrayErrorEventArgs(
+            exception.Operation,
+            exception.Win32ErrorCode,
+            exception,
+            retried: false,
+            TrayErrorEvent));
     }
 
     /// <summary>

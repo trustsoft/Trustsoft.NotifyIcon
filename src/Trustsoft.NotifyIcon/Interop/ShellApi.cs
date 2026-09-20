@@ -87,6 +87,20 @@ internal sealed class ShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    public bool GetCursorPosition(out int x, out int y)
+    {
+        bool result = GetCursorPosNative(out int pointX, out int pointY);
+        CaptureLastError();
+
+        // The out parameters are always assigned, including on failure: C#'s definite-assignment
+        // rule forces something, and a documented (0, 0) is a better answer than an uninitialised
+        // coordinate a caller might place a menu at. The boolean is the contract.
+        x = result ? pointX : 0;
+        y = result ? pointY : 0;
+        return result;
+    }
+
+    /// <inheritdoc />
     public uint RegisterWindowMessage(string message)
     {
         uint result = RegisterWindowMessageW(message);
@@ -176,6 +190,17 @@ internal sealed class ShellApi : IShellApi
     /// </remarks>
     [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconGetRect", SetLastError = true, ExactSpelling = true)]
     private static extern int ShellNotifyIconGetRectNative(ref NOTIFYICONIDENTIFIER identifier, out NativeRect iconLocation);
+
+    /// <remarks>
+    /// <c>user32.dll</c> exports one unsuffixed <c>GetCursorPos</c> that writes a <c>POINT</c>
+    /// (<c>LONG x; LONG y;</c>) - a blittable pair of 4-byte signed values, so it is marshalled as
+    /// two <c>out int</c> parameters rather than as a one-field struct that would exist only to be
+    /// unwrapped again. The coordinates are physical screen pixels in the virtual-screen coordinate
+    /// space, negative on a monitor left of or above the primary one.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "GetCursorPos", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPosNative(out int pointX, out int pointY);
 
     /// <remarks>
     /// <c>user32.dll</c> exports the wide variant as <c>RegisterWindowMessageW</c>; the

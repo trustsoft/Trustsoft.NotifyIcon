@@ -30,6 +30,13 @@ internal enum ShellOperation
     /// <summary><see cref="IShellApi.RegisterWindowMessage"/>.</summary>
     RegisterWindowMessage,
 
+    /// <summary>
+    /// <see cref="IShellApi.GetCursorPosition"/>. It can be scripted to fail like the
+    /// <see langword="bool"/>-returning members do, and its captured reason is reported through
+    /// <see cref="IShellApi.GetLastError"/> exactly as the real call reports it.
+    /// </summary>
+    GetCursorPosition,
+
     /// <summary><see cref="IShellApi.CreateIconIndirect"/>.</summary>
     CreateIconIndirect,
 
@@ -115,6 +122,25 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             0,
             0,
             $"hWnd=0x{identifier.hWnd.ToInt64():X}; uID={identifier.uID}; cbSize={identifier.cbSize}; hr=0x{result:X8}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.GetCursorPosition"/> call.</summary>
+    /// <param name="x">The x coordinate the call reported.</param>
+    /// <param name="y">The y coordinate the call reported.</param>
+    /// <param name="result">Whether the reading succeeded.</param>
+    /// <returns>The recorded call.</returns>
+    /// <remarks>
+    /// The coordinates are carried in <see cref="Detail"/> rather than in <see cref="Flags"/>, which
+    /// is reserved for flag and selector values - the placement assertions read the values from
+    /// the returned coordinates instead. The success flag is part of the line so a failed scripted
+    /// call is distinguishable from a successful one at <c>(0, 0)</c>.
+    /// </remarks>
+    internal static ShellCall FromGetCursorPosition(int x, int y, bool result) =>
+        new(
+            nameof(IShellApi.GetCursorPosition),
+            0,
+            0,
+            $"result={result}; x={x}; y={y}",
             Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.RegisterWindowMessage"/> call.</summary>
@@ -397,6 +423,21 @@ internal sealed class FakeShellApi : IShellApi
     internal NativeRect GetRectRectangle { get; set; }
 
     /// <summary>
+    /// Gets or sets the x coordinate <see cref="IShellApi.GetCursorPosition"/> reports when it
+    /// succeeds.
+    /// </summary>
+    /// <remarks>
+    /// The default is an arbitrary but non-zero point: a scripted cursor position is how the
+    /// placement fallback is asserted, and a coordinate of <c>0</c> in both axes could not be
+    /// distinguished from "the value was never set". Set both coordinates explicitly in a test
+    /// that asserts where a cursor-anchored menu landed.
+    /// </remarks>
+    internal int CursorPositionX { get; set; } = 640;
+
+    /// <summary>Gets or sets the y coordinate <see cref="IShellApi.GetCursorPosition"/> reports when it succeeds.</summary>
+    internal int CursorPositionY { get; set; } = 480;
+
+    /// <summary>
     /// Gets or sets a value the fake writes into the caller's identifier through the <c>ref</c>
     /// parameter. <see langword="null"/> (the default) writes nothing, which is what the real
     /// <c>const</c> input does.
@@ -492,6 +533,30 @@ internal sealed class FakeShellApi : IShellApi
 
         rectangle = GetRectRectangle;
         return 0;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after the failure decision rather than before, because the line carries the values
+    /// the call produced - including the scripted failure, which is reported as
+    /// <c>result=False</c> with both coordinates zero. Nothing here can throw, so recording late
+    /// cannot lose a call from the log.
+    /// </remarks>
+    public bool GetCursorPosition(out int x, out int y)
+    {
+        if (ConsumeFailure(ShellOperation.GetCursorPosition))
+        {
+            x = 0;
+            y = 0;
+            _calls.Add(ShellCall.FromGetCursorPosition(x, y, result: false));
+            return false;
+        }
+
+        _lastError = 0;
+        x = CursorPositionX;
+        y = CursorPositionY;
+        _calls.Add(ShellCall.FromGetCursorPosition(x, y, result: true));
+        return true;
     }
 
     /// <inheritdoc />

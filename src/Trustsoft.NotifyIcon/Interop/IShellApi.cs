@@ -131,6 +131,39 @@ internal interface IShellApi
     int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle);
 
     /// <summary>
+    /// Calls <c>GetCursorPos</c> to read the cursor position in physical screen pixels.
+    /// </summary>
+    /// <param name="x">Receives the x coordinate, which is negative on a monitor left of the primary one.</param>
+    /// <param name="y">Receives the y coordinate, which is negative on a monitor above the primary one.</param>
+    /// <returns><see langword="true"/> when the position was read; <see langword="false"/> on
+    /// failure, in which case <see cref="GetLastError"/> carries the reason.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is on the seam rather than in the assertion-only Win32 helper class.</b> The
+    /// menu path calls it in production, not from a test, and D013 confines <c>Win32</c> to
+    /// non-shell helpers that only assertions need - so a call the library's own runtime depends on
+    /// belongs here, where it is one of the recorded and scriptable members. It is also the only
+    /// member whose value a test can choose: the placement fallback is proven by scripting a cursor
+    /// position and observing where the menu anchor landed, which a real cursor could not provide
+    /// without moving the developer's pointer and reading back a coordinate the test does not own.
+    /// </para>
+    /// <para>
+    /// <b>It is not a shell call.</b> Neither <c>shell32</c> nor the icon state is involved: this is
+    /// a plain window-manager query, and it is the one place that answers "where is the pointer"
+    /// for the documented fallback. A failing reading is a legitimate outcome (a session with no
+    /// input station, for instance) that the caller must survive rather than propagate - see
+    /// <c>TrayIcon</c>'s menu path.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S03</b> (<c>TrayIcon</c>'s menu placement: when
+    /// <see cref="ShellNotifyIconGetRect"/> cannot locate the icon, the cursor is the documented
+    /// fallback anchor, because the version-4 <c>WM_CONTEXTMENU</c> anchor is officially
+    /// undefined).
+    /// </para>
+    /// </remarks>
+    bool GetCursorPosition(out int x, out int y);
+
+    /// <summary>
     /// Calls <c>RegisterWindowMessageW</c> to obtain a session-unique message id for the given
     /// message name.
     /// </summary>

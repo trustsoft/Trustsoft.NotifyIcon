@@ -75,6 +75,19 @@ public sealed class TrayIconException : Exception
     public const string OperationConvertIcon = "ConvertIcon";
 
     /// <summary>
+    /// The <see cref="Operation"/> value for the context menu a right click should have opened -
+    /// resolving its anchor, creating the window that owns the popup, or placing the menu.
+    /// </summary>
+    /// <remarks>
+    /// The menu path is not a <c>Shell_NotifyIcon</c> operation, but it is part of the same public
+    /// contract: a windowless consumer watches <c>TrayError</c>, and "the right click produced no
+    /// menu" is exactly the kind of failure it needs to be able to branch on. The Win32 error code
+    /// of a menu failure is therefore usually <c>0</c> - no Win32 call was involved - and the detail
+    /// sentence on the exception says what could not be done.
+    /// </remarks>
+    public const string OperationOpenMenu = "OpenMenu";
+
+    /// <summary>
     /// Initializes a new instance for a failure that needs no extra explanation.
     /// </summary>
     /// <param name="operation">The failing operation; one of the <c>Operation*</c> constants.</param>

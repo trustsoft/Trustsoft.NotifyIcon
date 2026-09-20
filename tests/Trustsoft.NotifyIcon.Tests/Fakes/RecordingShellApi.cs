@@ -78,6 +78,19 @@ internal sealed class RecordingShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after delegation, like <see cref="ShellNotifyIconGetRect"/>, because the line
+    /// carries the coordinates the call produced and a failed reading is a normal outcome rather
+    /// than an exception.
+    /// </remarks>
+    public bool GetCursorPosition(out int x, out int y)
+    {
+        bool result = _inner.GetCursorPosition(out x, out y);
+        _calls.Add(ShellCall.FromGetCursorPosition(x, y, result));
+        return result;
+    }
+
+    /// <inheritdoc />
     public uint RegisterWindowMessage(string message)
     {
         _calls.Add(ShellCall.FromRegisterWindowMessage(message));

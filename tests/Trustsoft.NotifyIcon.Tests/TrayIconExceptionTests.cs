@@ -69,8 +69,8 @@ public sealed class TrayIconExceptionTests
     }
 
     /// <summary>
-    /// The seven operation names are the string values a consumer branches on. They are pinned
-    /// here so a rename is a deliberate edit, and so an eighth operation cannot appear without
+    /// The eight operation names are the string values a consumer branches on. They are pinned
+    /// here so a rename is a deliberate edit, and so a ninth operation cannot appear without
     /// this list being updated.
     /// </summary>
     [Fact]
@@ -82,6 +82,7 @@ public sealed class TrayIconExceptionTests
             "OperationConvertIcon=ConvertIcon",
             "OperationLoadIcon=LoadIcon",
             "OperationModify=Modify",
+            "OperationOpenMenu=OpenMenu",
             "OperationRegisterMessage=RegisterMessage",
             "OperationRemove=Remove",
             "OperationSetVersion=SetVersion",
