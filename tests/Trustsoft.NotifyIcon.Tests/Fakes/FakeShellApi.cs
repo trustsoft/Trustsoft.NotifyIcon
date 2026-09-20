@@ -63,12 +63,17 @@ internal enum ShellOperation
 /// <see cref="FakeShellApi.ShellNotifyIconDataSnapshots"/>,
 /// <see cref="FakeShellApi.RegisteredMessages"/> and the counters instead.
 /// </param>
+/// <param name="ThreadId">
+/// The managed thread id of the caller that made the call, which is the only way to prove the
+/// marshalling contract (R015): a property set from a background thread must reach the seam on the
+/// UI thread, and a test can see that by comparing this value with the dispatcher thread's id.
+/// </param>
 /// <remarks>
 /// The whole point of the record is that the <c>NIM_ADD</c> then
 /// <c>NIM_SETVERSION(4)</c> sequence and the <c>NIF_SHOWTIP</c> bit are observable without a
 /// notification area, without a shell and without poking at the structure by reflection.
 /// </remarks>
-internal readonly record struct ShellCall(string Operation, uint Message, uint Flags, string Detail)
+internal readonly record struct ShellCall(string Operation, uint Message, uint Flags, string Detail, int ThreadId)
 {
     /// <summary>Builds the record for a <see cref="IShellApi.ShellNotifyIcon"/> call.</summary>
     /// <param name="dwMessage">The shell operation code.</param>
@@ -79,13 +84,14 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             nameof(IShellApi.ShellNotifyIcon),
             dwMessage,
             data.uFlags,
-            $"uID={data.uID}; hIcon=0x{data.hIcon.ToInt64():X}; version={data.uTimeoutOrVersion}");
+            $"uID={data.uID}; hIcon=0x{data.hIcon.ToInt64():X}; version={data.uTimeoutOrVersion}",
+            Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.RegisterWindowMessage"/> call.</summary>
     /// <param name="message">The message name that was requested.</param>
     /// <returns>The recorded call.</returns>
     internal static ShellCall FromRegisterWindowMessage(string message) =>
-        new(nameof(IShellApi.RegisterWindowMessage), 0, 0, $"message=\"{message}\"");
+        new(nameof(IShellApi.RegisterWindowMessage), 0, 0, $"message=\"{message}\"", Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.CreateIconIndirect"/> call.</summary>
     /// <param name="iconInfo">The icon description handed to the API.</param>
@@ -95,7 +101,8 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             nameof(IShellApi.CreateIconIndirect),
             0,
             iconInfo.fIcon ? 1u : 0u,
-            $"hbmMask=0x{iconInfo.hbmMask.ToInt64():X}; hbmColor=0x{iconInfo.hbmColor.ToInt64():X}");
+            $"hbmMask=0x{iconInfo.hbmMask.ToInt64():X}; hbmColor=0x{iconInfo.hbmColor.ToInt64():X}",
+            Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPV5HEADER, uint, out IntPtr, IntPtr, uint)"/> call.</summary>
     /// <param name="header">The version-5 header describing the bitmap.</param>
@@ -106,7 +113,8 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             nameof(IShellApi.CreateDIBSection),
             0,
             usage,
-            $"V5 size={header.bV5Size}; width={header.bV5Width}; height={header.bV5Height}; bitCount={header.bV5BitCount}; sizeImage={header.bV5SizeImage}");
+            $"V5 size={header.bV5Size}; width={header.bV5Width}; height={header.bV5Height}; bitCount={header.bV5BitCount}; sizeImage={header.bV5SizeImage}",
+            Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPINFO, uint, out IntPtr, IntPtr, uint)"/> call.</summary>
     /// <param name="bitmapInfo">The version-3 header and colour table describing the bitmap.</param>
@@ -117,32 +125,33 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             nameof(IShellApi.CreateDIBSection),
             0,
             usage,
-            $"V3 size={bitmapInfo.bmiHeader.biSize}; width={bitmapInfo.bmiHeader.biWidth}; height={bitmapInfo.bmiHeader.biHeight}; bitCount={bitmapInfo.bmiHeader.biBitCount}; sizeImage={bitmapInfo.bmiHeader.biSizeImage}");
+            $"V3 size={bitmapInfo.bmiHeader.biSize}; width={bitmapInfo.bmiHeader.biWidth}; height={bitmapInfo.bmiHeader.biHeight}; bitCount={bitmapInfo.bmiHeader.biBitCount}; sizeImage={bitmapInfo.bmiHeader.biSizeImage}",
+            Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.DestroyIcon"/> call.</summary>
     /// <param name="hIcon">The icon handle being released.</param>
     /// <returns>The recorded call.</returns>
     internal static ShellCall FromDestroyIcon(IntPtr hIcon) =>
-        new(nameof(IShellApi.DestroyIcon), 0, 0, $"hIcon=0x{hIcon.ToInt64():X}");
+        new(nameof(IShellApi.DestroyIcon), 0, 0, $"hIcon=0x{hIcon.ToInt64():X}", Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.DeleteObject"/> call.</summary>
     /// <param name="hObject">The GDI object handle being released.</param>
     /// <returns>The recorded call.</returns>
     internal static ShellCall FromDeleteObject(IntPtr hObject) =>
-        new(nameof(IShellApi.DeleteObject), 0, 0, $"hObject=0x{hObject.ToInt64():X}");
+        new(nameof(IShellApi.DeleteObject), 0, 0, $"hObject=0x{hObject.ToInt64():X}", Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.GetGuiResources"/> call.</summary>
     /// <param name="hProcess">The process handle being queried.</param>
     /// <param name="uiFlags">The counter selector.</param>
     /// <returns>The recorded call.</returns>
     internal static ShellCall FromGetGuiResources(IntPtr hProcess, uint uiFlags) =>
-        new(nameof(IShellApi.GetGuiResources), 0, uiFlags, $"hProcess=0x{hProcess.ToInt64():X}");
+        new(nameof(IShellApi.GetGuiResources), 0, uiFlags, $"hProcess=0x{hProcess.ToInt64():X}", Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.GetLastError"/> call.</summary>
     /// <param name="error">The error code that was reported.</param>
     /// <returns>The recorded call.</returns>
     internal static ShellCall FromGetLastError(int error) =>
-        new(nameof(IShellApi.GetLastError), 0, 0, $"error={error}");
+        new(nameof(IShellApi.GetLastError), 0, 0, $"error={error}", Environment.CurrentManagedThreadId);
 }
 
 /// <summary>
@@ -202,6 +211,7 @@ internal sealed class FakeShellApi : IShellApi
     private readonly List<ShellCall> _calls = [];
     private readonly List<NOTIFYICONDATAW> _shellNotifyIconData = [];
     private readonly List<IntPtr> _createdIconHandles = [];
+    private readonly List<IntPtr> _destroyedIconHandles = [];
     private readonly List<string> _registeredMessages = [];
     private readonly List<DibSectionRequest> _dibSections = [];
     private readonly Dictionary<IntPtr, EmulatedDib> _emulatedDibs = [];
@@ -261,6 +271,18 @@ internal sealed class FakeShellApi : IShellApi
 
     /// <summary>Gets the number of successful <see cref="IShellApi.DestroyIcon"/> calls.</summary>
     internal int DestroyedIcons { get; private set; }
+
+    /// <summary>
+    /// Gets the icon handles released by successful <see cref="IShellApi.DestroyIcon"/> calls, in
+    /// call order.
+    /// </summary>
+    /// <remarks>
+    /// A count cannot express which handle was released, and the retain-and-destroy rule is
+    /// exactly a statement about identities: after a <em>failed</em> replacement the previously
+    /// registered handle must still be alive, which a test can only assert by looking for its
+    /// absence here.
+    /// </remarks>
+    internal IReadOnlyList<IntPtr> DestroyedIconHandles => _destroyedIconHandles;
 
     /// <summary>Gets the number of successful <see cref="IShellApi.DeleteObject"/> calls.</summary>
     /// <remarks>
@@ -412,6 +434,7 @@ internal sealed class FakeShellApi : IShellApi
 
         _lastError = 0;
         DestroyedIcons++;
+        _destroyedIconHandles.Add(hIcon);
         return true;
     }
 

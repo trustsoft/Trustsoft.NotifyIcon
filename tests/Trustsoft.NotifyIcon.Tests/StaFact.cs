@@ -1,275 +1,98 @@
-using System.Reflection;
+using System.Diagnostics;
+using System.Windows.Threading;
 using Xunit;
-using Xunit.Abstractions;
-using Xunit.Sdk;
 
 namespace Trustsoft.NotifyIcon.Tests;
 
 /// <summary>
-/// Marks a test as requiring a single-threaded-apartment (<c>STA</c>) thread.
-/// </summary>
-/// <remarks>
-/// A plain <c>[Fact]</c> that touches WPF types throws
-/// <c>InvalidOperationException: The calling thread must be STA</c>. Test bodies marked with
-/// this attribute run on a dedicated <see cref="Thread"/> configured with
-/// <see cref="ApartmentState.STA"/>. The <c>Xunit.StaFact</c> package is intentionally not
-/// referenced: the seam is small, and rolling it by hand keeps the xunit version in the test
-/// graph exactly pinned to the explicitly referenced packages.
-/// </remarks>
-[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
-public sealed class StaFactAttribute : FactAttribute
-{
-    internal static bool IsSupported =>
-        System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
-            System.Runtime.InteropServices.OSPlatform.Windows);
-
-    /// <inheritdoc />
-    public override string? Skip
-    {
-        get => base.Skip ?? (IsSupported ? null : "STA tests require Windows.");
-        set => base.Skip = value;
-    }
-}
-
-/// <summary>
-/// The <see cref="StaFactAttribute"/> equivalent for theories whose data rows also require an
-/// STA thread.
-/// </summary>
-[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
-public sealed class StaTheoryAttribute : TheoryAttribute
-{
-    /// <inheritdoc />
-    public override string? Skip
-    {
-        get => base.Skip ?? (StaFactAttribute.IsSupported ? null : "STA tests require Windows.");
-        set => base.Skip = value;
-    }
-}
-
-/// <summary>
-/// Runs the test method body on a dedicated STA thread while the xunit runner stays on the
-/// original thread.
+/// Marks a test whose body needs a live WPF <see cref="Dispatcher"/> on the thread that runs it -
+/// the tray lifecycle creates a real <c>HwndSource</c> host window, and the marshalling contract
+/// (R015) is defined in terms of <see cref="Dispatcher.CheckAccess"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="Xunit.Sdk.XunitTestInvoker"/> has no virtual <c>RunTestAsync</c>; the supported
-/// derivation point is <see cref="InvokeTestMethodAsync(object)"/>, which receives the already
-/// constructed test class instance. Overriding it lets the whole method body (including
-/// <c>BeforeAfterTest</c> hooks, which execute inside that call) run on the STA thread.
+/// It exists alongside the plain <see cref="StaFactAttribute"/> used elsewhere in this project,
+/// which grants apartment state and nothing more. A test that only needs STA keeps using
+/// <c>[StaFact]</c>; a test that sets a property from a background thread and expects the change
+/// to be driven on the UI thread needs a dispatcher that is actually running, and says so with
+/// this attribute instead of hoping the two are the same thing.
 /// </para>
 /// <para>
-/// The body is started on the STA thread and awaited through a
-/// <see cref="TaskCompletionSource{TResult}"/> so xunit's async continuation does not depend on
-/// the STA thread's message pump, which is never pumped here.
+/// The implementation is the WPF flavour of the STA test harness already referenced by this
+/// project's test csproj (<c>Xunit.StaFact</c>): it runs the test body on an STA thread that owns
+/// a dispatcher and tears that dispatcher down afterwards, which is exactly the environment the
+/// element is designed for. Deriving from it rather than re-implementing a test-case discoverer
+/// keeps the discovery/running plumbing in one vetted place.
+/// </para>
+/// <para>
+/// <b>Message pumping is explicit.</b> A test that hands work to a background thread and waits for
+/// the resulting <c>Dispatcher.Invoke</c> to come back must pump the queue while it waits,
+/// otherwise the dispatcher thread blocks on the background thread and the background thread
+/// blocks on the dispatcher. <see cref="DispatcherHarness.PumpUntil"/> is that pump, and it is
+/// deliberately part of the harness rather than hidden inside the attribute: what is being tested
+/// is that the library marshals, and a test that did not pump would deadlock instead of failing,
+/// which is the least useful outcome.
 /// </para>
 /// </remarks>
-internal sealed class StaTestInvoker : XunitTestInvoker
+public sealed class DispatcherFactAttribute : WpfFactAttribute
 {
-    internal StaTestInvoker(
-        ITest test,
-        IMessageBus messageBus,
-        Type testClass,
-        object?[] constructorArguments,
-        MethodInfo testMethod,
-        object?[]? testMethodArguments,
-        IReadOnlyList<BeforeAfterTestAttribute> beforeAfterAttributes,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-        : base(
-            test,
-            messageBus,
-            testClass,
-            constructorArguments,
-            testMethod,
-            testMethodArguments,
-            beforeAfterAttributes,
-            aggregator,
-            cancellationTokenSource)
-    {
-    }
+}
 
-    /// <inheritdoc />
-    protected override Task<decimal> InvokeTestMethodAsync(object testClassInstance)
+/// <summary>
+/// Dispatcher helpers shared by the tests that exercise cross-thread marshalling.
+/// </summary>
+internal static class DispatcherHarness
+{
+    /// <summary>
+    /// Pumps the current thread's dispatcher queue until <paramref name="condition"/> holds.
+    /// </summary>
+    /// <param name="condition">The condition to wait for; evaluated after every pump tick.</param>
+    /// <param name="timeout">How long to pump before giving up; defaults to ten seconds.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="condition"/> is <see langword="null"/>.</exception>
+    /// <exception cref="TimeoutException">
+    /// The condition never held within the timeout. Raising it here means a broken marshalling path
+    /// fails the test with a clear message instead of hanging the run.
+    /// </exception>
+    /// <remarks>
+    /// A <see cref="DispatcherTimer"/> at <see cref="DispatcherPriority.Background"/> polls the
+    /// condition while <see cref="Dispatcher.PushFrame"/> processes the queue: work posted by
+    /// another thread runs at normal priority first, so the pump observes it promptly without
+    /// busy-waiting on the CPU.
+    /// </remarks>
+    internal static void PumpUntil(Func<bool> condition, TimeSpan? timeout = null)
     {
-        var completionSource = new TaskCompletionSource<decimal>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ArgumentNullException.ThrowIfNull(condition);
 
-        var staThread = new Thread(() =>
+        TimeSpan limit = timeout ?? TimeSpan.FromSeconds(10);
+        var frame = new DispatcherFrame();
+        var stopwatch = Stopwatch.StartNew();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher.CurrentDispatcher)
         {
-            try
-            {
-                // Runs the real method body (and its before/after hooks) on the STA thread.
-                decimal result = base.InvokeTestMethodAsync(testClassInstance).GetAwaiter().GetResult();
-                completionSource.TrySetResult(result);
-            }
-            catch (Exception ex)
-            {
-                completionSource.TrySetException(ex);
-            }
-        })
-        {
-            IsBackground = true,
-            Name = $"stafact:{Test.DisplayName}",
+            Interval = TimeSpan.FromMilliseconds(5),
         };
 
-        staThread.SetApartmentState(ApartmentState.STA);
-        staThread.Start();
+        timer.Tick += (_, _) =>
+        {
+            if (condition() || stopwatch.Elapsed > limit)
+            {
+                frame.Continue = false;
+            }
+        };
 
-        return completionSource.Task;
+        try
+        {
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+        }
+        finally
+        {
+            timer.Stop();
+        }
+
+        if (!condition())
+        {
+            throw new TimeoutException(
+                $"The dispatcher was pumped for {stopwatch.Elapsed.TotalSeconds:F1}s but the condition was never met.");
+        }
     }
-}
-
-/// <summary>
-/// Selects <see cref="StaTestInvoker"/> for test methods annotated with
-/// <see cref="StaFactAttribute"/> or <see cref="StaTheoryAttribute"/>.
-/// </summary>
-public sealed class StaTestFramework : XunitTestFramework
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="StaTestFramework"/> class.
-    /// </summary>
-    /// <param name="messageSink">The message sink the framework reports to.</param>
-    public StaTestFramework(IMessageSink messageSink)
-        : base(messageSink)
-    {
-    }
-}
-
-/// <summary>
-/// Test case that routes STA-marked methods through <see cref="StaTestInvoker"/>.
-/// </summary>
-public sealed class StaTestCase : XunitTestCase
-{
-    /// <summary>
-    /// Initializes a new instance of the <see cref="StaTestCase"/> class for deserialization.
-    /// </summary>
-    [Obsolete("Called by the de-serializer only.", error: false)]
-    public StaTestCase()
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="StaTestCase"/> class.
-    /// </summary>
-    /// <param name="diagnosticMessageSink">The diagnostic message sink.</param>
-    /// <param name="defaultTestMethodDisplayName">The default display name for the test method.</param>
-    /// <param name="testMethodDisplayOptions">Flags controlling how the test method name is displayed.</param>
-    /// <param name="testMethod">The test method.</param>
-    /// <param name="testMethodArguments">Arguments for the test method.</param>
-    public StaTestCase(
-        IMessageSink diagnosticMessageSink,
-        TestMethodDisplay defaultTestMethodDisplayName,
-        TestMethodDisplayOptions testMethodDisplayOptions,
-        ITestMethod testMethod,
-        object?[]? testMethodArguments)
-        : base(diagnosticMessageSink, defaultTestMethodDisplayName, testMethodDisplayOptions, testMethod, testMethodArguments)
-    {
-    }
-
-    /// <inheritdoc />
-    public override Task<RunSummary> RunAsync(
-        IMessageSink diagnosticMessageSink,
-        IMessageBus messageBus,
-        object?[] constructorArguments,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-        => new StaTestCaseRunner(
-            this,
-            DisplayName,
-            messageBus,
-            constructorArguments,
-            aggregator,
-            cancellationTokenSource).RunAsync();
-}
-
-/// <summary>
-/// Runner that forwards STA test cases to <see cref="StaTestInvoker"/>.
-/// </summary>
-internal sealed class StaTestCaseRunner : XunitTestCaseRunner
-{
-    internal StaTestCaseRunner(
-        IXunitTestCase testCase,
-        string displayName,
-        IMessageBus messageBus,
-        object?[] constructorArguments,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-        : base(
-            testCase,
-            displayName,
-            skipReason: null,
-            constructorArguments,
-            testCase.TestMethodArguments,
-            messageBus,
-            aggregator,
-            cancellationTokenSource)
-    {
-    }
-
-    /// <inheritdoc />
-    protected override XunitTestRunner CreateTestRunner(
-        ITest test,
-        IMessageBus messageBus,
-        Type testClass,
-        object?[] constructorArguments,
-        MethodInfo testMethod,
-        object?[]? testMethodArguments,
-        string? skipReason,
-        IReadOnlyList<BeforeAfterTestAttribute> beforeAfterAttributes,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-        => new StaTestRunner(
-            test,
-            messageBus,
-            testClass,
-            constructorArguments,
-            testMethod,
-            testMethodArguments,
-            skipReason,
-            beforeAfterAttributes,
-            aggregator,
-            cancellationTokenSource);
-}
-
-/// <summary>
-/// Runner whose invoker is <see cref="StaTestInvoker"/>.
-/// </summary>
-internal sealed class StaTestRunner : XunitTestRunner
-{
-    internal StaTestRunner(
-        ITest test,
-        IMessageBus messageBus,
-        Type testClass,
-        object?[] constructorArguments,
-        MethodInfo testMethod,
-        object?[]? testMethodArguments,
-        string? skipReason,
-        IReadOnlyList<BeforeAfterTestAttribute> beforeAfterAttributes,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource)
-        : base(
-            test,
-            messageBus,
-            testClass,
-            constructorArguments,
-            testMethod,
-            testMethodArguments,
-            skipReason,
-            beforeAfterAttributes,
-            aggregator,
-            cancellationTokenSource)
-    {
-    }
-
-    /// <inheritdoc />
-    protected override Task<decimal> InvokeTestMethodAsync(ExceptionAggregator aggregator)
-        => new StaTestInvoker(
-            Test,
-            MessageBus,
-            TestClass,
-            ConstructorArguments,
-            TestMethod,
-            TestMethodArguments,
-            BeforeAfterAttributes,
-            aggregator,
-            CancellationTokenSource).RunAsync();
 }
