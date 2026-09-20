@@ -145,7 +145,8 @@ public class PackagePurityTests
     }
 
     /// <summary>
-    /// The exported type set is exactly the three documented public types.
+    /// The exported type set is exactly the documented public types: the element, its two error
+    /// types and the two click types the event surface needs.
     /// </summary>
     /// <remarks>
     /// The interop types (<c>IShellApi</c>, <c>NOTIFYICONDATAW</c>, the Win32 helpers) are internal
@@ -153,9 +154,12 @@ public class PackagePurityTests
     /// them to <c>public</c> compiles, passes every behavioural test and silently enlarges the API
     /// this project will have to support for the rest of its life. The observed list is part of the
     /// message, so a future addition forces a deliberate edit here rather than an accidental pass.
+    /// S02 added <see cref="TrayIconClickEventArgs"/> and <see cref="TrayMenuActivation"/> - the
+    /// args a click handler receives and the value that says whether a right click opens the menu -
+    /// which is exactly the kind of widening this test exists to make deliberate.
     /// </remarks>
     [Fact]
-    public void Public_surface_is_only_TrayIcon_and_its_two_error_types()
+    public void Public_surface_is_only_the_documented_types()
     {
         Type[] exported = typeof(TrayIcon).Assembly.GetExportedTypes();
 
@@ -164,6 +168,8 @@ public class PackagePurityTests
             typeof(TrayIcon),
             typeof(TrayIconException),
             typeof(TrayErrorEventArgs),
+            typeof(TrayIconClickEventArgs),
+            typeof(TrayMenuActivation),
         ];
 
         // Compiler-generated types are filtered explicitly rather than tolerated wholesale: a

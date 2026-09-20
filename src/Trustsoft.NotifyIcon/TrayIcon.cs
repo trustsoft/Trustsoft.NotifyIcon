@@ -45,6 +45,20 @@ namespace Trustsoft.NotifyIcon;
 /// event without terminating the process.
 /// </para>
 /// <para>
+/// <b>Every click arrives as a routed event with a cancellable Preview twin.</b> All four click
+/// types the notification area reports - left, double left, right and middle - are delivered as
+/// <see cref="TrayIconClickEventArgs"/> routed events carrying the button, the click count and the
+/// screen anchor, and each one has a <c>Preview...</c> counterpart registered with
+/// <see cref="RoutingStrategy.Tunnel"/> while the main event bubbles. A Preview handler that sets
+/// <see cref="RoutedEventArgs.Handled"/> suppresses the main event entirely: the framework pairs
+/// Preview with Bubble only for input it stages itself, so a manually raised pair gets the
+/// suppression from the raiser, which is what makes the cancellation real rather than decorative.
+/// The pairs work on this element because a tray icon is standalone - the route has no ancestors
+/// to walk, so "tunnelling" here means invoking the element's own Preview handlers first. A handler
+/// that throws propagates, matching the <see cref="TrayError"/> contract: the library does not
+/// swallow a caller's bug.
+/// </para>
+/// <para>
 /// <b>Property state follows confirmed shell state (D008).</b> Registration state is only
 /// updated in response to a result the shell confirmed, and a property change that could not be
 /// applied at all is reverted before it is reported: a failed registration puts
@@ -134,6 +148,21 @@ public class TrayIcon : FrameworkElement, IDisposable
         typeof(bool),
         typeof(TrayIcon),
         new PropertyMetadata(false, OnVisibleChanged));
+
+    /// <summary>
+    /// Identifies the <see cref="MenuActivation"/> dependency property.
+    /// </summary>
+    /// <remarks>
+    /// Registered with no change callback, because nothing is applied when the value is assigned:
+    /// it is read at right-click time by the code that decides whether to open the menu. Unlike the
+    /// three properties above, this one also deliberately does <em>not</em> go through
+    /// <c>SetPropertyOnDispatcher</c> - see <see cref="MenuActivation"/> for why.
+    /// </remarks>
+    public static readonly DependencyProperty MenuActivationProperty = DependencyProperty.Register(
+        nameof(MenuActivation),
+        typeof(TrayMenuActivation),
+        typeof(TrayIcon),
+        new PropertyMetadata(TrayMenuActivation.RightClick));
 
     /// <summary>
     /// The number of times a failed runtime shell call is retried before the failure is surfaced.
@@ -356,6 +385,34 @@ public class TrayIcon : FrameworkElement, IDisposable
     {
         get => (bool)GetValue(VisibleProperty);
         set => SetPropertyOnDispatcher(VisibleProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets which click activates the icon's context menu.
+    /// </summary>
+    /// <value><see cref="TrayMenuActivation.RightClick"/> by default.</value>
+    /// <remarks>
+    /// <para>
+    /// The value is read when a click arrives, so a click is always reported as an event and this
+    /// property only decides whether the element should open the menu in response. Assigning it
+    /// changes nothing that has already been applied to the shell and applies nothing eagerly.
+    /// </para>
+    /// <para>
+    /// <b>Deliberately not marshalled.</b> The other three dependency properties route their
+    /// assignments through <c>SetPropertyOnDispatcher</c> because an assignment has to reach the
+    /// shell on the thread that owns the host window (R015). This property applies nothing, so
+    /// there is no work to place on that thread; copying the wrapper by reflex would only add a
+    /// marshalling step that carries no change. Markup assigns it directly
+    /// (<c>MenuActivation="None"</c>), and WPF evaluates markup on the owning thread, so the
+    /// intended usage needs no wrapper at all. An assignment from a foreign thread is not
+    /// marshalled either: WPF's own thread check refuses it, exactly as it does for any other
+    /// dependency property.
+    /// </para>
+    /// </remarks>
+    public TrayMenuActivation MenuActivation
+    {
+        get => (TrayMenuActivation)GetValue(MenuActivationProperty);
+        set => SetValue(MenuActivationProperty, value);
     }
 
     /// <summary>

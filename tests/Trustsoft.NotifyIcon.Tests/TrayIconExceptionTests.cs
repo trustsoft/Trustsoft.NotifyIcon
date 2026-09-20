@@ -143,7 +143,10 @@ public sealed class TrayIconExceptionTests
     /// </summary>
     /// <remarks>
     /// The later purity task tightens this to an exact set including <c>TrayIcon</c>; at this point
-    /// the lifecycle type does not exist yet, so the relationship asserted is "subset".
+    /// the lifecycle type does not exist yet, so the relationship asserted is "subset". S02/T02 adds
+    /// <c>TrayIconClickEventArgs</c> and <c>TrayMenuActivation</c> to the allow-list deliberately -
+    /// this list is an enumeration, not a pattern, so a new public type has to be named here before
+    /// it can ship.
     /// </remarks>
     [Fact]
     public void Exported_types_are_in_the_library_namespace_and_within_the_documented_surface()
@@ -159,6 +162,8 @@ public sealed class TrayIconExceptionTests
             "TrayIcon",
             "TrayIconException",
             "TrayErrorEventArgs",
+            "TrayIconClickEventArgs",
+            "TrayMenuActivation",
         };
 
         string[] unexpected = exported
