@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -37,6 +38,14 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// <c>-- --cancel-preview left|double|right|middle</c> to make the Preview handler of that one
 /// click type set <see cref="System.Windows.RoutedEventArgs.Handled"/>; the matching main click
 /// then prints nothing, which is how a human verifies the cancellation contract on screen.
+/// </para>
+/// <para>
+/// <b>Menu demonstration (S03).</b> The icon is given a real two-item <c>ContextMenu</c> at startup,
+/// and the sample writes one <c>[sample] menu opened: popup=0x... rect=... dpi=... scale=... owner=0x...</c>
+/// line per open and one <c>[sample] menu dismissed.</c> line per close. The measurements are taken
+/// from the OS - the popup window's rectangle, its owner and its monitor's DPI - which is what makes
+/// the placement of a windowless process's context menu a machine read rather than a glance at the
+/// screen, and the results are recorded in <c>docs/UAT-S03.md</c>.
 /// </para>
 /// <para>
 /// <b>Raw callback trace (S02).</b> The sample prints the shell's undecoded callback messages next
@@ -106,6 +115,23 @@ public partial class App : Application
     private TraceSource? _libraryTrace;
     private bool _observersDetached;
     private int _frameIndex;
+
+    /// <summary>
+    /// The menu the icon opens on a right click (S03), or <see langword="null"/> before startup.
+    /// </summary>
+    /// <remarks>
+    /// The sample owns the menu, which is the point of the contract: the library never clones it, so
+    /// the instance assigned to <see cref="TrayIcon.ContextMenu"/> is the instance that opens and the
+    /// handlers wired up here keep working. It carries real items because WPF suppresses a menu with
+    /// an empty item collection - an empty menu would demonstrate nothing about placement.
+    /// </remarks>
+    private ContextMenu? _menu;
+
+    /// <summary>How many times the menu opened, for the run's totals.</summary>
+    private int _menuOpenCount;
+
+    /// <summary>How many times the menu closed, for the run's totals.</summary>
+    private int _menuDismissedCount;
 
     /// <summary>
     /// The raw hooks this sample added, held as strong references on purpose (MEM013).
@@ -227,6 +253,17 @@ public partial class App : Application
                 $"[sample] tray icon registered, rotating {Frames.Length} frames every {RotationInterval.TotalSeconds:0.#}s."));
         Console.WriteLine("[sample] no window is shown - check the notification area, not the taskbar.");
 
+        // S03: the menu the icon opens on a right click. Assigned here rather than inside a click
+        // handler, because that is the shape a consumer's resource dictionary produces (a value the
+        // click path reads), and assigned before any click can arrive.
+        _menu = CreateTrayMenu();
+        trayIcon.ContextMenu = _menu;
+
+        Console.WriteLine(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] context menu assigned with {_menu.Items.Count} item(s); a right click on the icon must open it at the icon."));
+
         // The pump-level control, subscribed in the same run as the hook so the two counts are
         // directly comparable. It counts only; the hook is what prints.
         ComponentDispatcher.ThreadFilterMessage += OnPumpMessage;
@@ -247,6 +284,151 @@ public partial class App : Application
             _shutdownTimer.Tick += OnShutdownTick;
             _shutdownTimer.Start();
         }
+    }
+
+    /// <summary>
+    /// Builds and wires the sample's context menu.
+    /// </summary>
+    /// <returns>The menu the icon is given.</returns>
+    /// <remarks>
+    /// Two real items, and the first one writes a line when it is chosen, so the item-click path is
+    /// observable on the same console as the open and dismiss lines. The <c>Opened</c> and
+    /// <c>Closed</c> handlers are the sample's own instruments: the library's Verbose trace lines are
+    /// unreachable from a consumer assembly in .NET 8 (the finding recorded in
+    /// <c>docs/UAT-S02.md</c>), so the popup's rectangle has to be measured from the outside - which
+    /// is what the checklist needs, because the measurement is then independent of the library's own
+    /// arithmetic.
+    /// </remarks>
+    private ContextMenu CreateTrayMenu()
+    {
+        var menu = new ContextMenu();
+        var firstItem = new MenuItem { Header = "Sample menu item" };
+        var secondItem = new MenuItem { Header = "Second item" };
+
+        firstItem.Click += (_, _) =>
+        {
+            Console.WriteLine("[sample] menu item clicked: header=Sample menu item");
+            Console.Out.Flush();
+        };
+
+        menu.Items.Add(firstItem);
+        menu.Items.Add(secondItem);
+
+        menu.Opened += OnMenuOpened;
+        menu.Closed += OnMenuClosed;
+
+        return menu;
+    }
+
+    /// <summary>
+    /// Measures and reports the popup that just opened.
+    /// </summary>
+    /// <param name="sender">The menu; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Measured from the OS, not from the library.</b> The popup is found by enumerating this
+    /// thread's top-level windows (the sample is windowless, and the library's zero-sized host and
+    /// 1x1 anchor are both excluded by the size test), its rectangle is read with
+    /// <c>GetWindowRect</c>, its owner with <c>GetWindow(GW_OWNER)</c> - which is the library's anchor
+    /// window - and its monitor's DPI with <c>GetDpiForWindow</c>. The DPI reading is what makes "the
+    /// menu landed where the icon's monitor scale says it should" a two-instrument measurement rather
+    /// than the library's own word: the library resolves the same monitor's scale independently.
+    /// </para>
+    /// <para>
+    /// A line is written even when no popup window is found: a menu that reports itself open with no
+    /// window behind it is exactly the failure a checklist row has to record rather than infer.
+    /// </para>
+    /// </remarks>
+    private void OnMenuOpened(object? sender, RoutedEventArgs e)
+    {
+        _menuOpenCount++;
+
+        IntPtr popup = FindOwnPopupWindow();
+        string measurement;
+
+        if (popup == IntPtr.Zero)
+        {
+            measurement = "popup-window=NOT FOUND";
+        }
+        else
+        {
+            bool measured = GetWindowRect(popup, out RECT rectangle);
+            uint dpi = GetDpiForWindow(popup);
+            IntPtr owner = GetWindow(popup, GetWindowOwner);
+
+            measurement = string.Create(
+                CultureInfo.InvariantCulture,
+                $"popup=0x{popup.ToInt64():X} class={GetWindowClass(popup)} rect={(measured ? $"{rectangle.Left},{rectangle.Top} {rectangle.Right - rectangle.Left}x{rectangle.Bottom - rectangle.Top}" : "unreadable")} dpi={dpi} scale={dpi / 96.0:0.###} owner=0x{owner.ToInt64():X}");
+        }
+
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"[sample] menu opened: {measurement}"));
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Reports that the menu is no longer showing, whoever dismissed it.
+    /// </summary>
+    /// <param name="sender">The menu; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// One line per close, with no attribution: the sample cannot tell an outside click from Escape, a
+    /// chosen item, another window taking activation or the icon's own disposal. The checklist pairs
+    /// this line with the injector's record of the outside click it injected, which is what makes the
+    /// attribution a measurement instead of a story.
+    /// </remarks>
+    private void OnMenuClosed(object? sender, RoutedEventArgs e)
+    {
+        _menuDismissedCount++;
+
+        Console.WriteLine("[sample] menu dismissed.");
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Finds this process's popup window: the only visible top-level window of this thread that is
+    /// larger than 20x20 physical pixels in both dimensions.
+    /// </summary>
+    /// <returns>The popup's handle, or <see cref="IntPtr.Zero"/> when no window matches.</returns>
+    /// <remarks>
+    /// The size, not the window class, is the discriminator - the class name of a WPF window is an
+    /// implementation detail of the runtime, while "a visible window this large exists in this
+    /// process" is a fact about it. Measured: the library's tray host is zero-sized and its menu
+    /// anchor is 1x1, so neither can be mistaken for the popup, and the sample opens no window of its
+    /// own.
+    /// </remarks>
+    private static IntPtr FindOwnPopupWindow()
+    {
+        const int minimumEdge = 20;
+        IntPtr found = IntPtr.Zero;
+
+        EnumThreadWindowsCallback callback = (IntPtr windowHandle, IntPtr _) =>
+        {
+            if (!IsWindowVisible(windowHandle)
+                || !GetWindowRect(windowHandle, out RECT rectangle)
+                || rectangle.Right - rectangle.Left <= minimumEdge
+                || rectangle.Bottom - rectangle.Top <= minimumEdge)
+            {
+                return true;
+            }
+
+            found = windowHandle;
+            return false;
+        };
+
+        EnumThreadWindows(GetCurrentThreadId(), callback, IntPtr.Zero);
+
+        return found;
+    }
+
+    /// <summary>Reads a window's class name, for the report line only.</summary>
+    /// <param name="windowHandle">The window handle.</param>
+    /// <returns>The class name, or an empty string when it cannot be read.</returns>
+    private static string GetWindowClass(IntPtr windowHandle)
+    {
+        var name = new System.Text.StringBuilder(256);
+
+        return GetClassName(windowHandle, name, name.Capacity) > 0 ? name.ToString() : string.Empty;
     }
 
     /// <summary>
@@ -554,6 +736,46 @@ public partial class App : Application
     /// <returns><see langword="true"/> for the four click-type keywords.</returns>
     private static bool IsCancelPreviewType(string? value) => value is "left" or "double" or "right" or "middle";
 
+    /// <summary>The <c>GW_OWNER</c> selector: the popup's owner window, which is the library's anchor.</summary>
+    private const uint GetWindowOwner = 4;
+
+    /// <summary>A screen rectangle, in the layout <c>GetWindowRect</c> writes.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        /// <summary>The left edge, in physical screen pixels.</summary>
+        public int Left;
+
+        /// <summary>The top edge, in physical screen pixels.</summary>
+        public int Top;
+
+        /// <summary>The exclusive right edge, in physical screen pixels.</summary>
+        public int Right;
+
+        /// <summary>The exclusive bottom edge, in physical screen pixels.</summary>
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr windowHandle, out RECT rectangle);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr windowHandle);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern IntPtr GetWindow(IntPtr windowHandle, uint command);
+
+    /// <summary>Reads the DPI of the monitor a window is on; Windows 10 1607 and later.</summary>
+    /// <param name="windowHandle">The window handle.</param>
+    /// <returns>The effective DPI of the window's monitor.</returns>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern uint GetDpiForWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr windowHandle, System.Text.StringBuilder name, int count);
+
     /// <summary>
     /// The callback <see cref="EnumThreadWindows"/> invokes once per top-level window of a thread.
     /// </summary>
@@ -568,6 +790,53 @@ public partial class App : Application
 
     [DllImport("kernel32.dll", ExactSpelling = true)]
     private static extern uint GetCurrentThreadId();
+
+    /// <summary>
+    /// Pumps the dispatcher queue for a moment so work WPF schedules asynchronously gets a chance to run
+    /// before the process exits.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Measured, and the honest result of the measurement.</b> The library destroys an open menu's
+    /// anchor window synchronously inside <see cref="TrayIcon.Dispose"/> - the in-repo test
+    /// <c>Dispose_closes_the_menu_destroys_the_anchor_and_is_idempotent</c> asserts that immediately
+    /// afterwards - but the <see cref="ContextMenu.Closed"/> event a consumer subscribes to is raised by
+    /// WPF, and a disposal-driven close did not deliver it before the process exited (<c>menu opens=1,
+    /// menu dismissals=0</c>, measured in two runs, with this pump in place in the second one). An
+    /// OS-driven dismissal - an outside click - does deliver it (same runs). The sample therefore
+    /// reports its per-close line only for dismissals that happen while the application is still
+    /// running, and the disposal case is covered by the in-repo test rather than by this line.
+    /// </para>
+    /// <para>
+    /// The pump is kept because it is correct in intent and harmless: it drains the thread's queue,
+    /// including posted messages, using the same shape as the library's own menu tests.
+    /// </para>
+    /// </remarks>
+    private static void DrainDispatcher()
+    {
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher.CurrentDispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(300),
+        };
+
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            frame.Continue = false;
+        };
+
+        timer.Start();
+
+        try
+        {
+            Dispatcher.PushFrame(frame);
+        }
+        finally
+        {
+            timer.Stop();
+        }
+    }
 
     /// <summary>
     /// Removes the icon and destroys its handle; safe to call more than once because the sample
@@ -595,9 +864,30 @@ public partial class App : Application
             trayIcon.PreviewTrayRightClick -= OnPreviewClick;
             trayIcon.PreviewTrayMiddleClick -= OnPreviewClick;
 
+            // The icon is disposed first, while the menu's Closed handler is still attached: the
+            // library closes an open menu as part of disposal, and that close is what the
+            // "[sample] menu dismissed." line has to report. Detaching the handlers first made the
+            // dismissal unobservable - measured: a run that opened one menu and never clicked outside
+            // reported "menu opens=1, menu dismissals=0" - which is exactly the kind of measurement
+            // order this checklist must not get wrong.
             trayIcon.Dispose();
 
             Console.WriteLine("[sample] tray icon disposed - it must have left the notification area.");
+
+            // See DrainDispatcher's remarks for the measurement behind this call: it drains the queue
+            // before the totals are printed, and it is the point at which the disposal-driven close was
+            // expected - but did not arrive - so the sample's per-close line covers the OS-driven
+            // dismissals only.
+            DrainDispatcher();
+
+            ContextMenu? menu = _menu;
+
+            if (menu is not null)
+            {
+                menu.Opened -= OnMenuOpened;
+                menu.Closed -= OnMenuClosed;
+                _menu = null;
+            }
         }
 
         DetachObservers();
@@ -640,7 +930,7 @@ public partial class App : Application
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"[sample] totals: raw callback lines={_rawMessageCount}, pump-observed private-range messages={_pumpMessageCount}, library trace lines={_libraryTraceLineCount}, clicks={_clickCount}, cancelled by a Preview handler={_cancelledClickCount}."));
+            $"[sample] totals: raw callback lines={_rawMessageCount}, pump-observed private-range messages={_pumpMessageCount}, library trace lines={_libraryTraceLineCount}, clicks={_clickCount}, cancelled by a Preview handler={_cancelledClickCount}, menu opens={_menuOpenCount}, menu dismissals={_menuDismissedCount}."));
 
         // Flushed by hand rather than left to the process exit path: the whole point of the raw
         // capture is that the last lines of a run survive it.
