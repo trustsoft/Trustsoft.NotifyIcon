@@ -20,6 +20,9 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// <remarks>
 /// <para>
 /// Every test runs on an STA thread (<see cref="StaFactAttribute"/>): WPF image objects require it.
+/// The tests that rasterize a <em>drawing</em> instead of reading a bitmap use
+/// <see cref="DispatcherFactAttribute"/>, because rasterization goes through the compositor, which
+/// needs a running dispatcher rather than only an STA apartment.
 /// </para>
 /// <para>
 /// <b>Two kinds of evidence, deliberately.</b> The seam counters
@@ -587,6 +590,151 @@ public sealed class HiconFactoryTests
     }
 
     /// <summary>
+    /// A frozen drawing is rasterized once for a given pixel size and read back identically every
+    /// time - and the pixels it yields are the drawing's real pixels, not an empty buffer that
+    /// happens to be empty twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the "what" behind the R007 claim for drawings (the "why" is
+    /// <see cref="HiconFactory"/>'s remarks: WPF's rasterizer is single-use, so the only way to stop
+    /// paying for one per replacement is to stop rasterizing). WPF's rasterizer for a drawing is
+    /// the only path that allocates rasterizer-side GDI objects, so a repeated read that returns
+    /// the memoized picture is a read that allocates none.
+    /// </para>
+    /// <para>
+    /// The correctness assertions come first on purpose: cache hits out of a broken cache would
+    /// still be equal to each other.
+    /// </para>
+    /// </remarks>
+    [DispatcherFact]
+    public void Frozen_vector_source_is_rasterized_once_and_read_back_identically()
+    {
+        DrawingImage frame = CreateVectorFrame(Colors.Firebrick, new Rect(0, 0, IconSize, IconSize), freeze: true);
+
+        byte[] first = HiconFactory.GetBgraPixels(frame, IconSize);
+        byte[] second = HiconFactory.GetBgraPixels(frame, IconSize);
+
+        Assert.Equal(IconSize * IconSize * 4, first.Length);
+        AssertStoredColour(first, 0, Colors.Firebrick, 255);
+        AssertStoredColour(first, (IconSize * IconSize) - 1, Colors.Firebrick, 255);
+        Assert.Equal(first, second);
+
+        // The size is part of the cache key: the same source at half the size is its own
+        // rasterization, not the 32x32 picture resampled or, worse, handed over at the wrong
+        // length.
+        const int half = IconSize / 2;
+        byte[] smaller = HiconFactory.GetBgraPixels(frame, half);
+
+        Assert.Equal(half * half * 4, smaller.Length);
+        AssertStoredColour(smaller, 0, Colors.Firebrick, 255);
+    }
+
+    /// <summary>
+    /// A source that is still mutable is read afresh on every call, so a change to its drawing is
+    /// visible in the next replacement instead of being masked by a stale cached picture.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of the memoization: caching a <em>mutable</em> source would turn "change the
+    /// icon" into "keep showing the old icon", with no error and no way for the caller to tell.
+    /// The assertion is therefore on the pixels after the edit, and on the region the edit made
+    /// transparent - which is only transparent if the buffer was rasterized again rather than
+    /// reused.
+    /// </remarks>
+    [DispatcherFact]
+    public void Mutable_vector_source_is_read_fresh_and_follows_its_current_drawing()
+    {
+        DrawingImage mutable = CreateVectorFrame(Colors.Firebrick, new Rect(0, 0, IconSize, IconSize), freeze: false);
+
+        byte[] before = HiconFactory.GetBgraPixels(mutable, IconSize);
+        AssertStoredColour(before, 0, Colors.Firebrick, 255);
+
+        // Exactly how an application edits a drawing source: replace the geometry in the group. The
+        // transparent canvas keeps the drawing's 32x32 bounds, so the edited frame is a small
+        // square surrounded by margins instead of a full-bleed square.
+        var group = (DrawingGroup)mutable.Drawing;
+        group.Children.Clear();
+        group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, IconSize, IconSize))));
+        group.Children.Add(
+            new GeometryDrawing(
+                new SolidColorBrush(Colors.SeaGreen),
+                null,
+                new RectangleGeometry(new Rect(IconSize / 4, IconSize / 4, IconSize / 2, IconSize / 2))));
+
+        byte[] after = HiconFactory.GetBgraPixels(mutable, IconSize);
+
+        AssertStoredColour(after, ((IconSize / 2) * IconSize) + (IconSize / 2), Colors.SeaGreen, 255);
+        Assert.Equal(0, (int)after[3]);
+    }
+
+    /// <summary>
+    /// Rotating between a fixed set of frozen frames - the sample's once-a-second replacement, and
+    /// the idle/busy/error shape the feature exists for - leaves the process GDI count flat, and
+    /// each frame still yields its own pixels rather than a neighbour's.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the slice's demo claim as a measurement: before the memoization the same loop grew
+    /// the count by roughly two objects per replacement (measured live: +112 in 57 seconds, and
+    /// +396 over 200 replacements in isolation), because every frame built a new
+    /// <c>RenderTargetBitmap</c> that the GC had not yet finalized.
+    /// </para>
+    /// <para>
+    /// The first read of each frame is the warm-up and is deliberately outside the window: it is
+    /// the one read that legitimately allocates a rasterizer. The assertion is one-sided - growth
+    /// is the failure; a delta that is negative is a collection finishing mid-loop, not a leak.
+    /// </para>
+    /// </remarks>
+    [DispatcherFact]
+    public void Repeated_replacement_of_frozen_vector_frames_leaves_the_GDI_count_flat()
+    {
+        const int replacements = 60;
+
+        DrawingImage red = CreateVectorFrame(Colors.Firebrick, new Rect(0, 0, IconSize, IconSize), freeze: true);
+        DrawingImage green = CreateVectorFrame(
+            Colors.SeaGreen,
+            new Rect(IconSize / 4, IconSize / 4, IconSize / 2, IconSize / 2),
+            freeze: true,
+            canvas: new Rect(0, 0, IconSize, IconSize));
+        DrawingImage blue = CreateVectorFrame(
+            Colors.DodgerBlue,
+            new Rect(IconSize / 4, 0, IconSize / 2, IconSize),
+            freeze: true);
+
+        DrawingImage[] frames = [red, green, blue];
+
+        foreach (DrawingImage frame in frames)
+        {
+            Assert.Equal(IconSize * IconSize * 4, HiconFactory.GetBgraPixels(frame, IconSize).Length);
+        }
+
+        int before = GdiHandles.Count();
+
+        for (int i = 0; i < replacements; i++)
+        {
+            DrawingImage frame = frames[i % frames.Length];
+            byte[] pixels = HiconFactory.GetBgraPixels(frame, IconSize);
+
+            Assert.Equal(IconSize * IconSize * 4, pixels.Length);
+        }
+
+        int after = GdiHandles.Count();
+
+        Assert.True(
+            after - before <= 2,
+            $"{replacements} replacements of three frozen frames grew the GDI count by {after - before} (from {before} to {after}); the rasterization of a frozen frame must be reused, not repeated");
+
+        // A cache keyed only on the thread or the size would answer every frame with whichever
+        // frame it rasterized first, and the green frame is the one that can tell: it is the only
+        // frame with transparent margins, so mistaking it for either neighbour shows up as an
+        // opaque corner.
+        AssertStoredColour(HiconFactory.GetBgraPixels(red, IconSize), 0, Colors.Firebrick, 255);
+        AssertStoredColour(HiconFactory.GetBgraPixels(green, IconSize), ((IconSize / 2) * IconSize) + (IconSize / 2), Colors.SeaGreen, 255);
+        Assert.Equal(0, (int)HiconFactory.GetBgraPixels(green, IconSize)[3]);
+        AssertStoredColour(HiconFactory.GetBgraPixels(blue, IconSize), 0, Colors.DodgerBlue, 255);
+    }
+
+    /// <summary>
     /// Builds a square, single-colour image in the requested pixel format.
     /// </summary>
     /// <param name="size">The edge length in pixels.</param>
@@ -617,6 +765,65 @@ public sealed class HiconFactoryTests
         }
 
         return BitmapSource.Create(size, size, 96, 96, format ?? PixelFormats.Bgra32, null, pixels, size * 4);
+    }
+
+    /// <summary>
+    /// Builds a drawing source: one solid rectangle, optionally on a transparent canvas of a
+    /// stated size, frozen or left mutable.
+    /// </summary>
+    /// <param name="colour">The fill colour.</param>
+    /// <param name="shape">The rectangle, in the source's own coordinate space.</param>
+    /// <param name="freeze">Whether the drawing is frozen (immutable, and therefore cached by the
+    /// conversion) or left mutable (edited between replacements in that test's scenario).</param>
+    /// <param name="canvas">The transparent rectangle that fixes the drawing's natural size, or
+    /// <see langword="null"/> to let the shape define it.</param>
+    /// <returns>The drawing source.</returns>
+    /// <remarks>
+    /// <b>Why the canvas matters.</b> The conversion draws the source into the icon box
+    /// (<c>DrawImage(source, new Rect(0, 0, pixelSize, pixelSize))</c>), and WPF stretches the
+    /// source's <em>natural bounds</em> to fill that rectangle. A drawing consisting of one small
+    /// square therefore has 8x8 bounds and is stretched until it covers the whole icon; a drawing
+    /// that must keep transparent margins has to declare them, which is what a transparent
+    /// rectangle over the full coordinate space does. A transparent brush still contributes its
+    /// geometry to the drawing's bounds, so the canvas is what makes the margins survive.
+    /// </remarks>
+    private static DrawingImage CreateVectorFrame(Color colour, Rect shape, bool freeze, Rect? canvas = null)
+    {
+        var group = new DrawingGroup();
+
+        if (canvas is { } bounds)
+        {
+            group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(bounds)));
+        }
+
+        group.Children.Add(new GeometryDrawing(new SolidColorBrush(colour), null, new RectangleGeometry(shape)));
+
+        var image = new DrawingImage(group);
+
+        if (freeze)
+        {
+            image.Freeze();
+        }
+
+        return image;
+    }
+
+    /// <summary>
+    /// Asserts that a pixel of a straight-alpha <c>BGRA</c> buffer holds the expected colour and
+    /// alpha, within the two-value tolerance a compositor rasterization is entitled to.
+    /// </summary>
+    /// <param name="pixels">The buffer, top row first.</param>
+    /// <param name="pixelIndex">The pixel's index in the buffer, not its byte offset.</param>
+    /// <param name="expected">The colour the drawing painted there.</param>
+    /// <param name="alpha">The expected alpha.</param>
+    private static void AssertStoredColour(byte[] pixels, int pixelIndex, Color expected, byte alpha)
+    {
+        int offset = pixelIndex * 4;
+
+        Assert.InRange((int)pixels[offset + 0], expected.B - 2, expected.B + 2);
+        Assert.InRange((int)pixels[offset + 1], expected.G - 2, expected.G + 2);
+        Assert.InRange((int)pixels[offset + 2], expected.R - 2, expected.R + 2);
+        Assert.Equal(alpha, pixels[offset + 3]);
     }
 
     /// <summary>

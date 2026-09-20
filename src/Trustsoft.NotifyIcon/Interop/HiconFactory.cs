@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
@@ -69,12 +70,62 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// produces exactly the bytes the DIB section receives.
 /// </para>
 /// <para>
+/// <b>A frozen drawing source is rasterized once, not once per replacement (R007, measured).</b>
+/// <see cref="RenderTargetBitmap"/> is the only rasterizer WPF offers for a drawing and it is
+/// <em>single-use</em>: after its first <see cref="RenderTargetBitmap.Render(Visual)"/> a second
+/// call on the same instance throws <c>ArgumentException: The Image passed to the
+/// ImageVisualManager cannot be frozen</c>, and that holds even after
+/// <see cref="RenderTargetBitmap.Clear"/> (both measured on .NET 8; <c>WriteableBitmap</c>, the
+/// other mutable surface, has no <c>Render(Visual)</c> at all). There is therefore no reusable
+/// rasterizer to keep - but each new instance also holds about two GDI objects until the GC
+/// finalizes it, which is invisible in a test that renders a handful of frames and very visible in
+/// an application that rotates a vector icon once a second: the live sample climbed from 123 to
+/// 235 GDI objects in 57 seconds with no collection in the window. The answer is to <em>not
+/// allocate a rasterizer per replacement</em>: the pixels of a <b>frozen</b> source are memoized
+/// per pixel size, because a frozen <see cref="Freezable"/> is immutable by construction, so its
+/// rasterization cannot go stale. A source that is still mutable is rasterized afresh every time -
+/// it may legitimately change between two replacements, and a cache keyed on it would return the
+/// previous picture with no way for the caller to notice.
+/// </para>
+/// <para>
 /// <c>internal</c> by design: the converter is not part of the shipped API surface
 /// (D002/D010), only of the implementation behind <c>TrayIcon.IconSource</c>.
 /// </para>
 /// </remarks>
 internal static class HiconFactory
 {
+    /// <summary>
+    /// How many distinct pixel sizes are memoized for one source before the conversion stops
+    /// caching and starts rasterizing on every call.
+    /// </summary>
+    /// <remarks>
+    /// A single source is normally asked for one or two sizes (the notification-area icon and,
+    /// later, a DPI-scaled one). The cap exists so an application that sweeps a source through
+    /// hundreds of sizes cannot trade a GDI problem for an unbounded managed one; past the cap the
+    /// behaviour is exactly what it was before the cache.
+    /// </remarks>
+    private const int MaxCachedRasterizationsPerSource = 8;
+
+    /// <summary>
+    /// Rasterized straight-alpha pixels of a <b>frozen</b> non-bitmap source, keyed by source and
+    /// then by pixel size.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A <see cref="ConditionalWeakTable{TKey,TValue}"/> rather than a dictionary so the cache
+    /// cannot keep an image alive: the entry dies with the source that owns it, exactly like the
+    /// rasterizer it replaces. Frozen sources are immutable, which is what makes memoizing their
+    /// pixels sound; the lookup is therefore guarded only against concurrent access to the inner
+    /// dictionary, not against the image changing underneath it.
+    /// </para>
+    /// <para>
+    /// This is the R007 answer for drawings: WPF's rasterizer cannot be reused (the class remarks
+    /// carry the measurement), so the cheapest possible replacement for a <em>repeated</em>
+    /// replacement of the same drawing is to not rasterize at all.
+    /// </para>
+    /// </remarks>
+    private static readonly ConditionalWeakTable<ImageSource, Dictionary<int, byte[]>> RasterizedPixels = new();
+
     /// <summary>
     /// Rasterizes <paramref name="source"/> and builds an icon of
     /// <paramref name="pixelSize"/> x <paramref name="pixelSize"/> pixels from it.
@@ -202,6 +253,12 @@ internal static class HiconFactory
     /// instead of inferring it from a rendered icon.
     /// </para>
     /// <para>
+    /// <b>A frozen drawing source is read from the memoized rasterization</b> described in the class
+    /// remarks: the same <see cref="ImageSource"/> at the same size is rasterized once, so repeated
+    /// replacement costs no rasterizer - and therefore no GDI object - after the first pass. A
+    /// mutable source is rasterized on every call, so a change to it is always reflected.
+    /// </para>
+    /// <para>
     /// <b>Scaling is nearest-neighbour for M001.</b> It avoids inventing semi-transparent
     /// interpolation halos, which would blur exactly the straight-alpha property this method
     /// exists to guarantee, and it is done with integer arithmetic over the already-converted
@@ -237,8 +294,11 @@ internal static class HiconFactory
                 // A drawing source has no pixel buffer: the only rasterizer WPF offers is the
                 // compositor, which produces premultiplied pixels and therefore goes through the
                 // same straight-alpha conversion. (See the class remarks for the measured
-                // constraints on this path.)
-                ToStraightBgra32(Rasterize(ready, pixelSize)).CopyPixels(pixels, stride, 0);
+                // constraints on this path.) Rasterization of a frozen source is memoized, so the
+                // bytes are copied out rather than written into the caller's buffer directly: the
+                // cached array must stay read-only from every caller's point of view.
+                byte[] rasterized = GetRasterizedPixels(ready, pixelSize);
+                Buffer.BlockCopy(rasterized, 0, pixels, 0, rasterized.Length);
             }
         }
         catch (Exception ex) when (ex is not TrayIconException)
@@ -258,6 +318,81 @@ internal static class HiconFactory
                     ex.Message));
         }
 
+        return pixels;
+    }
+
+    /// <summary>
+    /// Returns the straight-alpha <c>BGRA</c> pixels of a non-bitmap source, rasterizing them once
+    /// for a frozen source and on every call for a mutable one.
+    /// </summary>
+    /// <param name="source">The drawing source to read; already resolved for this thread.</param>
+    /// <param name="pixelSize">The icon edge length in pixels.</param>
+    /// <returns>The pixel buffer, top row first, straight-alpha <c>BGRA</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Only a frozen source is cached, and that is the whole correctness argument.</b> A frozen
+    /// <see cref="Freezable"/> cannot change, so the pixels memoized for it cannot go stale and
+    /// every caller's copy is the same picture. A source that is still mutable may legitimately be
+    /// edited between two replacements - that is what a mutable drawing is <em>for</em> - so it is
+    /// rasterized afresh, and the caller always sees the current drawing rather than a cached
+    /// earlier one.
+    /// </para>
+    /// <para>
+    /// The returned array is the cache's own buffer. Callers copy out of it (see
+    /// <see cref="GetBgraPixels"/>) and never write to it, so one cached picture serves every
+    /// caller without an extra copy per hit beyond the one the caller already makes.
+    /// </para>
+    /// </remarks>
+    private static byte[] GetRasterizedPixels(ImageSource source, int pixelSize)
+    {
+        if (!source.IsFrozen)
+        {
+            return RasterizeToStraightBgra32(source, pixelSize);
+        }
+
+        Dictionary<int, byte[]> byPixelSize = RasterizedPixels.GetValue(source, static _ => new Dictionary<int, byte[]>());
+
+        lock (byPixelSize)
+        {
+            if (byPixelSize.TryGetValue(pixelSize, out byte[]? cached))
+            {
+                return cached;
+            }
+        }
+
+        byte[] computed = RasterizeToStraightBgra32(source, pixelSize);
+
+        lock (byPixelSize)
+        {
+            // Two threads can race here on a frozen, thread-safe source. Keeping the first value
+            // and dropping the second is correct because both are rasterizations of the same
+            // immutable picture; the loser is simply collected.
+            if (byPixelSize.Count < MaxCachedRasterizationsPerSource)
+            {
+                byPixelSize[pixelSize] = computed;
+            }
+        }
+
+        return computed;
+    }
+
+    /// <summary>
+    /// Rasterizes a drawing source and reads it back as straight-alpha <c>BGRA</c> pixels.
+    /// </summary>
+    /// <param name="source">The drawing source to rasterize.</param>
+    /// <param name="pixelSize">The icon edge length in pixels.</param>
+    /// <returns>A freshly allocated pixel buffer.</returns>
+    /// <remarks>
+    /// The compositor produces premultiplied pixels, so the rasterization always goes through
+    /// <see cref="ToStraightBgra32"/>: the same conversion the bitmap path applies, which is what
+    /// keeps a semi-transparent drawing from reaching the icon with its colour channels already
+    /// scaled down by alpha.
+    /// </remarks>
+    private static byte[] RasterizeToStraightBgra32(ImageSource source, int pixelSize)
+    {
+        int stride = pixelSize * 4;
+        var pixels = new byte[stride * pixelSize];
+        ToStraightBgra32(Rasterize(source, pixelSize)).CopyPixels(pixels, stride, 0);
         return pixels;
     }
 
@@ -494,10 +629,21 @@ internal static class HiconFactory
     /// <param name="pixelSize">The icon edge length in pixels.</param>
     /// <returns>The rasterized bitmap, still premultiplied (the caller converts it).</returns>
     /// <remarks>
+    /// <para>
     /// This path requires a thread whose dispatcher is pumping messages - the normal situation in
     /// a WPF application, and not the situation on a bare test thread. It exists because a
     /// <see cref="DrawingImage"/> has no pixel buffer at all, so there is nothing to read; see the
     /// class remarks for why an ordinary bitmap never goes through here.
+    /// </para>
+    /// <para>
+    /// <b>One instance per call, because WPF leaves no choice.</b> A
+    /// <see cref="RenderTargetBitmap"/> is single-use: rendering into it twice throws, and
+    /// <c>Clear()</c> does not make it reusable; <c>WriteableBitmap</c> offers no
+    /// <c>Render(Visual)</c> at all (measured, .NET 8). The cost of that is a fresh rasterizer - and
+    /// the two GDI objects it holds until it is finalized - per rasterization, which is why the
+    /// callers only reach this method once per frozen source and size (see
+    /// <see cref="GetRasterizedPixels"/>).
+    /// </para>
     /// </remarks>
     private static BitmapSource Rasterize(ImageSource source, int pixelSize)
     {
