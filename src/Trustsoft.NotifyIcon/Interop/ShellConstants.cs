@@ -127,6 +127,100 @@ internal static class ShellConstants
     /// </remarks>
     internal const uint TrayCallbackMessage = WM_USER + 1;
 
+    /// <summary>
+    /// The user asked for the icon's context menu, which under
+    /// <see cref="NOTIFYICON_VERSION_4"/> is how the shell reports a right click on the icon.
+    /// <c>WM_CONTEXTMENU</c> (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// The v4 encoding carries this code in <c>LOWORD(lParam)</c>, like the <c>NIN_*</c> codes and
+    /// the mouse messages. The documented pre-v4 right-click pair (<c>WM_RBUTTONDOWN</c> /
+    /// <c>WM_RBUTTONUP</c>) is not sent under v4, which is why
+    /// <see cref="WM_RBUTTONUP"/> stays unmapped by <c>TrayEventDecoder</c>: mapping both would
+    /// raise a second right click if the shell ever sent both.
+    /// <para>
+    /// <b>Anchor caveat:</b> <c>WM_CONTEXTMENU</c> lies <em>outside</em>
+    /// <see cref="WM_MOUSEFIRST"/>..<see cref="WM_MOUSELAST"/>, and the header/docs only promise a
+    /// valid <c>wParam</c> anchor for messages inside that range. The decoder still reads an
+    /// anchor for this code (empirically the shell does set one), but the value is officially
+    /// undefined and must not be the sole source of menu placement.
+    /// </para>
+    /// </remarks>
+    internal const uint WM_CONTEXTMENU = 0x007B;
+
+    /// <summary>
+    /// The first of the mouse message ids. <c>WM_MOUSEFIRST</c> (winuser.h), which is the same
+    /// value as <see cref="WM_MOUSEMOVE"/>.
+    /// </summary>
+    /// <remarks>
+    /// Together with <see cref="WM_MOUSELAST"/> this bounds the documented set of messages whose
+    /// <c>wParam</c> anchor is valid under <see cref="NOTIFYICON_VERSION_4"/>: "GET_X_LPARAM(wParam)
+    /// returns the X anchor coordinate for notification events NIN_POPUPOPEN, NIN_SELECT,
+    /// NIN_KEYSELECT, and all mouse messages between WM_MOUSEFIRST and WM_MOUSELAST". Any event
+    /// code outside that range - notably <see cref="WM_CONTEXTMENU"/> and the <c>NIN_*</c> codes
+    /// outside the three named ones - has an officially undefined <c>wParam</c>.
+    /// </remarks>
+    internal const uint WM_MOUSEFIRST = 0x0200;
+
+    /// <summary>The mouse moved over the icon. <c>WM_MOUSEMOVE</c> (winuser.h).</summary>
+    /// <remarks>
+    /// Decoded by <c>TrayEventDecoder</c> as an unmapped event: motion is not one of M001's four
+    /// click types, so it decodes to nothing rather than to an event.
+    /// </remarks>
+    internal const uint WM_MOUSEMOVE = 0x0200;
+
+    /// <summary>
+    /// The left mouse button was released over the icon: under
+    /// <see cref="NOTIFYICON_VERSION_4"/> this is the single left click. <c>WM_LBUTTONUP</c>
+    /// (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// Mapped to a left click with a click count of 1. Whether the shell also sends this after a
+    /// double click is not documented; the mapping is deliberately independent of
+    /// <see cref="WM_LBUTTONDBLCLK"/> so it does not depend on an undocumented suppression.
+    /// </remarks>
+    internal const uint WM_LBUTTONUP = 0x0202;
+
+    /// <summary>
+    /// The left mouse button was double-clicked over the icon. <c>WM_LBUTTONDBLCLK</c>
+    /// (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// Mapped to a left click with a click count of 2, so a consumer can distinguish the double
+    /// click from the single one by the args rather than by which of the two events arrived.
+    /// </remarks>
+    internal const uint WM_LBUTTONDBLCLK = 0x0203;
+
+    /// <summary>
+    /// The right mouse button was released over the icon. <c>WM_RBUTTONUP</c> (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately not mapped</b> to a click event. Under <see cref="NOTIFYICON_VERSION_4"/> a
+    /// right click on the icon arrives as <see cref="WM_CONTEXTMENU"/>; this code is declared here
+    /// so the decision is visible (and pinned by a test) instead of being an omission. If live
+    /// evidence ever shows the shell sending it, promoting it is a one-line decoder change.
+    /// </remarks>
+    internal const uint WM_RBUTTONUP = 0x0205;
+
+    /// <summary>
+    /// The middle mouse button was released over the icon. <c>WM_MBUTTONUP</c> (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// Mapped to a middle click with a click count of 1. The code carries no modifier state; a
+    /// consumer that needs it reads the keyboard at handling time, if at all.
+    /// </remarks>
+    internal const uint WM_MBUTTONUP = 0x0208;
+
+    /// <summary>
+    /// The last of the mouse message ids. <c>WM_MOUSELAST</c> (winuser.h).
+    /// </summary>
+    /// <remarks>
+    /// The upper bound of the documented "the <c>wParam</c> anchor is valid" set; see
+    /// <see cref="WM_MOUSEFIRST"/>. The header guards several smaller values behind older
+    /// <c>_WIN32_WINNT</c> levels; the unguarded modern value is the one pinned here.
+    /// </remarks>
+    internal const uint WM_MOUSELAST = 0x020E;
+
     // ---------------------------------------------------------------------------------------
     // Process resource counters (winuser.h) - the uiFlags argument of GetGuiResources.
     // ---------------------------------------------------------------------------------------

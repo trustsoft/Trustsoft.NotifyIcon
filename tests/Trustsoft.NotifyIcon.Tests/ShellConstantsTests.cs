@@ -115,6 +115,38 @@ public sealed class ShellConstantsTests
     }
 
     /// <summary>
+    /// The mouse message ids from <c>winuser.h</c> that the v4 callback decoder reads out of
+    /// <c>LOWORD(lParam)</c>.
+    /// </summary>
+    /// <remarks>
+    /// A wrong value here is invisible in exactly the same way a wrong <c>NIF_*</c> bit is: the
+    /// decoder would simply never match a real click and the tray icon would look inert, with no
+    /// exception and nothing in the trace to point at. <c>WM_MOUSEFIRST</c> is additionally pinned
+    /// to <c>WM_MOUSEMOVE</c>, which the header spells as the same number - the pair is the
+    /// documented boundary of "the anchor in <c>wParam</c> is valid", so it is a relation worth
+    /// asserting rather than two literals that could drift apart.
+    /// </remarks>
+    [Fact]
+    public void Mouse_message_ids_match_winuser_h()
+    {
+        Assert.Equal(0x007Bu, ShellConstants.WM_CONTEXTMENU);
+        Assert.Equal(0x0200u, ShellConstants.WM_MOUSEFIRST);
+        Assert.Equal(0x0200u, ShellConstants.WM_MOUSEMOVE);
+        Assert.Equal(0x0202u, ShellConstants.WM_LBUTTONUP);
+        Assert.Equal(0x0203u, ShellConstants.WM_LBUTTONDBLCLK);
+        Assert.Equal(0x0205u, ShellConstants.WM_RBUTTONUP);
+        Assert.Equal(0x0208u, ShellConstants.WM_MBUTTONUP);
+        Assert.Equal(0x020Eu, ShellConstants.WM_MOUSELAST);
+
+        // The documented valid-anchor range is inclusive and does not contain the right-click
+        // carrier, which is why the decoder marks the WM_CONTEXTMENU anchor as always-undefined.
+        Assert.Equal(ShellConstants.WM_MOUSEMOVE, ShellConstants.WM_MOUSEFIRST);
+        Assert.True(ShellConstants.WM_MOUSEFIRST < ShellConstants.WM_MOUSELAST);
+        Assert.True(
+            ShellConstants.WM_CONTEXTMENU < ShellConstants.WM_MOUSEFIRST || ShellConstants.WM_CONTEXTMENU > ShellConstants.WM_MOUSELAST);
+    }
+
+    /// <summary>
     /// <c>GR_GDIOBJECTS</c> is 0, which is the selector every piece of R007's handle-count
     /// evidence passes to <c>GetGuiResources</c>.
     /// </summary>
