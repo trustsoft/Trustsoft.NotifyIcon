@@ -206,8 +206,8 @@ public sealed class SliceContractTests
 
     /// <summary>
     /// The dismissal contract that sits beside the popup-owner assertion above: a popup that really
-    /// dismisses on an outside click is owned by a dedicated anchor window, and explicitly not by the
-    /// registration host.
+    /// dismisses on an outside click is anchored to a dedicated anchor window, and explicitly not to
+    /// the registration host.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -216,14 +216,25 @@ public sealed class SliceContractTests
     /// <c>HWND</c> for <c>NOTIFYICONIDENTIFIER.hWnd</c> and is what the shell posts to - but it is
     /// <b>not</b> what owns a dismissable menu. A menu opened from the host shape with no placement
     /// target gets an owner of <see cref="IntPtr.Zero"/> and never closes; a menu attached to
-    /// <see cref="TrayMenuAnchorWindow"/>'s 1x1 laid-out visual gets the anchor as its owner and
-    /// closes on an outside click.
+    /// <see cref="TrayMenuAnchorWindow"/>'s 1x1 laid-out visual dismisses on an outside click.
     /// </para>
     /// <para>
     /// The behavioural half is proven in full, together with the failing constructions pinned as
     /// negative cases, in <c>TrayMenuDismissalTests</c>; here the same measurement is asserted once,
     /// as a contract, so a future slice that replaces the anchor finds the boundary red instead of
     /// discovering the loss mid-implementation.
+    /// </para>
+    /// <para>
+    /// <b>Why the owner is not asserted as an equality here (finding F5).</b> The popup's
+    /// <c>GW_OWNER</c> is assigned inside WPF's <c>Popup.BuildWindow</c>, and only when the placement
+    /// target resolves to an <c>HwndSource</c> that is connected to the foreground window at that
+    /// instant. Measured while this contract failed in a full-suite run
+    /// (<c>docs/UAT-S03.md</c>, F5): the anchor was the foreground window and the thread's active
+    /// window before the open and again after it, its visual was laid out, the popup carried the
+    /// expected rectangle - and its owner was still <c>0x0</c>, with the outside click dismissing it
+    /// anyway. So the boundary asserts the two outcomes WPF's own code can produce (the anchor, or
+    /// nothing) and pins the one window it can never be, the registration host, while the dismissal
+    /// clause stays unconditional.
     /// </para>
     /// </remarks>
     [StaFact]
@@ -238,10 +249,16 @@ public sealed class SliceContractTests
         Assert.NotEqual(IntPtr.Zero, result.AnchorHandle);
         Assert.NotEqual(result.HostHandle, result.AnchorHandle);
 
-        Assert.NotEqual(IntPtr.Zero, result.PopupOwnerHandle);
-        Assert.Equal(result.AnchorHandle, result.PopupOwnerHandle);
+        // The anchor or nothing, never the host - see the remarks for the WPF code path and the
+        // measurement that put this boundary where it is.
+        Assert.True(
+            result.PopupOwnerHandle == result.AnchorHandle || result.PopupOwnerHandle == IntPtr.Zero,
+            $"The popup's owner must be the anchor window or absent, never another window. {result.Describe()}");
         Assert.NotEqual(result.HostHandle, result.PopupOwnerHandle);
 
+        // The unconditional clause, and the one the consumer can see: the anchored popup closes on
+        // an outside click and leaves no window behind.
+        Assert.True(result.IsOpenBeforeOutsideClick, $"The menu should have opened. {result.Describe()}");
         Assert.False(result.IsOpenAfterOutsideClick,
             $"A popup owned by the anchor window must dismiss on an outside click. {result.Describe()}");
         Assert.Empty(result.PopupWindowsAfterOutsideClick);

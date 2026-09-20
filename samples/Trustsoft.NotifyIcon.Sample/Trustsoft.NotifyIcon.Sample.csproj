@@ -16,6 +16,17 @@
       would try to produce a sample nupkg next to the library.
     -->
     <IsPackable>false</IsPackable>
+    <!--
+      Per-monitor DPI awareness for the sample (S03/T06). This is an EXECUTABLE-LEVEL setting and
+      for PerMonitorV2 it is MANIFEST-ONLY: there is no <dpiAware> element equivalent, and the
+      programmatic API (SetProcessDpiAwarenessContext) must run before the process owns its first
+      window handle - something a WPF library can never guarantee, because the consumer's own
+      startup and WPF's own window creation run first. The library therefore never touches process
+      DPI awareness by design (D026) and reads the icon's monitor with GetDpiForMonitor instead.
+      A consumer copying this sample's setup should copy app.manifest and this line with it. See
+      the header comment inside app.manifest for what a missing or stale manifest looks like.
+    -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

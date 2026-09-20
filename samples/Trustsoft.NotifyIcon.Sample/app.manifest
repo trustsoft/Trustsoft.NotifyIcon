@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WHY THIS FILE EXISTS (M001/S03, T06).
+
+  Per-monitor DPI awareness is an EXECUTABLE-LEVEL setting and, for the modern
+  PerMonitorV2 mode, it is MANIFEST-ONLY: there is no <dpiAware> element equivalent, and the
+  programmatic API (SetProcessDpiAwarenessContext / SetProcessDpiAwareness) has to run before
+  any window handle exists in the process. A WPF library cannot guarantee that - the consumer's
+  own startup runs first, the shell host window is created lazily by the first registration, and
+  WPF itself creates windows as soon as the application starts.
+
+  So this is deliberately the sample's (and a consumer's) responsibility, never the library's:
+  Trustsoft.NotifyIcon never touches process DPI awareness by design and instead reads the
+  icon's monitor with GetDpiForMonitor(MDT_EFFECTIVE_DPI), which is awareness-independent and
+  therefore correct for a process that is unaware, system-aware or per-monitor-aware.
+
+  What this buys the sample: without it the process reports GetProcessDpiAwareness = 1
+  (SYSTEM_AWARE), and every monitor's Display Scale is then scaled by the system DPI - which is
+  exactly the configuration in which the "two monitors at different Display Scale" case cannot
+  be observed at all. With PerMonitorV2 the sample's own startup line reports the awareness
+  value, so a missing or stale manifest is visible in the capture rather than mysterious.
+
+  A consumer that copies this sample's setup should copy this file into its own executable
+  project and add <ApplicationManifest>app.manifest</ApplicationManifest> to its csproj.
+-->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="Trustsoft.NotifyIcon.Sample" type="win32" />
+
+  <!--
+    Two settings in the modern (SMI/2016) namespace, and no legacy <dpiAware> element: a legacy
+    element takes precedence when both are present and cannot express PerMonitorV2 (the legacy
+    schema only knows true/pm values), so its presence would silently undo this declaration.
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+
+  <!--
+    Declaring the OS versions this executable is tested on, which is what makes Windows apply the
+    modern behaviour (and the PerMonitorV2 keyword) instead of compatibility shims. The Windows 10
+    GUID covers Windows 10 and Windows 11: 11 reports the same version resources.
+  -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+</assembly>

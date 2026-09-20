@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -24,6 +25,18 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// convenient <c>using</c> here would turn the demonstration into a counterexample. The assembly
 /// purity guard (<c>PackagePurityTests</c>) watches the library; this file is the human-readable
 /// half of the same promise.
+/// </para>
+/// <para>
+/// <b>Per-monitor DPI (S03/T06).</b> This executable carries an application manifest
+/// (<c>app.manifest</c>, wired in by <c>&lt;ApplicationManifest&gt;</c>) that declares
+/// <c>dpiAwareness = PerMonitorV2</c>. That declaration is executable-level and manifest-only: the
+/// programmatic API has to run before the process owns its first window handle, which a WPF library
+/// can never guarantee, so the library never touches process DPI awareness (it reads the icon's
+/// monitor with <c>GetDpiForMonitor</c> instead, which is awareness-independent). The sample prints
+/// its own <c>GetProcessDpiAwareness</c> value and the <c>isPerMonitorV2</c> comparison at startup,
+/// and every monitor with its effective DPI and scale, so the configuration behind each live reading
+/// in <c>docs/UAT-S03.md</c> is part of the capture. A consumer that wants the same behaviour copies
+/// this file and that csproj line.
 /// </para>
 /// <para>
 /// Run it with <c>dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release</c>. Add
@@ -109,9 +122,52 @@ public partial class App : Application
     /// <summary>The click type <c>--cancel-preview</c> cancels when no type is named.</summary>
     private const string DefaultCancelPreviewType = "right";
 
+    /// <summary>
+    /// The delay <c>--open-menu-after</c> uses when it is given without a value.
+    /// </summary>
+    /// <remarks>
+    /// Five seconds: long enough for the startup lines (the DPI readings and the registration) to be
+    /// on the console before the menu opens, which is what keeps a capture readable.
+    /// </remarks>
+    private static readonly TimeSpan DefaultOpenMenuDelay = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long a self-opened menu stays open before the sample closes it again.</summary>
+    /// <remarks>
+    /// The hold exists so a run produces both lines - an opened menu that was never closed would show
+    /// placement but no dismissal, and the dismissal is the half of the contract that fails for the
+    /// obvious implementation.
+    /// </remarks>
+    private static readonly TimeSpan SelfOpenedMenuHold = TimeSpan.FromSeconds(6);
+
+    /// <summary>The exit code an unrecognized command-line argument produces.</summary>
+    /// <remarks>
+    /// Distinct from the <c>1</c> a refused registration returns, so a caller can tell "this build
+    /// never started" from "the shell refused the icon".
+    /// </remarks>
+    private const int UsageErrorExitCode = 2;
+
+    /// <summary>The one-line usage text printed when an argument is not understood.</summary>
+    private const string SampleUsage =
+        "[sample] usage: Trustsoft.NotifyIcon.Sample [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]]";
+
+    /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>: the pseudo-handle the manifest asks for.</summary>
+    /// <remarks>
+    /// The value is documented (not measured): the context constants are negative pseudo-handles
+    /// defined in <c>windef.h</c>, and this one is <c>-4</c>. It is compared with
+    /// <see cref="AreDpiAwarenessContextsEqual"/> rather than dereferenced, which is the only legal
+    /// use of a pseudo-handle.
+    /// </remarks>
+    private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
+
+    /// <summary><c>MDT_EFFECTIVE_DPI</c>: the DPI the monitor is actually being driven at.</summary>
+    private const int EffectiveDpi = 0;
+
+    private SampleTrayIcon? _sampleTrayIcon;
     private TrayIcon? _trayIcon;
     private DispatcherTimer? _rotationTimer;
     private DispatcherTimer? _shutdownTimer;
+    private DispatcherTimer? _menuOpenTimer;
+    private DispatcherTimer? _menuHoldTimer;
     private TraceSource? _libraryTrace;
     private bool _observersDetached;
     private int _frameIndex;
@@ -183,12 +239,31 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        if (!TryParseArguments(e.Args, out SampleArguments arguments, out string? argumentError))
+        {
+            // Before any shell state exists, and with no icon created: an argument this sample does
+            // not understand must be visible (on stderr, with a non-zero exit code) rather than
+            // silently ignored, because a run whose switch was a typo would otherwise look exactly
+            // like a run that proved the opposite of what the caller asked for.
+            Console.Error.WriteLine(argumentError);
+            Console.Error.WriteLine(SampleUsage);
+            Shutdown(UsageErrorExitCode);
+            return;
+        }
+
         // Dispose the icon on every normal exit path. SessionEnding is the logoff/shutdown case;
-        // Exit covers an explicit Shutdown as well as the end of Run().
+        // Exit covers an explicit Shutdown as well as the end of Run(). Subscribed after the
+        // argument check so a usage error produces no icon and no totals line.
         SessionEnding += (_, _) => ShutdownSample();
         Exit += (_, _) => ShutdownSample();
 
-        _cancelledClickType = ParseCancelPreview(e.Args);
+        // First, because these read the configuration every later number depends on: the process's
+        // own DPI awareness (which is what the app.manifest decides) and the display configuration
+        // the placement is measured against.
+        ReportDpiAwareness();
+        ReportDisplayConfiguration();
+
+        _cancelledClickType = arguments.CancelledClickType;
 
         Console.WriteLine(
             _cancelledClickType is null
@@ -199,7 +274,10 @@ public partial class App : Application
 
         AttachLibraryTraceListener();
 
-        var trayIcon = new TrayIcon();
+        // The sample's own subclass, so the --open-menu-after switch can reach the documented
+        // OnTrayClick hook; see SampleTrayIcon.
+        var trayIcon = new SampleTrayIcon();
+        _sampleTrayIcon = trayIcon;
 
         // Subscribed before the first registration so a failure during registration is reported
         // rather than escaping as an unhandled exception from the startup path.
@@ -276,7 +354,7 @@ public partial class App : Application
         _rotationTimer.Tick += OnRotationTick;
         _rotationTimer.Start();
 
-        if (TryParseRunSeconds(e.Args, out TimeSpan runSeconds))
+        if (arguments.RunSeconds is TimeSpan runSeconds)
         {
             Console.WriteLine($"[sample] will shut down by itself after {runSeconds.TotalSeconds:0.#}s (graceful close check).");
 
@@ -284,6 +362,85 @@ public partial class App : Application
             _shutdownTimer.Tick += OnShutdownTick;
             _shutdownTimer.Start();
         }
+
+        if (arguments.OpenMenuAfter is TimeSpan openMenuDelay)
+        {
+            // The no-click demonstration: the menu is opened through the library's own click path
+            // after a delay, and closed again by the consumer's own menu. It exists because the
+            // injector cannot always click (the icon may be in a flyout it cannot reach), and
+            // because a menu that fails to open must be visible in the console rather than inferred
+            // from a screen no instrument is reading.
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] menu self-open requested: the assigned menu will open once after {openMenuDelay.TotalSeconds:0.#}s and be closed again {SelfOpenedMenuHold.TotalSeconds:0.#}s later (--open-menu-after). No shell click is injected for this."));
+
+            _menuOpenTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = openMenuDelay };
+            _menuOpenTimer.Tick += OnMenuOpenRequestTick;
+            _menuOpenTimer.Start();
+        }
+    }
+
+    /// <summary>
+    /// Opens the assigned menu once, on the sample's own initiative, through the library's click path.
+    /// </summary>
+    /// <param name="sender">The timer; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// The line before the call is printed on purpose: if the menu does not open, the absence of the
+    /// <c>[sample] menu opened:</c> line that follows it is a measurement rather than a missing run.
+    /// </remarks>
+    private void OnMenuOpenRequestTick(object? sender, EventArgs e)
+    {
+        _menuOpenTimer?.Stop();
+        _menuOpenTimer = null;
+
+        SampleTrayIcon? icon = _sampleTrayIcon;
+
+        if (icon is null)
+        {
+            Console.WriteLine("[sample] --open-menu-after: no tray icon exists - no menu was requested.");
+            return;
+        }
+
+        Console.WriteLine("[sample] --open-menu-after: requesting the menu now, with no click injected.");
+        Console.Out.Flush();
+
+        icon.RequestMenuOpen();
+
+        _menuHoldTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = SelfOpenedMenuHold };
+        _menuHoldTimer.Tick += OnMenuHoldElapsedTick;
+        _menuHoldTimer.Start();
+    }
+
+    /// <summary>
+    /// Closes the menu the sample opened itself, so the run reports an open and a dismissal.
+    /// </summary>
+    /// <param name="sender">The timer; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// This is the consumer-driven close (<c>ContextMenu.IsOpen = false</c> on the consumer's own
+    /// menu), not the OS-driven one an outside click causes: the outside click is measured by the
+    /// <c>menu</c> scenario of the click injector, and the two are recorded separately in the
+    /// checklist. Both must arrive at the library's <c>Closed</c> teardown, which is what the
+    /// <c>[sample] menu dismissed.</c> line reports.
+    /// </remarks>
+    private void OnMenuHoldElapsedTick(object? sender, EventArgs e)
+    {
+        _menuHoldTimer?.Stop();
+        _menuHoldTimer = null;
+
+        ContextMenu? menu = _menu;
+
+        if (menu is null || !menu.IsOpen)
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] --open-menu-after: nothing to close after the hold (menu assigned={menu is not null}, open={menu?.IsOpen == true}) - no open line can have preceded this."));
+            return;
+        }
+
+        Console.WriteLine("[sample] --open-menu-after: closing the menu the sample opened (consumer-driven close, not an outside click).");
+        menu.IsOpen = false;
     }
 
     /// <summary>
@@ -357,9 +514,22 @@ public partial class App : Application
             uint dpi = GetDpiForWindow(popup);
             IntPtr owner = GetWindow(popup, GetWindowOwner);
 
+            // The cursor is printed beside the popup because it is what tells the two placement
+            // sources apart after the fact: the shell's icon rectangle (the menu sits at the icon) and
+            // the library's documented cursor fallback (the menu sits at the pointer).
+            bool cursorRead = GetCursorPos(out POINT cursor);
+
+            // The popup's lower-left corner in the DIP space the placement offsets live in, derived
+            // from the measured rectangle and the measured DPI rather than read from the library:
+            // scale is applied exactly once, here, in the other direction. It is the number to compare
+            // against the icon rectangle, in DIP.
+            string bottomLeftDip = measured && dpi > 0
+                ? string.Create(CultureInfo.InvariantCulture, $"{rectangle.Left / (dpi / 96.0):0.###},{rectangle.Bottom / (dpi / 96.0):0.###}")
+                : "unreadable";
+
             measurement = string.Create(
                 CultureInfo.InvariantCulture,
-                $"popup=0x{popup.ToInt64():X} class={GetWindowClass(popup)} rect={(measured ? $"{rectangle.Left},{rectangle.Top} {rectangle.Right - rectangle.Left}x{rectangle.Bottom - rectangle.Top}" : "unreadable")} dpi={dpi} scale={dpi / 96.0:0.###} owner=0x{owner.ToInt64():X}");
+                $"popup=0x{popup.ToInt64():X} class={GetWindowClass(popup)} rect={(measured ? $"{rectangle.Left},{rectangle.Top} {rectangle.Right - rectangle.Left}x{rectangle.Bottom - rectangle.Top}" : "unreadable")} dpi={dpi} scale={dpi / 96.0:0.###} owner=0x{owner.ToInt64():X} cursor={(cursorRead ? $"{cursor.X},{cursor.Y}" : "unreadable")} bottomLeftDip={bottomLeftDip}");
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"[sample] menu opened: {measurement}"));
@@ -692,41 +862,128 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reads <c>--cancel-preview</c> from the command line.
+    /// Reads and validates every command-line argument of the sample.
     /// </summary>
     /// <param name="args">The startup arguments.</param>
-    /// <returns>
-    /// The click type to cancel - <c>left</c>, <c>double</c>, <c>right</c> or <c>middle</c> - or
-    /// <see langword="null"/> when no cancellation was requested.
-    /// </returns>
+    /// <param name="arguments">The parsed switches.</param>
+    /// <param name="error">The message naming the first argument that was not understood.</param>
+    /// <returns><see langword="true"/> when every argument was understood.</returns>
     /// <remarks>
-    /// Both spellings of the existing <c>--run-seconds</c> argument are accepted, and a bare
-    /// <c>--cancel-preview</c> (or one with a value that is not a click type) selects
-    /// <see cref="DefaultCancelPreviewType"/> rather than failing the run: the effective mode is
-    /// always printed at startup, so a typo cannot make the demonstration quietly prove the wrong
-    /// thing.
+    /// <para>
+    /// Both spellings are accepted for every switch with a value - <c>--run-seconds 20</c> and
+    /// <c>--run-seconds=20</c> - following the convention the first switch established.
+    /// </para>
+    /// <para>
+    /// <b>An unknown argument is an error, never a silence.</b> This sample is an instrument: a run
+    /// whose switch was misspelled would otherwise look exactly like a run that proved the opposite
+    /// of what the caller asked for, which is the one failure mode an instrument must not have. The
+    /// rejection happens before any shell state exists, and it exits <see cref="UsageErrorExitCode"/>.
+    /// </para>
+    /// <para>
+    /// A bare <c>--cancel-preview</c> is documented behaviour rather than a missing value: it cancels
+    /// <see cref="DefaultCancelPreviewType"/>, and the effective mode is printed at startup, so a typo
+    /// cannot make the demonstration quietly prove the wrong thing. A bare <c>--open-menu-after</c>
+    /// takes the default delay for the same reason; a <em>malformed</em> delay, by contrast, is
+    /// rejected, because the delay decides when the menu opens and a silently substituted value would
+    /// make a capture's timing unexplainable.
+    /// </para>
     /// </remarks>
-    private static string? ParseCancelPreview(string[] args)
+    private static bool TryParseArguments(string[] args, out SampleArguments arguments, out string? error)
     {
+        TimeSpan? runSeconds = null;
+        TimeSpan? openMenuAfter = null;
+        string? cancelledClickType = null;
+        error = null;
+        arguments = default!;
+
         for (int i = 0; i < args.Length; i++)
         {
-            if (args[i] == "--cancel-preview")
-            {
-                return i + 1 < args.Length && IsCancelPreviewType(args[i + 1])
-                    ? args[i + 1]
-                    : DefaultCancelPreviewType;
-            }
+            string argument = args[i];
+            int separator = argument.IndexOf('=');
+            string name = separator < 0 ? argument : argument[..separator];
+            string? inlineValue = separator < 0 ? null : argument[(separator + 1)..];
 
-            const string prefix = "--cancel-preview=";
-
-            if (args[i].StartsWith(prefix, StringComparison.Ordinal))
+            switch (name)
             {
-                string raw = args[i][prefix.Length..];
-                return IsCancelPreviewType(raw) ? raw : DefaultCancelPreviewType;
+                case "--run-seconds":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? runSecondsValue))
+                    {
+                        error = $"[sample] '{argument}' needs a number of seconds: use --run-seconds N or --run-seconds=N.";
+                        return false;
+                    }
+
+                    if (!double.TryParse(runSecondsValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) || seconds <= 0)
+                    {
+                        error = $"[sample] '--run-seconds' needs a positive number of seconds, got '{runSecondsValue}'.";
+                        return false;
+                    }
+
+                    runSeconds = TimeSpan.FromSeconds(seconds);
+                    break;
+
+                case "--cancel-preview":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? cancelValue))
+                    {
+                        cancelledClickType = DefaultCancelPreviewType;
+                        break;
+                    }
+
+                    cancelledClickType = IsCancelPreviewType(cancelValue) ? cancelValue : DefaultCancelPreviewType;
+                    break;
+
+                case "--open-menu-after":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? openMenuValue))
+                    {
+                        openMenuAfter = DefaultOpenMenuDelay;
+                        break;
+                    }
+
+                    if (!double.TryParse(openMenuValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double delaySeconds) || delaySeconds < 0)
+                    {
+                        error = $"[sample] '--open-menu-after' needs a delay in seconds, got '{openMenuValue}'.";
+                        return false;
+                    }
+
+                    openMenuAfter = TimeSpan.FromSeconds(delaySeconds);
+                    break;
+
+                default:
+                    error = $"[sample] unknown argument '{argument}' - this sample does not ignore arguments it does not understand.";
+                    return false;
             }
         }
 
-        return null;
+        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the value of one switch, in either its separated or its <c>=</c>-joined form.
+    /// </summary>
+    /// <param name="inlineValue">The value from the <c>=</c>-joined form, or <see langword="null"/>.</param>
+    /// <param name="args">The startup arguments.</param>
+    /// <param name="index">The current argument index; advanced when the separated form supplies the value.</param>
+    /// <param name="value">The value, when one was supplied.</param>
+    /// <returns>
+    /// <see langword="true"/> when a value was supplied, <see langword="false"/> for a bare switch
+    /// (including one followed by another switch, which must not be read as its value).
+    /// </returns>
+    private static bool TryTakeValue(string? inlineValue, string[] args, ref int index, out string? value)
+    {
+        if (inlineValue is not null)
+        {
+            value = inlineValue;
+            return true;
+        }
+
+        if (index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            value = args[++index];
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     /// <summary>
@@ -791,6 +1048,165 @@ public partial class App : Application
     [DllImport("kernel32.dll", ExactSpelling = true)]
     private static extern uint GetCurrentThreadId();
 
+    /// <summary>The current-process pseudo-handle <c>GetProcessDpiAwareness</c> accepts.</summary>
+    /// <returns>The pseudo-handle, which must not be closed.</returns>
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern IntPtr GetCurrentProcess();
+
+    /// <summary>Reads a process's DPI awareness; Windows 8.1 and later.</summary>
+    /// <param name="process">The process handle, or the current-process pseudo-handle.</param>
+    /// <param name="awareness">Receives the <c>PROCESS_DPI_AWARENESS</c> value.</param>
+    /// <returns><c>S_OK</c> (0) on success, or the failure <c>HRESULT</c>.</returns>
+    /// <remarks>
+    /// This is the reading that says whether the manifest was applied, and it is taken from outside
+    /// the process as well (<c>.gsd/measure-dpi-awareness.ps1</c>), so the sample's own line and an
+    /// external observer's line can be compared. It reports per-monitor awareness as a single value:
+    /// it does not distinguish V1 from V2, which is what <c>GetThreadDpiAwarenessContext</c> is for.
+    /// </remarks>
+    [DllImport("shcore.dll", ExactSpelling = true)]
+    private static extern int GetProcessDpiAwareness(IntPtr process, out int awareness);
+
+    /// <summary>Reads the calling thread's DPI awareness context; Windows 10 1607 and later.</summary>
+    /// <returns>The context, which is only ever compared, never dereferenced.</returns>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern IntPtr GetThreadDpiAwarenessContext();
+
+    /// <summary>Reduces an awareness context to its <c>DPI_AWARENESS</c> value.</summary>
+    /// <param name="context">The context handle.</param>
+    /// <returns>The <c>DPI_AWARENESS</c> value.</returns>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+
+    /// <summary>Compares two DPI awareness contexts, which is the only legal use of a pseudo-handle.</summary>
+    /// <param name="first">One context.</param>
+    /// <param name="second">The other context.</param>
+    /// <returns><see langword="true"/> when they are equal.</returns>
+    /// <remarks>
+    /// This is what separates PerMonitorV2 from PerMonitorV1: <c>GetProcessDpiAwareness</c> reports
+    /// <c>2</c> for both, while comparing the thread's context against
+    /// <c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c> answers the question the manifest actually
+    /// declares.
+    /// </remarks>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AreDpiAwarenessContextsEqual(IntPtr first, IntPtr second);
+
+    /// <summary>Reads the cursor position in physical screen pixels.</summary>
+    /// <param name="point">Receives the position.</param>
+    /// <returns><see langword="true"/> when it was read.</returns>
+    /// <remarks>
+    /// Printed with every menu-open line, because it is what separates "the shell located the icon"
+    /// from the library's documented cursor fallback when a menu lands somewhere unexpected.
+    /// </remarks>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out POINT point);
+
+    /// <summary>Reads a system metric; used only for the display-configuration line.</summary>
+    /// <param name="index">The metric index.</param>
+    /// <returns>The metric's value in physical pixels (or a count, for the monitor metric).</returns>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern int GetSystemMetrics(int index);
+
+    /// <summary>Enumerates the display monitors.</summary>
+    /// <param name="deviceContext">A device context to intersect with; <see cref="IntPtr.Zero"/> for all.</param>
+    /// <param name="clip">A clip rectangle to intersect with; <see cref="IntPtr.Zero"/> for all.</param>
+    /// <param name="callback">Invoked once per monitor.</param>
+    /// <param name="parameter">The caller's opaque value.</param>
+    /// <returns><see langword="true"/> when the enumeration completed.</returns>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumDisplayMonitors(IntPtr deviceContext, IntPtr clip, EnumDisplayMonitorsCallback callback, IntPtr parameter);
+
+    /// <summary>Reads a monitor's bounds, work area, flags and device name.</summary>
+    /// <param name="monitor">The monitor handle from the enumeration.</param>
+    /// <param name="info">The structure, with <c>CbSize</c> already filled in.</param>
+    /// <returns><see langword="true"/> when it was read.</returns>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+
+    /// <summary>Reads a monitor's DPI for one <c>MONITOR_DPI_TYPE</c>; Windows 8.1 and later.</summary>
+    /// <param name="monitor">The monitor handle.</param>
+    /// <param name="dpiType"><see cref="EffectiveDpi"/>.</param>
+    /// <param name="dpiX">Receives the horizontal DPI.</param>
+    /// <param name="dpiY">Receives the vertical DPI.</param>
+    /// <returns><c>S_OK</c> (0) on success, or the failure <c>HRESULT</c>.</returns>
+    /// <remarks>
+    /// Awareness-independent by design, which is why it is the reader the library's placement path
+    /// uses as well (D026): the answer does not change with the process's own awareness.
+    /// </remarks>
+    [DllImport("shcore.dll", ExactSpelling = true)]
+    private static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    /// <summary>The callback <see cref="EnumDisplayMonitors"/> invokes once per display monitor.</summary>
+    /// <param name="monitor">The monitor handle.</param>
+    /// <param name="deviceContext">The device context, unused here.</param>
+    /// <param name="rect">The monitor rectangle, unused here (the callback reads the full info).</param>
+    /// <param name="parameter">The caller's opaque value; unused here.</param>
+    /// <returns><see langword="true"/> to continue the enumeration.</returns>
+    private delegate bool EnumDisplayMonitorsCallback(IntPtr monitor, IntPtr deviceContext, ref RECT rect, IntPtr parameter);
+
+    /// <summary><c>MONITORINFOF_PRIMARY</c>: the monitor is the primary one.</summary>
+    private const uint MonitorInfoPrimary = 0x00000001;
+
+    /// <summary><c>SM_CXSCREEN</c>: the primary monitor's width in physical pixels.</summary>
+    private const int SmCxScreen = 0;
+
+    /// <summary><c>SM_CYSCREEN</c>: the primary monitor's height in physical pixels.</summary>
+    private const int SmCyScreen = 1;
+
+    /// <summary><c>SM_XVIRTUALSCREEN</c>: the virtual screen's left edge.</summary>
+    private const int SmXVirtualScreen = 76;
+
+    /// <summary><c>SM_YVIRTUALSCREEN</c>: the virtual screen's top edge.</summary>
+    private const int SmYVirtualScreen = 77;
+
+    /// <summary><c>SM_CXVIRTUALSCREEN</c>: the virtual screen's width.</summary>
+    private const int SmCxVirtualScreen = 78;
+
+    /// <summary><c>SM_CYVIRTUALSCREEN</c>: the virtual screen's height.</summary>
+    private const int SmCyVirtualScreen = 79;
+
+    /// <summary><c>SM_CMONITORS</c>: the number of display monitors.</summary>
+    private const int SmCMonitors = 80;
+
+    /// <summary>A screen point, in the layout <c>GetCursorPos</c> writes.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        /// <summary>The x coordinate, negative on a monitor left of the primary one.</summary>
+        public int X;
+
+        /// <summary>The y coordinate, negative on a monitor above the primary one.</summary>
+        public int Y;
+    }
+
+    /// <summary>
+    /// The <c>MONITORINFOEX</c> layout: the monitor rectangle, the work area, the flags and the
+    /// device name, in that order, with the name as an inline 32-character array (hence the
+    /// <see cref="CharSet.Unicode"/> on the enclosing structure).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MONITORINFOEX
+    {
+        /// <summary>The structure size, which <c>GetMonitorInfo</c> requires the caller to fill in.</summary>
+        public uint CbSize;
+
+        /// <summary>The monitor's full rectangle in physical virtual-screen coordinates.</summary>
+        public RECT Monitor;
+
+        /// <summary>The monitor's work area: the rectangle minus any taskbars and appbars.</summary>
+        public RECT Work;
+
+        /// <summary>The <c>MONITORINFOF_*</c> flags.</summary>
+        public uint Flags;
+
+        /// <summary>The device name, for example <c>\\.\DISPLAY1</c>.</summary>
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+    }
+
     /// <summary>
     /// Pumps the dispatcher queue for a moment so work WPF schedules asynchronously gets a chance to run
     /// before the process exits.
@@ -848,6 +1264,10 @@ public partial class App : Application
         _rotationTimer = null;
         _shutdownTimer?.Stop();
         _shutdownTimer = null;
+        _menuOpenTimer?.Stop();
+        _menuOpenTimer = null;
+        _menuHoldTimer?.Stop();
+        _menuHoldTimer = null;
 
         TrayIcon? trayIcon = _trayIcon;
         _trayIcon = null;
@@ -1022,39 +1442,161 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reads <c>--run-seconds N</c> (or <c>--run-seconds=N</c>) from the command line.
+    /// The switches this sample understands; every other argument is rejected at startup.
     /// </summary>
-    /// <param name="args">The startup arguments.</param>
-    /// <param name="runSeconds">The requested run time.</param>
-    /// <returns><see langword="true"/> when a positive run time was requested.</returns>
-    private static bool TryParseRunSeconds(string[] args, out TimeSpan runSeconds)
+    /// <param name="RunSeconds">How long the sample runs before shutting itself down, or <see langword="null"/>.</param>
+    /// <param name="CancelledClickType">The click type a Preview handler cancels, or <see langword="null"/>.</param>
+    /// <param name="OpenMenuAfter">The delay after which the sample opens its own menu once, or <see langword="null"/>.</param>
+    private sealed record SampleArguments(TimeSpan? RunSeconds, string? CancelledClickType, TimeSpan? OpenMenuAfter);
+
+    /// <summary>
+    /// The sample's own <see cref="TrayIcon"/>, with one extra entry point: the documented
+    /// <see cref="TrayIcon.OnTrayClick"/> hook, invoked directly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What this is for.</b> <c>--open-menu-after</c> has to open the menu without a shell click:
+    /// the icon may live in a flyout no injector can reach, and a menu that fails to open has to be
+    /// visible in the console rather than inferred from a screen nothing is reading. Deriving from
+    /// <see cref="TrayIcon"/> and calling the protected hook runs the *production* open path - menu
+    /// activation, the assigned menu, the shell's icon rectangle, the monitor's DPI,
+    /// <c>TrayIconPlacement</c>, the anchor window and a real WPF popup. What it bypasses is exactly
+    /// one step: the shell's own callback and its decode, which the sample demonstrates live by
+    /// having real clicks injected into it by <c>probe-clicks</c>.
+    /// </para>
+    /// <para>
+    /// It reaches <c>base</c> by construction: it does not override the method, it invokes the base
+    /// implementation that a subclass is documented to call, so none of the library's policy is
+    /// re-implemented (or can drift) in the sample.
+    /// </para>
+    /// </remarks>
+    private sealed class SampleTrayIcon : TrayIcon
     {
-        runSeconds = TimeSpan.Zero;
-        string? raw = null;
-
-        for (int i = 0; i < args.Length; i++)
+        /// <summary>
+        /// Runs the default action of a right click, as if the shell had delivered one.
+        /// </summary>
+        /// <remarks>
+        /// The click payload is a real one - a right button, a single click, the cursor position and
+        /// the right-click routed event - rather than an empty placeholder, because a future change
+        /// that made <see cref="TrayIcon.OnTrayClick"/> read the payload would otherwise be invisible
+        /// to this instrument. The placement path itself is shell-rect driven and deliberately ignores
+        /// the anchor point, which the checklist records rather than assumes.
+        /// </remarks>
+        public void RequestMenuOpen()
         {
-            if (args[i] == "--run-seconds" && i + 1 < args.Length)
-            {
-                raw = args[i + 1];
-                break;
-            }
+            GetCursorPos(out POINT cursor);
 
-            const string prefix = "--run-seconds=";
-
-            if (args[i].StartsWith(prefix, StringComparison.Ordinal))
-            {
-                raw = args[i][prefix.Length..];
-                break;
-            }
+            OnTrayClick(new TrayIconClickEventArgs(MouseButton.Right, 1, new Point(cursor.X, cursor.Y), TrayIcon.TrayRightClickEvent));
         }
-
-        if (raw is null || !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) || seconds <= 0)
-        {
-            return false;
-        }
-
-        runSeconds = TimeSpan.FromSeconds(seconds);
-        return true;
     }
+
+    /// <summary>
+    /// Prints what this process's DPI awareness actually is, and whether the manifested PerMonitorV2
+    /// mode is the one in effect.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the measurement that turns "the executable manifests PerMonitorV2" into a
+    /// reading.</b> A missing or stale manifest shows up here as <c>value=1</c>
+    /// (DPI_AWARENESS_SYSTEM_AWARE) and as <c>isPerMonitorV2=False</c>, and every Display Scale in the
+    /// same capture is then the system's rather than the monitor's - which is why the warning line is
+    /// printed next to the reading instead of being left to the reader.
+    /// </remarks>
+    private void ReportDpiAwareness()
+    {
+        int processHresult = GetProcessDpiAwareness(GetCurrentProcess(), out int processAwareness);
+        bool perMonitorV2 = false;
+        string contextReading;
+
+        try
+        {
+            IntPtr threadContext = GetThreadDpiAwarenessContext();
+            int contextAwareness = GetAwarenessFromDpiAwarenessContext(threadContext);
+            perMonitorV2 = AreDpiAwarenessContextsEqual(threadContext, DpiAwarenessContextPerMonitorAwareV2);
+
+            contextReading = string.Create(
+                CultureInfo.InvariantCulture,
+                $"threadContextAwareness={contextAwareness} ({DescribeAwareness(contextAwareness)}) isPerMonitorV2={perMonitorV2}");
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // The DPI awareness contexts arrived in Windows 10 1607. An older OS is a configuration
+            // this sample reports, not one it crashes on.
+            contextReading = "threadContextAwareness=UNKNOWN (this OS does not export GetThreadDpiAwarenessContext)";
+        }
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] process DPI awareness: GetProcessDpiAwareness=0x{processHresult:X8} value={processAwareness} ({DescribeAwareness(processAwareness)}); {contextReading}."));
+
+        if (!perMonitorV2)
+        {
+            Console.WriteLine("[sample] WARNING: this executable did not report PerMonitorV2 - app.manifest is missing, or the binary is stale (rebuild before reading any Display Scale in this capture). The per-monitor claims in docs/UAT-S03.md depend on this line.");
+        }
+    }
+
+    /// <summary>
+    /// Prints the session's display configuration: every monitor with its rectangle, work area,
+    /// effective DPI and scale, and which one carries the notification area.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The DPI comes from <c>GetDpiForMonitor(MDT_EFFECTIVE_DPI)</c>, which is awareness-independent
+    /// and therefore the same reader the library's menu placement uses. That is deliberate: the two
+    /// readings are then comparable, and the popup's own <c>dpi=</c> reading in the menu-open line is
+    /// the third, per-window one.
+    /// </para>
+    /// <para>
+    /// The tray monitor is reported as the primary monitor, because the notification area lives on
+    /// the primary monitor's taskbar. The authoritative per-open value is the popup's own DPI in the
+    /// menu-open line, and the checklist says so.
+    /// </para>
+    /// </remarks>
+    private void ReportDisplayConfiguration()
+    {
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] display configuration: monitors={GetSystemMetrics(SmCMonitors)} virtualScreen={GetSystemMetrics(SmXVirtualScreen)},{GetSystemMetrics(SmYVirtualScreen)} {GetSystemMetrics(SmCxVirtualScreen)}x{GetSystemMetrics(SmCyVirtualScreen)} physical, primaryPhysical={GetSystemMetrics(SmCxScreen)}x{GetSystemMetrics(SmCyScreen)}"));
+
+        int index = 0;
+        string trayMonitor = "no monitor enumerated";
+
+        EnumDisplayMonitorsCallback callback = (IntPtr monitor, IntPtr _, ref RECT _, IntPtr _) =>
+        {
+            var info = new MONITORINFOEX { CbSize = (uint)Marshal.SizeOf<MONITORINFOEX>() };
+            bool hasInfo = GetMonitorInfo(monitor, ref info);
+            int dpiHresult = GetDpiForMonitor(monitor, EffectiveDpi, out uint dpiX, out uint dpiY);
+            bool primary = hasInfo && (info.Flags & MonitorInfoPrimary) != 0;
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] monitor {index}: device={info.DeviceName} primary={primary} rect={info.Monitor.Left},{info.Monitor.Top} {info.Monitor.Right - info.Monitor.Left}x{info.Monitor.Bottom - info.Monitor.Top} work={info.Work.Left},{info.Work.Top} {info.Work.Right - info.Work.Left}x{info.Work.Bottom - info.Work.Top} dpi={dpiX} scale={(dpiHresult == 0 ? (dpiX / 96.0).ToString("0.###", CultureInfo.InvariantCulture) : "unreadable")} hr=0x{dpiHresult:X8}"));
+
+            if (primary)
+            {
+                trayMonitor = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"primary monitor device={info.DeviceName} dpi={dpiX} scale={(dpiHresult == 0 ? (dpiX / 96.0).ToString("0.###", CultureInfo.InvariantCulture) : "unreadable")}");
+            }
+
+            index++;
+            return true;
+        };
+
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero);
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] tray monitor: {trayMonitor} - the notification area lives on the primary monitor's taskbar; the popup's own dpi= reading in the menu-open line is the authoritative per-open value."));
+    }
+
+    /// <summary>Names a <c>DPI_AWARENESS</c> value.</summary>
+    /// <param name="awareness">The raw value.</param>
+    /// <returns>The documented constant name, or <c>unknown</c>.</returns>
+    private static string DescribeAwareness(int awareness) => awareness switch
+    {
+        0 => "DPI_AWARENESS_UNAWARE",
+        1 => "DPI_AWARENESS_SYSTEM_AWARE",
+        2 => "DPI_AWARENESS_PER_MONITOR_AWARE",
+        _ => "unknown",
+    };
 }
