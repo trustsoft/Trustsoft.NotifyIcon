@@ -15,17 +15,29 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// than a description of them.
 /// </para>
 /// <para>
-/// <b>Last error is captured, not read later.</b> Every P/Invoke below declares
-/// <c>SetLastError = true</c> and calls <see cref="CaptureLastError"/> as its next statement.
-/// The value lives in a per-thread field and <see cref="GetLastError"/> returns that field.
-/// This is deliberate: Win32's last-error slot is thread state that any other P/Invoke (or a
-/// debugger, or an unmanaged call from a satellite library) can overwrite, so a design that
-/// read the slot in <see cref="GetLastError"/> would report whatever call happened last - usually
-/// the successful one inside the error handler - instead of the failure being reported. The
-/// P/Invoke stub captures the error at the call boundary when <c>SetLastError</c> is set, and
-/// <see cref="Marshal.GetLastPInvokeError"/> is the supported way to read that captured value;
-/// a hand-rolled <c>kernel32!GetLastError</c> declaration would read the raw slot and lose it
-/// again on the way back into managed code.
+/// <b>Last error is captured, not read later.</b> Every P/Invoke below except
+/// <c>Shell_NotifyIconGetRectNative</c> declares <c>SetLastError = true</c> and calls
+/// <see cref="CaptureLastError"/> as its next statement. The value lives in a per-thread field
+/// and <see cref="GetLastError"/> returns that field. This is deliberate: Win32's last-error
+/// slot is thread state that any other P/Invoke (or a debugger, or an unmanaged call from a
+/// satellite library) can overwrite, so a design that read the slot in <see cref="GetLastError"/>
+/// would report whatever call happened last - usually the successful one inside the error handler -
+/// instead of the failure being reported. The P/Invoke stub captures the error at the call
+/// boundary when <c>SetLastError</c> is set, and <see cref="Marshal.GetLastPInvokeError"/> is the
+/// supported way to read that captured value; a hand-rolled <c>kernel32!GetLastError</c>
+/// declaration would read the raw slot and lose it again on the way back into managed code.
+/// </para>
+/// <para>
+/// <b>The one deliberate exception is the HRESULT-returning export.</b>
+/// <c>Shell_NotifyIconGetRect</c> states its own failure reason in its return value, and Win32 does
+/// not document that it writes the thread last-error slot; capturing whatever happened to be in
+/// that slot would attach an unrelated code to the failure and manufacture exactly the misleading
+/// "reason" the paragraph above exists to prevent. Its declaration therefore declares
+/// <c>SetLastError = true</c> (the exporter sets it, keeping the declarations uniform) but does not
+/// call <see cref="CaptureLastError"/>, and
+/// <see cref="IShellApi.ShellNotifyIconGetRect"/> documents <see cref="GetLastError"/> as not being
+/// that call's failure channel. Do not "fix" the missing capture: it is a contract, and
+/// <c>ShellNotifyIconGetRectTests</c> asserts the HRESULT is the only status it reports.
 /// </para>
 /// <para>
 /// <b>All entry points are named explicitly with <c>ExactSpelling = true</c>.</b> The
@@ -62,6 +74,16 @@ internal sealed class ShellApi : IShellApi
         bool result = Shell_NotifyIconW(dwMessage, ref data);
         CaptureLastError();
         return result;
+    }
+
+    /// <inheritdoc />
+    public int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle)
+    {
+        // No last-error capture here, on purpose. The HRESULT is this call's entire status, and
+        // the export is not documented to write the thread last-error slot; capturing it would
+        // report an unrelated value through the seam's GetLastError and invite a caller to treat
+        // it as this call's reason. See the class remarks and the interface member's contract.
+        return ShellNotifyIconGetRectNative(ref identifier, out rectangle);
     }
 
     /// <inheritdoc />
@@ -136,6 +158,24 @@ internal sealed class ShellApi : IShellApi
     /// </remarks>
     [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
     private static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATAW lpData);
+
+    /// <remarks>
+    /// Mirrors <c>shellapi.h</c>:
+    /// <c>SHSTDAPI Shell_NotifyIconGetRect(_In_ const NOTIFYICONIDENTIFIER* identifier, _Out_ RECT* iconLocation)</c>.
+    /// Two consequences of that declaration are load-bearing: the return type is <c>HRESULT</c>
+    /// (a 4-byte <c>int</c>, <c>0</c> = <c>S_OK</c>, non-zero = failure), <b>not</b> <c>BOOL</c> -
+    /// which is why this declaration is not in the <c>bool</c>-returning block above and why
+    /// marshalling its result as <see langword="false"/> on success would silently invert every
+    /// call; and the identifier is a <c>const</c> input, so the caller's own instance is passed
+    /// by reference and never copied. <c>ExactSpelling</c> is set because the export is a single
+    /// unsuffixed name and must never be probed for an <c>A</c>/<c>W</c> variant.
+    /// <para>
+    /// <b>No <see cref="CaptureLastError"/> call follows this one</b> - see the class remarks. Its
+    /// status is the returned <c>HRESULT</c> alone.
+    /// </para>
+    /// </remarks>
+    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconGetRect", SetLastError = true, ExactSpelling = true)]
+    private static extern int ShellNotifyIconGetRectNative(ref NOTIFYICONIDENTIFIER identifier, out NativeRect iconLocation);
 
     /// <remarks>
     /// <c>user32.dll</c> exports the wide variant as <c>RegisterWindowMessageW</c>; the

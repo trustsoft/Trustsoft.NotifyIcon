@@ -61,6 +61,16 @@ internal sealed class GdiShellApi : IShellApi
     public uint RegisterWindowMessage(string message) => _real.RegisterWindowMessage(message);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Delegated to the real export like <see cref="RegisterWindowMessage"/>: the call is read-only
+    /// and creates no visible artifact, so it does not violate this double's "never touch the
+    /// notification area" rule. Callers here pass identifiers for icons that do not exist, which
+    /// is exactly the shape the real call is probed with.
+    /// </remarks>
+    public int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle) =>
+        _real.ShellNotifyIconGetRect(ref identifier, out rectangle);
+
+    /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         IntPtr icon = _real.CreateIconIndirect(ref iconInfo);

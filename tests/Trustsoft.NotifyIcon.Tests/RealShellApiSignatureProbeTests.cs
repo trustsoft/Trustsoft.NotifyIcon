@@ -233,6 +233,92 @@ public sealed class RealShellApiSignatureProbeTests
         Assert.NotEqual(0, error);
     }
 
+    /// <summary>
+    /// The real <c>Shell_NotifyIconGetRect</c> declaration resolves, returns a failing
+    /// <c>HRESULT</c> for an unregistered icon instead of throwing out of managed code, and moves
+    /// no GDI object count on the way.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the real-entry-point proof for the export, the <c>ExactSpelling</c> flag and the
+    /// <c>HRESULT</c> calling convention: a wrong entry point name surfaces here as an
+    /// <c>EntryPointNotFoundException</c>, and reading the result as a <c>BOOL</c> would show up
+    /// as the opposite of what this asserts. <c>Shell_NotifyIconGetRect</c> is the one member of
+    /// the seam whose failure value is non-zero, so it is asserted as such and never against
+    /// <see langword="false"/>.
+    /// </para>
+    /// <para>
+    /// <b>Nothing is registered or altered by this call.</b> The window handle names no window at
+    /// all, so the shell rejects the lookup before it can touch a notification area; the icon id
+    /// was never registered for that handle. The GDI counter is read around the call because
+    /// "locate an icon" creates no GDI object, which is the cheap half of "this call has no
+    /// side effect": the class joins the non-parallel <see cref="GdiCountCollection"/> precisely
+    /// so the counter stays attributable.
+    /// </para>
+    /// <para>
+    /// The output rectangle is deliberately not asserted here. A failing call promises nothing
+    /// about it, and pinning its content would pin an implementation detail of the marshalling
+    /// stub rather than a contract; the empty-rectangle rule for a <em>failed</em> lookup is pinned
+    /// on the fake in <c>ShellNotifyIconGetRectTests</c>, where "failed" is deterministic.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ShellNotifyIconGetRect_with_an_unregistered_identifier_returns_a_failing_HRESULT()
+    {
+        var real = new RecordingShellApi();
+        IntPtr process = Win32.GetCurrentProcess();
+
+        NOTIFYICONIDENTIFIER identifier = NOTIFYICONIDENTIFIER.Create(new IntPtr(0x0000DEADBEEF), 0xBEEF);
+
+        uint baseline = real.GetGuiResources(process, ShellConstants.GR_GDIOBJECTS);
+
+        int result = real.ShellNotifyIconGetRect(ref identifier, out _);
+
+        uint after = real.GetGuiResources(process, ShellConstants.GR_GDIOBJECTS);
+
+        // Non-zero means "the shell could not locate the icon"; 0 would be S_OK. Measured on this
+        // machine the shell answers a failure code for a handle that is not a window.
+        Assert.NotEqual(0, result);
+
+        // Locating an icon creates and frees no GDI object, so the process counter is unmoved.
+        Assert.Equal(baseline, after);
+
+        // The call really went through the wrapper (it is recorded after delegation, because the
+        // record carries the HRESULT) and the identifier itself was not rewritten by the shell:
+        // the export takes a const pointer.
+        Assert.Contains(
+            real.Calls,
+            call => call.Operation == nameof(IShellApi.ShellNotifyIconGetRect));
+
+        Assert.Equal(new IntPtr(0x0000DEADBEEF), identifier.hWnd);
+        Assert.Equal(0xBEEFu, identifier.uID);
+        Assert.Equal(Guid.Empty, identifier.guidItem);
+    }
+
+    /// <summary>
+    /// A null window handle is refused by the <b>shell</b>, not by
+    /// <see cref="NOTIFYICONIDENTIFIER.Create"/>: construction succeeds and the real export reports
+    /// the failure through its <c>HRESULT</c>.
+    /// </summary>
+    /// <remarks>
+    /// This pins which layer owns the "that window never registered this icon" decision. Moving it
+    /// into the factory would turn a caller's bad handle into a managed exception inside a struct
+    /// initializer and would leave the seam's failure path untestable.
+    /// </remarks>
+    [Fact]
+    public void ShellNotifyIconGetRect_with_a_null_window_handle_is_refused_by_the_shell()
+    {
+        var real = new RecordingShellApi();
+
+        NOTIFYICONIDENTIFIER identifier = NOTIFYICONIDENTIFIER.Create(IntPtr.Zero, 1);
+        Assert.Equal(IntPtr.Zero, identifier.hWnd);
+        Assert.Equal(NOTIFYICONIDENTIFIER.SizeOf(), identifier.cbSize);
+
+        int result = real.ShellNotifyIconGetRect(ref identifier, out _);
+
+        Assert.NotEqual(0, result);
+    }
+
     /// <summary>Builds a square, single-colour, fully opaque image for the conversion path.</summary>
     /// <param name="size">The edge length in pixels.</param>
     /// <returns>The image.</returns>

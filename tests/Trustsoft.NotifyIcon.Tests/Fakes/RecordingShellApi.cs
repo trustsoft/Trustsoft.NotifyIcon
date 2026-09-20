@@ -27,6 +27,14 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// <see cref="ICONINFO"/> instances are handed to the real implementation unchanged, so a
 /// wrapper cannot hide a field mutation from the caller.
 /// </para>
+/// <para>
+/// <b><see cref="ShellNotifyIconGetRect"/> is recorded after the call, not before.</b> Its status
+/// is its <c>HRESULT</c>, and the seam contract makes a non-zero result a normal outcome rather
+/// than an exception; recording the <c>HRESULT</c> in the log is what makes the delegation
+/// assertion possible ("the wrapped real call really was attempted through this wrapper"). An
+/// <c>EntryPointNotFoundException</c> from the real implementation still propagates, and it
+/// names the entry point that failed.
+/// </para>
 /// </remarks>
 internal sealed class RecordingShellApi : IShellApi
 {
@@ -57,6 +65,16 @@ internal sealed class RecordingShellApi : IShellApi
     {
         _calls.Add(ShellCall.FromShellNotifyIcon(dwMessage, ref data));
         return _inner.ShellNotifyIcon(dwMessage, ref data);
+    }
+
+    /// <inheritdoc />
+    public int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle)
+    {
+        // Recorded before delegation, so an entry point that does not exist on this Windows build
+        // still leaves a log entry next to the exception that named it.
+        int result = _inner.ShellNotifyIconGetRect(ref identifier, out rectangle);
+        _calls.Add(ShellCall.FromShellNotifyIconGetRect(ref identifier, result));
+        return result;
     }
 
     /// <inheritdoc />

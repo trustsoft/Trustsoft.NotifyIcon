@@ -23,6 +23,13 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// confirmed it (D008).
 /// </para>
 /// <para>
+/// <b>One member's failure value is a non-zero code, not a zero.</b>
+/// <see cref="ShellNotifyIconGetRect"/> returns an <c>HRESULT</c>, the only member on this seam
+/// that does: <c>0</c> (<c>S_OK</c>) is success there, and a non-zero value is the failure. Do not
+/// apply the <c>0</c>-means-failure reading the other members' results follow - see that member's
+/// own remarks.
+/// </para>
+/// <para>
 /// <b>The seam is the only place P/Invoke happens for these functions.</b>
 /// <see cref="ShellApi"/> is the only implementation that declares <c>[DllImport]</c> for them,
 /// so a wrong entry point, a wrong character set or a missing <c>SetLastError</c> has exactly
@@ -34,7 +41,10 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// meaningful for the call that just failed and is not preserved across managed calls, so this
 /// seam captures it inside the same member that made the call and exposes it through
 /// <see cref="GetLastError"/>. Read it only after a member reported failure; a successful call
-/// never promises anything about it.
+/// never promises anything about it. <b>This does not apply to
+/// <see cref="ShellNotifyIconGetRect"/>:</b> an <c>HRESULT</c>-returning export states its own
+/// failure reason, Win32 does not document that this call sets the thread last-error slot, and
+/// no <see cref="GetLastError"/> value describes it.
 /// </para>
 /// </remarks>
 internal interface IShellApi
@@ -66,6 +76,59 @@ internal interface IShellApi
     /// </para>
     /// </remarks>
     bool ShellNotifyIcon(uint dwMessage, ref NOTIFYICONDATAW data);
+
+    /// <summary>
+    /// Calls <c>Shell_NotifyIconGetRect</c> to read the screen rectangle the shell is currently
+    /// showing one icon at.
+    /// </summary>
+    /// <param name="identifier">
+    /// The icon to locate, built with <see cref="NOTIFYICONIDENTIFIER.Create"/> from the tray host
+    /// window and the registered icon id. Passed by reference.
+    /// </param>
+    /// <param name="rectangle">
+    /// Receives the icon's screen rectangle in physical pixels when the call succeeds.
+    /// </param>
+    /// <returns>
+    /// The raw <c>HRESULT</c> the export returned: <c>0</c> (<c>S_OK</c>) means the rectangle is
+    /// valid, and any non-zero value means it is not.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The return value is an <c>HRESULT</c> and must never be read as a <see langword="bool"/>.</b>
+    /// The header declares
+    /// <c>SHSTDAPI Shell_NotifyIconGetRect(_In_ const NOTIFYICONIDENTIFIER*, _Out_ RECT*)</c> -
+    /// <c>SHSTDAPI</c> is <c>HRESULT</c>, not <c>BOOL</c>. Success is <c>0</c> and failure is
+    /// <b>non-zero</b>, so the <c>0</c>-is-failure reading the <see cref="bool"/>-returning members
+    /// invite would invert the result and turn every success into a failure. Every other member of
+    /// this seam returns a <c>bool</c>, an <see cref="IntPtr"/> or a <c>uint</c>; this one
+    /// deliberately does not follow their shape.
+    /// </para>
+    /// <para>
+    /// <b>A failing <c>HRESULT</c> is a legitimate, expected outcome</b> - the icon may be in the
+    /// notification-area overflow flyout or hidden, in which case there is no displayed rectangle
+    /// to report. The caller must treat it as "the shell could not locate the icon" and fall back
+    /// to another anchor (the cursor position), never as an exception and never as an error the
+    /// library raised.
+    /// </para>
+    /// <para>
+    /// <b><see cref="GetLastError"/> is NOT the failure channel for this call.</b> The export
+    /// reports its own status through the <c>HRESULT</c>, and no last-error value describes it; do
+    /// not call <see cref="GetLastError"/> after a failing return here. The rectangle output is
+    /// only valid when the return is <c>0</c>; <see cref="NativeRect.IsEmpty"/> is the cheap
+    /// second opinion on a rectangle that should enclose the icon.
+    /// </para>
+    /// <para>
+    /// <b>The implementation MUST hand the shell the caller's own identifier instance</b> (the
+    /// <c>ref</c> contract the other members document) and write the result into the caller's own
+    /// <paramref name="rectangle"/> variable, so the caller can see which value came from which
+    /// field.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S03</b> (<c>TrayIcon</c>'s menu placement: the shell's icon rectangle,
+    /// not the version-4 callback anchor, is the origin the context menu is positioned from).
+    /// </para>
+    /// </remarks>
+    int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle);
 
     /// <summary>
     /// Calls <c>RegisterWindowMessageW</c> to obtain a session-unique message id for the given

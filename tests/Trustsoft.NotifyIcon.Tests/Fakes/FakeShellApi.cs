@@ -4,8 +4,8 @@ using Trustsoft.NotifyIcon.Interop;
 namespace Trustsoft.NotifyIcon.Tests;
 
 /// <summary>
-/// The <see cref="IShellApi"/> members that <see cref="FakeShellApi"/> can script to fail and
-/// that appear in its call log.
+/// The <see cref="IShellApi"/> members that appear in <see cref="FakeShellApi"/>'s call log,
+/// including the ones that can also be scripted to fail.
 /// </summary>
 /// <remarks>
 /// Member names mirror <see cref="IShellApi"/> one-for-one so a scripted failure reads like the
@@ -15,6 +15,17 @@ internal enum ShellOperation
 {
     /// <summary><see cref="IShellApi.ShellNotifyIcon"/>.</summary>
     ShellNotifyIcon,
+
+    /// <summary>
+    /// <see cref="IShellApi.ShellNotifyIconGetRect"/>. It appears in the call log like every other
+    /// member, but the scripted-failure machinery (<see cref="FakeShellApi.FailNext"/>,
+    /// <see cref="FakeShellApi.FailAlways"/>, <see cref="FakeShellApi.LastErrorToReport"/>) does not
+    /// apply to it: its status channel is an <c>HRESULT</c>, which is scripted directly through
+    /// <see cref="FakeShellApi.GetRectResult"/>. A Win32 error code such as 87 is not a valid
+    /// failure <c>HRESULT</c>, so routing it through the last-error value would script a success
+    /// code as a failure.
+    /// </summary>
+    ShellNotifyIconGetRect,
 
     /// <summary><see cref="IShellApi.RegisterWindowMessage"/>.</summary>
     RegisterWindowMessage,
@@ -61,6 +72,7 @@ internal enum ShellOperation
 /// Human-readable summary for diagnostics and failure reports. <b>Not an assertion
 /// contract</b> - its wording may change. Assert on <see cref="Message"/>, <see cref="Flags"/>,
 /// <see cref="FakeShellApi.ShellNotifyIconDataSnapshots"/>,
+/// <see cref="FakeShellApi.ShellNotifyIconGetRectIdentifiers"/>,
 /// <see cref="FakeShellApi.RegisteredMessages"/> and the counters instead.
 /// </param>
 /// <param name="ThreadId">
@@ -85,6 +97,24 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             dwMessage,
             data.uFlags,
             $"uID={data.uID}; hIcon=0x{data.hIcon.ToInt64():X}; version={data.uTimeoutOrVersion}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.ShellNotifyIconGetRect"/> call.</summary>
+    /// <param name="identifier">The identifier the call was made with.</param>
+    /// <param name="result">The <c>HRESULT</c> the call returned.</param>
+    /// <returns>The recorded call.</returns>
+    /// <remarks>
+    /// The <c>HRESULT</c> is carried in <see cref="Detail"/> rather than in <see cref="Flags"/>,
+    /// which is reserved for flag and selector values - an <c>HRESULT</c> is neither. Assert on
+    /// the member's return value for the status and on
+    /// <see cref="FakeShellApi.ShellNotifyIconGetRectIdentifiers"/> for the fields.
+    /// </remarks>
+    internal static ShellCall FromShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, int result) =>
+        new(
+            nameof(IShellApi.ShellNotifyIconGetRect),
+            0,
+            0,
+            $"hWnd=0x{identifier.hWnd.ToInt64():X}; uID={identifier.uID}; cbSize={identifier.cbSize}; hr=0x{result:X8}",
             Environment.CurrentManagedThreadId);
 
     /// <summary>Builds the record for a <see cref="IShellApi.RegisterWindowMessage"/> call.</summary>
@@ -162,8 +192,8 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
 /// It produces three things the live shell cannot: a deterministic call sequence, injectable
 /// failures (a real <c>Shell_NotifyIconW</c> failure cannot be forced, and a test host may have
 /// no notification area at all) and exact ownership counters. Every call is appended to
-/// <see cref="Calls"/> in order before any result is decided, so a throwing or failing call is
-/// never invisible in the log.
+/// <see cref="Calls"/> in order, and <see cref="IShellApi.ShellNotifyIconGetRect"/> is appended with
+/// the <c>HRESULT</c> it reported, so a throwing or failing call is never invisible in the log.
 /// </para>
 /// <para>
 /// <b>Scripted failures.</b> <see cref="FailNext"/> fails the next N calls to one operation and
@@ -210,6 +240,7 @@ internal sealed class FakeShellApi : IShellApi
 
     private readonly List<ShellCall> _calls = [];
     private readonly List<NOTIFYICONDATAW> _shellNotifyIconData = [];
+    private readonly List<NOTIFYICONIDENTIFIER> _shellNotifyIconGetRectData = [];
     private readonly List<IntPtr> _createdIconHandles = [];
     private readonly List<IntPtr> _destroyedIconHandles = [];
     private readonly List<string> _registeredMessages = [];
@@ -234,6 +265,19 @@ internal sealed class FakeShellApi : IShellApi
     /// </remarks>
     internal IReadOnlyList<ShellCall> ShellNotifyIconCalls =>
         [.. _calls.Where(call => call.Operation == nameof(IShellApi.ShellNotifyIcon))];
+
+    /// <summary>
+    /// Gets a copy of every <see cref="NOTIFYICONIDENTIFIER"/> passed to
+    /// <see cref="IShellApi.ShellNotifyIconGetRect"/>, in call order.
+    /// </summary>
+    /// <remarks>
+    /// The assertion surface for the placement task: the identifier is what tells the shell which
+    /// icon to locate, so "the seam was asked about the host window and the registered id" is an
+    /// assertion about these values. Like <see cref="ShellNotifyIconDataSnapshots"/> this is a copy
+    /// taken at call time, which is a log property and not the seam's <c>ref</c>-aliasing rule;
+    /// <see cref="IdentifierIdWriteBack"/> is the knob that covers the aliasing.
+    /// </remarks>
+    internal IReadOnlyList<NOTIFYICONIDENTIFIER> ShellNotifyIconGetRectIdentifiers => _shellNotifyIconGetRectData;
 
     /// <summary>
     /// Gets a copy of every <see cref="NOTIFYICONDATAW"/> passed to
@@ -331,6 +375,40 @@ internal sealed class FakeShellApi : IShellApi
     /// <summary>Gets or sets the count <see cref="IShellApi.GetGuiResources"/> returns.</summary>
     internal uint GdiObjectCount { get; set; } = 7;
 
+    /// <summary>
+    /// Gets or sets the <c>HRESULT</c> <see cref="IShellApi.ShellNotifyIconGetRect"/> returns.
+    /// </summary>
+    /// <remarks>
+    /// The default is <c>E_FAIL</c> (<c>0x80004005</c>), a real failure code: the live case this
+    /// call has to survive is "the shell could not locate the icon" (it is in the overflow
+    /// flyout, or hidden), and a default of <c>S_OK</c> would let a caller that ignores the result
+    /// pass its own tests. Set it to <c>0</c> for the success path.
+    /// </remarks>
+    internal int GetRectResult { get; set; } = unchecked((int)0x80004005);
+
+    /// <summary>
+    /// Gets or sets the rectangle a succeeding <see cref="IShellApi.ShellNotifyIconGetRect"/> hands
+    /// back through its <c>out</c> parameter.
+    /// </summary>
+    /// <remarks>
+    /// Used only when <see cref="GetRectResult"/> is <c>0</c>; a failure writes an empty
+    /// rectangle, because the call located no icon.
+    /// </remarks>
+    internal NativeRect GetRectRectangle { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value the fake writes into the caller's identifier through the <c>ref</c>
+    /// parameter. <see langword="null"/> (the default) writes nothing, which is what the real
+    /// <c>const</c> input does.
+    /// </summary>
+    /// <remarks>
+    /// This is the aliasing assertion for <see cref="IShellApi.ShellNotifyIconGetRect"/>: the write
+    /// happens inside the fake, so the caller can observe it on its own instance only if the seam
+    /// passes the identifier by reference. A by-value signature would still compile, still record
+    /// the call and still return the same <c>HRESULT</c>; this knob is what distinguishes the two.
+    /// </remarks>
+    internal uint? IdentifierIdWriteBack { get; set; }
+
     /// <summary>Scripts the next call to one operation to fail, once.</summary>
     /// <param name="operation">The operation that should fail.</param>
     /// <remarks>
@@ -388,6 +466,32 @@ internal sealed class FakeShellApi : IShellApi
 
         _lastError = 0;
         return true;
+    }
+
+    /// <inheritdoc />
+    public int ShellNotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out NativeRect rectangle)
+    {
+        _calls.Add(ShellCall.FromShellNotifyIconGetRect(ref identifier, GetRectResult));
+        _shellNotifyIconGetRectData.Add(identifier);
+
+        if (IdentifierIdWriteBack is uint writtenId)
+        {
+            // Written through the ref parameter: the caller sees this on its own instance only
+            // because the seam passes the identifier by reference rather than by value.
+            identifier.uID = writtenId;
+        }
+
+        if (GetRectResult != 0)
+        {
+            // Deliberately stricter than the OS: a failing HRESULT means no rectangle was
+            // located, so the fake hands back an empty one instead of leaving uninitialised
+            // numbers for a caller that forgets to check the result.
+            rectangle = default;
+            return GetRectResult;
+        }
+
+        rectangle = GetRectRectangle;
+        return 0;
     }
 
     /// <inheritdoc />
