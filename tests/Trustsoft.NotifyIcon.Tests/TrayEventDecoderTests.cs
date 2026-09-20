@@ -268,6 +268,258 @@ public sealed class TrayEventDecoderTests
     }
 
     /// <summary>
+    /// Each click event code also classifies as a click, and the classification is the only outcome
+    /// that carries an anchor.
+    /// </summary>
+    /// <remarks>
+    /// This is the positive half of the asymmetry the balloon cases below depend on: a click reads
+    /// <c>wParam</c> and a balloon event must not, so the classification has to expose an anchor for
+    /// one and none for the other. The anchor used is deliberately negative so the sign-extension
+    /// rule is exercised through the classification path as well.
+    /// </remarks>
+    [Theory]
+    [InlineData(ShellConstants.WM_LBUTTONUP, MouseButton.Left, 1)]
+    [InlineData(ShellConstants.WM_LBUTTONDBLCLK, MouseButton.Left, 2)]
+    [InlineData(ShellConstants.WM_CONTEXTMENU, MouseButton.Right, 1)]
+    [InlineData(ShellConstants.WM_MBUTTONUP, MouseButton.Middle, 1)]
+    public void Click_event_codes_classify_as_clicks_with_an_anchor(uint eventCode, MouseButton expectedButton, int expectedClickCount)
+    {
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            CallbackMessage,
+            Anchor(-1920, 300),
+            Payload(eventCode, IconId),
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.Click, classified.Outcome);
+        Assert.Equal(eventCode, classified.EventCode);
+        Assert.Equal(IconId, classified.IconId);
+
+        TrayMouseEvent click = Assert.NotNull(classified.Click);
+        Assert.Equal(expectedButton, click.Button);
+        Assert.Equal(expectedClickCount, click.ClickCount);
+        Assert.Equal(eventCode, click.RawEvent);
+        Assert.Equal(new Point(-1920, 300), click.ScreenAnchor);
+        Assert.Equal(new Point(-1920, 300), classified.Anchor);
+    }
+
+    /// <summary>
+    /// The four balloon callback codes classify as balloon events, and a balloon classification
+    /// carries no click and no anchor.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The anchor assertion is a shape assertion, not a coordinate one: the classification has no
+    /// anchor for these codes because the decoder must not compute one (the header leaves
+    /// <c>wParam</c> undefined outside the mouse range and outside the three named <c>NIN_*</c>
+    /// codes). Asserting a particular point here would be asserting a computation the decoder is
+    /// required not to perform, so the property's absence is what is pinned instead.
+    /// </para>
+    /// <para>
+    /// Each code is also asserted to decode to no click through the legacy entry point, which keeps
+    /// <see cref="TrayEventDecoder.Decode"/>'s documented behaviour for the balloon family pinned
+    /// rather than merely implied by the decode-all-codes test above.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(ShellNotifications.NIN_BALLOONSHOW)]
+    [InlineData(ShellNotifications.NIN_BALLOONHIDE)]
+    [InlineData(ShellNotifications.NIN_BALLOONTIMEOUT)]
+    [InlineData(ShellNotifications.NIN_BALLOONUSERCLICK)]
+    public void Balloon_event_codes_classify_as_balloon_events_without_an_anchor(uint eventCode)
+    {
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            CallbackMessage,
+            Anchor(-1, -1),
+            Payload(eventCode, IconId),
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.BalloonEvent, classified.Outcome);
+        Assert.Equal(eventCode, classified.EventCode);
+        Assert.Equal(IconId, classified.IconId);
+        Assert.Null(classified.Click);
+        Assert.Null(classified.Anchor);
+
+        Assert.Null(TrayEventDecoder.Decode(
+            CallbackMessage,
+            Anchor(-1, -1),
+            Payload(eventCode, IconId),
+            CallbackMessage,
+            IconId));
+    }
+
+    /// <summary>
+    /// A balloon code carrying another icon's id classifies as a foreign icon, not as a balloon.
+    /// </summary>
+    /// <remarks>
+    /// The icon-id filter has to run before the event-code classification, otherwise a shared host
+    /// window would raise one icon's balloon click on another icon. The event code and icon id are
+    /// still reported so the sink can trace which icon sent it.
+    /// </remarks>
+    [Theory]
+    [InlineData(IconId + 1)]
+    [InlineData(0u)]
+    [InlineData(0xFFFFu)]
+    public void Balloon_event_from_a_foreign_icon_classifies_as_a_foreign_icon(uint payloadIconId)
+    {
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            CallbackMessage,
+            Anchor(10, 20),
+            Payload(ShellNotifications.NIN_BALLOONUSERCLICK, payloadIconId),
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.ForeignIcon, classified.Outcome);
+        Assert.Equal(ShellNotifications.NIN_BALLOONUSERCLICK, classified.EventCode);
+        Assert.Equal(payloadIconId, classified.IconId);
+        Assert.Null(classified.Click);
+        Assert.Null(classified.Anchor);
+    }
+
+    /// <summary>
+    /// A balloon code delivered on a message that is not the callback message classifies as not our
+    /// callback, and nothing about that message's parameters is decoded.
+    /// </summary>
+    /// <remarks>
+    /// The <c>NIN_*</c> codes live in the same <c>WM_USER..WM_USER+7</c> band as ordinary host
+    /// window messages, so a payload-only match would route an unrelated message into the balloon
+    /// machinery. The zero event code and icon id are part of the contract: a foreign message's
+    /// parameters are not ours to interpret, which is why the check comes first.
+    /// </remarks>
+    [Theory]
+    [InlineData(CallbackMessage + 1)]
+    [InlineData(ShellNotifications.NIN_SELECT)] // Shares WM_USER's value, i.e. the neighbouring id.
+    [InlineData(ShellConstants.WM_DESTROY)]
+    [InlineData(0u)]
+    [InlineData(0x8000u)]
+    [InlineData(0xFFFFu)]
+    public void Balloon_event_on_a_non_callback_message_classifies_as_not_our_callback(uint message)
+    {
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            message,
+            Anchor(10, 20),
+            Payload(ShellNotifications.NIN_BALLOONUSERCLICK, IconId),
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.NotOurCallback, classified.Outcome);
+        Assert.Equal(0u, classified.EventCode);
+        Assert.Equal(0u, classified.IconId);
+        Assert.Null(classified.Click);
+        Assert.Null(classified.Anchor);
+    }
+
+    /// <summary>
+    /// The two popup codes stay unclassified rather than joining the balloon family.
+    /// </summary>
+    /// <remarks>
+    /// <c>NIN_POPUPOPEN</c> and <c>NIN_POPUPCLOSE</c> are the balloon codes' immediate neighbours
+    /// (<c>WM_USER + 6</c>/<c>+7</c>), so a family matched by range instead of by member would
+    /// silently classify them as balloon events - and the sink would then trace a popup as a balloon
+    /// phase. Matching by member is the decision (D033) this pins at the boundary.
+    /// </remarks>
+    [Theory]
+    [InlineData(ShellNotifications.NIN_POPUPOPEN)]
+    [InlineData(ShellNotifications.NIN_POPUPCLOSE)]
+    public void Popup_codes_stay_unmapped(uint eventCode)
+    {
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            CallbackMessage,
+            Anchor(10, 20),
+            Payload(eventCode, IconId),
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.UnmappedEventCode, classified.Outcome);
+        Assert.Equal(eventCode, classified.EventCode);
+        Assert.Null(classified.Click);
+        Assert.Null(classified.Anchor);
+    }
+
+    /// <summary>
+    /// Every 16-bit event code classifies exactly once, the four clicks and the four balloon codes
+    /// are the only actionable ones, and a click is the only outcome that yields an anchor.
+    /// </summary>
+    /// <remarks>
+    /// The count assertion is what keeps the balloon branch from growing by accident: widening the
+    /// family to a range or dropping a member changes this total, so the balloon surface cannot change
+    /// without the tests following. The per-outcome anchor assertion is the structural half of "the
+    /// decoder never reads <c>wParam</c> except for a click", applied to every code rather than to the
+    /// four balloon ones.
+    /// </remarks>
+    [Fact]
+    public void Every_event_code_classifies_once_and_only_eight_are_actionable()
+    {
+        int clicks = 0;
+        int balloons = 0;
+        int unmapped = 0;
+
+        for (uint eventCode = 0; eventCode <= 0xFFFF; eventCode++)
+        {
+            TrayCallbackClassification classified = TrayEventDecoder.Classify(
+                CallbackMessage,
+                Anchor(-1, -1),
+                Payload(eventCode, IconId),
+                CallbackMessage,
+                IconId);
+
+            Assert.Equal(eventCode, classified.EventCode);
+            Assert.Equal(IconId, classified.IconId);
+
+            switch (classified.Outcome)
+            {
+                case TrayCallbackOutcome.Click:
+                    clicks++;
+                    Assert.NotNull(classified.Click);
+                    Assert.NotNull(classified.Anchor);
+                    break;
+                case TrayCallbackOutcome.BalloonEvent:
+                    balloons++;
+                    Assert.Null(classified.Click);
+                    Assert.Null(classified.Anchor);
+                    break;
+                case TrayCallbackOutcome.UnmappedEventCode:
+                    unmapped++;
+                    Assert.Null(classified.Click);
+                    Assert.Null(classified.Anchor);
+                    break;
+            }
+        }
+
+        Assert.Equal(4, clicks);
+        Assert.Equal(4, balloons);
+        Assert.Equal(0x10000 - 8, unmapped);
+        Assert.Equal(0x10000, clicks + balloons + unmapped);
+    }
+
+    /// <summary>
+    /// The classification ignores the unset high bits of the pointer-width parameters, exactly as
+    /// <see cref="TrayEventDecoder.Decode"/> does.
+    /// </summary>
+    /// <remarks>
+    /// The shell fills the low 32 bits and leaves the rest undefined, so a balloon callback whose
+    /// upper half happens to be set must classify the same way as one whose upper half is zero.
+    /// </remarks>
+    [Fact]
+    public void Upper_32_bits_of_the_parameters_do_not_change_a_balloon_classification()
+    {
+        IntPtr lParam = new(unchecked((long)0xFFFFFFFF00000000UL | (uint)Payload(ShellNotifications.NIN_BALLOONUSERCLICK, IconId).ToInt64()));
+        IntPtr wParam = new(unchecked((long)0xFFFFFFFF00000000UL | (uint)Anchor(120, 340).ToInt64()));
+
+        TrayCallbackClassification classified = TrayEventDecoder.Classify(
+            CallbackMessage,
+            wParam,
+            lParam,
+            CallbackMessage,
+            IconId);
+
+        Assert.Equal(TrayCallbackOutcome.BalloonEvent, classified.Outcome);
+        Assert.Equal(ShellNotifications.NIN_BALLOONUSERCLICK, classified.EventCode);
+        Assert.Null(classified.Anchor);
+    }
+
+    /// <summary>
     /// Decodes a left click with the anchor under test.
     /// </summary>
     /// <param name="wParam">The anchor parameter.</param>

@@ -69,6 +69,108 @@ public sealed class ShellConstantsTests
     }
 
     /// <summary>
+    /// <c>NIIF_*</c> balloon icon flags from <c>shellapi.h</c>.
+    /// </summary>
+    /// <remarks>
+    /// This family is not a bit set in the way <c>NIF_*</c> is - the severities are an ordinal in the
+    /// low nibble and only the sound, large-icon and quiet-time members are plain bits - so only the
+    /// latter three are asserted to be single bits. Every value is asserted against its header
+    /// literal because <c>dwInfoFlags</c> reaches the shell as a raw number: a transcription slip
+    /// produces a balloon with the wrong icon and no error, which is the same silent-failure class
+    /// the <c>NIF_*</c> set above exists to catch.
+    /// </remarks>
+    [Fact]
+    public void NIIF_family_matches_shellapi_h()
+    {
+        Assert.Equal(0x00000000u, ShellConstants.NIIF_NONE);
+        Assert.Equal(0x00000001u, ShellConstants.NIIF_INFO);
+        Assert.Equal(0x00000002u, ShellConstants.NIIF_WARNING);
+        Assert.Equal(0x00000003u, ShellConstants.NIIF_ERROR);
+        Assert.Equal(0x00000004u, ShellConstants.NIIF_USER);
+        Assert.Equal(0x0000000Fu, ShellConstants.NIIF_ICON_MASK);
+        Assert.Equal(0x00000010u, ShellConstants.NIIF_NOSOUND);
+        Assert.Equal(0x00000020u, ShellConstants.NIIF_LARGE_ICON);
+        Assert.Equal(0x00000080u, ShellConstants.NIIF_RESPECT_QUIET_TIME);
+
+        Assert.Equal(1, System.Numerics.BitOperations.PopCount(ShellConstants.NIIF_NOSOUND));
+        Assert.Equal(1, System.Numerics.BitOperations.PopCount(ShellConstants.NIIF_LARGE_ICON));
+        Assert.Equal(1, System.Numerics.BitOperations.PopCount(ShellConstants.NIIF_RESPECT_QUIET_TIME));
+    }
+
+    /// <summary>
+    /// The severity is an ordinal selected by <c>NIIF_ICON_MASK</c> rather than a bit, and the
+    /// realtime bit has no member in this family at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two silent traps are pinned here. First, the severity values are exactly <c>0..3</c> - the
+    /// header states the icon flags "are mutually exclusive and take only the lowest 2 bits" - so a
+    /// "fifth severity" is not representable; <see cref="ShellConstants.NIIF_USER"/> uses the value
+    /// above <c>NIIF_ERROR</c> to select the caller's own icon from <c>hBalloonIcon</c> instead, and
+    /// its low two bits are <c>NIIF_NONE</c>.
+    /// </para>
+    /// <para>
+    /// Second, <c>uFlags</c> and <c>dwInfoFlags</c> are different fields whose bit numbers overlap:
+    /// <c>NIF_INFO</c> and <c>NIIF_NOSOUND</c> are both <c>0x10</c>. Writing a flag into the wrong
+    /// field is therefore a no-op rather than a build error, and the overlap is asserted rather than
+    /// "cleaned up", because renumbering a constant the header defines would be the real bug. The
+    /// realtime bit is asserted to have no member in this family, which is what makes "it belongs in
+    /// <c>uFlags</c>" checkable instead of merely documented.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void NIIF_severity_is_the_low_nibble_and_realtime_is_not_a_balloon_flag()
+    {
+        uint[] severities =
+        [
+            ShellConstants.NIIF_NONE,
+            ShellConstants.NIIF_INFO,
+            ShellConstants.NIIF_WARNING,
+            ShellConstants.NIIF_ERROR,
+        ];
+
+        uint[] expectedSeverities = [0u, 1u, 2u, 3u];
+        Assert.Equal(expectedSeverities, severities);
+        Assert.All(severities, severity => Assert.Equal(severity, severity & ShellConstants.NIIF_ICON_MASK));
+
+        // NIIF_USER is outside the severity range, and its low two bits are NIIF_NONE: reading it as
+        // a severity would report "no icon" while asking the shell for a custom one.
+        Assert.True(ShellConstants.NIIF_USER > ShellConstants.NIIF_ERROR);
+        Assert.Equal(ShellConstants.NIIF_NONE, ShellConstants.NIIF_USER & 0x3u);
+
+        // The non-severity members live outside the nibble, so a severity can be OR-ed with them
+        // without disturbing which icon is shown.
+        Assert.Equal(0u, ShellConstants.NIIF_ICON_MASK & ShellConstants.NIIF_NOSOUND);
+        Assert.Equal(0u, ShellConstants.NIIF_ICON_MASK & ShellConstants.NIIF_LARGE_ICON);
+        Assert.Equal(0u, ShellConstants.NIIF_ICON_MASK & ShellConstants.NIIF_RESPECT_QUIET_TIME);
+
+        uint[] balloonFlags =
+        [
+            ShellConstants.NIIF_NONE,
+            ShellConstants.NIIF_INFO,
+            ShellConstants.NIIF_WARNING,
+            ShellConstants.NIIF_ERROR,
+            ShellConstants.NIIF_USER,
+            ShellConstants.NIIF_ICON_MASK,
+            ShellConstants.NIIF_NOSOUND,
+            ShellConstants.NIIF_LARGE_ICON,
+            ShellConstants.NIIF_RESPECT_QUIET_TIME,
+        ];
+
+        Assert.Equal(9, balloonFlags.Length);
+        Assert.Equal(balloonFlags.Length, balloonFlags.Distinct().Count());
+
+        // The documented cross-field overlap, asserted so nobody "fixes" it: the same bit number
+        // means "the balloon members are valid" in uFlags and "no sound" in dwInfoFlags.
+        Assert.Equal(ShellConstants.NIF_INFO, ShellConstants.NIIF_NOSOUND);
+
+        // NIF_REALTIME, by contrast, has no member at its value in this family. If this ever fails,
+        // a balloon flag was renumbered onto the realtime bit and misplacing the bit stopped being
+        // detectable at all.
+        Assert.DoesNotContain(ShellConstants.NIF_REALTIME, balloonFlags);
+    }
+
+    /// <summary>
     /// <c>NIN_*</c> notification event codes from <c>shellapi.h</c>, plus the
     /// <c>NIN_KEYSELECT</c> relation the header defines by OR-ing rather than by a literal.
     /// </summary>

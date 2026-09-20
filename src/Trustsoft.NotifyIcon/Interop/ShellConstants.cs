@@ -80,6 +80,114 @@ internal static class ShellConstants
     internal const uint NIF_SHOWTIP = 0x00000080;
 
     // ---------------------------------------------------------------------------------------
+    // Balloon icon flags (shellapi.h, NIIF_*) - written into NOTIFYICONDATAW.dwInfoFlags.
+    // This family is not a bit set like NIF_* above: the severity is a small ordinal in the
+    // low nibble, and the header states the icon flags "are mutually exclusive and take only the
+    // lowest 2 bits". Only the sound, large-icon and quiet-time members are plain single bits.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Shows the balloon with no severity icon. <c>NIIF_NONE</c>. One of the four severity values
+    /// selected by <see cref="NIIF_ICON_MASK"/>.
+    /// </summary>
+    internal const uint NIIF_NONE = 0x00000000;
+
+    /// <summary>
+    /// Shows the balloon with the information icon. <c>NIIF_INFO</c>. One of the four severity
+    /// values selected by <see cref="NIIF_ICON_MASK"/>.
+    /// </summary>
+    internal const uint NIIF_INFO = 0x00000001;
+
+    /// <summary>
+    /// Shows the balloon with the warning icon. <c>NIIF_WARNING</c>. One of the four severity
+    /// values selected by <see cref="NIIF_ICON_MASK"/>.
+    /// </summary>
+    internal const uint NIIF_WARNING = 0x00000002;
+
+    /// <summary>
+    /// Shows the balloon with the error icon. <c>NIIF_ERROR</c>. One of the four severity values
+    /// selected by <see cref="NIIF_ICON_MASK"/>.
+    /// </summary>
+    internal const uint NIIF_ERROR = 0x00000003;
+
+    /// <summary>
+    /// Uses the caller's own icon from <see cref="NOTIFYICONDATAW.hBalloonIcon"/> instead of one of
+    /// the four built-in severities. <c>NIIF_USER</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not a severity.</b> Its value sits above <see cref="NIIF_ERROR"/> rather than inside the
+    /// severity ordinal, and its low two bits are <see cref="NIIF_NONE"/> - so reading it as a
+    /// severity would report "no icon" while asking for a custom one. It is declared here because
+    /// the value is part of the family and a reader comparing <c>dwInfoFlags</c> against the header
+    /// needs it; the library does not use it in v1 (a custom balloon icon is out of M001's scope,
+    /// so <see cref="NOTIFYICONDATAW.hBalloonIcon"/> stays zero).
+    /// </remarks>
+    internal const uint NIIF_USER = 0x00000004;
+
+    /// <summary>
+    /// The mask that selects the balloon's severity out of
+    /// <see cref="NOTIFYICONDATAW.dwInfoFlags"/>. <c>NIIF_ICON_MASK</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The severity is not a bit set.</b> Unlike every member of the <c>NIF_*</c> family above
+    /// and the other <c>NIIF_*</c> members below, the four severity values
+    /// (<see cref="NIIF_NONE"/>..<see cref="NIIF_ERROR"/>) are a small ordinal: <c>dwInfoFlags &amp;
+    /// NIIF_ICON_MASK</c> <em>is</em> the severity, so the values are compared rather than tested
+    /// for bits. The header adds that the icon flags "are mutually exclusive and take only the
+    /// lowest 2 bits" - the four severities are exactly <c>0..3</c>, which is why
+    /// <see cref="NIIF_USER"/> (whose low two bits are zero) is a separate selector and not a
+    /// fifth severity.
+    /// </para>
+    /// <para>
+    /// <b>Realtime is not a member of this family, and not this field.</b>
+    /// <see cref="NIF_REALTIME"/> is a <c>NIF_*</c> bit: it belongs in
+    /// <see cref="NOTIFYICONDATAW.uFlags"/>, never in <see cref="NOTIFYICONDATAW.dwInfoFlags"/>. The
+    /// two fields do legitimately share bit numbers - <see cref="NIIF_NOSOUND"/> and
+    /// <see cref="NIF_INFO"/> are both <c>0x10</c> in their respective fields - so a constant that
+    /// is correct in one field is silently meaningless in the other, which is exactly how a
+    /// misplaced realtime request becomes invisible. There is deliberately no <c>NIIF_*</c> member
+    /// at <c>NIF_REALTIME</c>'s value, and the placement rule is asserted by
+    /// <c>ShellConstantsTests</c>.
+    /// </para>
+    /// </remarks>
+    internal const uint NIIF_ICON_MASK = 0x0000000F;
+
+    /// <summary>
+    /// Shows the balloon silently. <c>NIIF_NOSOUND</c>.
+    /// </summary>
+    /// <remarks>
+    /// A plain bit, not part of the severity ordinal, so it is OR-ed alongside a severity rather
+    /// than replacing one. Its numeric value equals <see cref="NIF_INFO"/>: the same bit number in
+    /// two different fields, which is why this constant may only ever be written to
+    /// <see cref="NOTIFYICONDATAW.dwInfoFlags"/>.
+    /// </remarks>
+    internal const uint NIIF_NOSOUND = 0x00000010;
+
+    /// <summary>
+    /// Uses the large version of the balloon icon. <c>NIIF_LARGE_ICON</c>.
+    /// </summary>
+    /// <remarks>
+    /// Requires <see cref="NIIF_USER"/> and a custom <c>hBalloonIcon</c>, both of which are out of
+    /// scope for M001; declared so the full family is present and a reader of <c>dwInfoFlags</c>
+    /// does not have to consult the header.
+    /// </remarks>
+    internal const uint NIIF_LARGE_ICON = 0x00000020;
+
+    /// <summary>
+    /// Asks the shell to honour quiet time for this balloon. <c>NIIF_RESPECT_QUIET_TIME</c>.
+    /// </summary>
+    /// <remarks>
+    /// Opt-in, not the default, and the tradeoff is the point: during quiet time (the first hour
+    /// after a new account is created or the OS is upgraded) a notification carrying this flag is
+    /// <em>dismissed unshown</em> rather than queued, while outside quiet time the flag has no
+    /// effect. Honouring quiet time therefore means choosing to have some balloons suppressed
+    /// silently - a choice the library leaves to the caller (R016) instead of making it for them.
+    /// Only meaningful together with <see cref="NIF_INFO"/>.
+    /// </remarks>
+    internal const uint NIIF_RESPECT_QUIET_TIME = 0x00000080;
+
+    // ---------------------------------------------------------------------------------------
     // Version and state values.
     // ---------------------------------------------------------------------------------------
 
