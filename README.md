@@ -19,12 +19,23 @@ Working today:
   `NIM_SETVERSION(NOTIFYICON_VERSION_4)`), shows a tooltip, replaces the displayed image, removes
   the icon and disposes cleanly.
 - `TrayIcon.IconSource` accepts any WPF `ImageSource` (bitmap or vector drawing) and converts it to
-  an `HICON` with strict GDI handle ownership, so a long-running process does not leak handles.
+  an `HICON` with strict GDI handle ownership. **A bitmap source is exactly flat** across repeated
+  replacement (measured: 0 GDI objects after 50 replacements). **A vector source is not:** it is
+  rasterized through a `RenderTargetBitmap` per replacement, which costs about two GDI objects per
+  change until the GC finalizes them (measured: +102 after 50 replacements, +396 after 200, and no
+  more than +10 left after a full collection). The ownership of the library's own handles is exact;
+  the temporary cost is the WPF rasterizer's. See [finding F1](docs/UAT-S01.md#gdi-evidence-as-measurements-r007).
 - `Visible` and the other properties may be set from any thread; the work is marshalled to the
   owning dispatcher.
 - Failures are named: `TrayIconException` carries an `Operation` and a `Win32ErrorCode`, and runtime
   failures are raised through the bubbling `TrayError` routed event after one retry.
 - Target frameworks: `net8.0-windows`, `net9.0-windows`, `net10.0-windows`. Windows only.
+
+**Known limitation (measured 2026-09-20, [F1](docs/UAT-S01.md#gdi-evidence-as-measurements-r007)):**
+replacing a **vector** icon at a high rate accumulates roughly two GDI objects per replacement
+until a GC runs, so a drawing-based icon is not "flat" between collections. Bitmap-based icons are
+flat. A follow-up change is needed either in the conversion (reuse one rasterizer) or in what the
+library promises for drawings.
 
 **Planned, not implemented** — nothing below exists yet, so do not code against it:
 
