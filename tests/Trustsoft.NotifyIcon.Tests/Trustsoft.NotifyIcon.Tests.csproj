@@ -12,6 +12,15 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <!--
+      Supplies [StaFact] and [StaTheory]. The hand-rolled alternative (a custom XunitTestCase
+      plus a runner/invoker pair) was written first, but plain [Fact] carries no discovery hook
+      in xunit v2, so the bodies kept running on an MTA thread and the harness silently did
+      nothing. The supported extension point is [XunitTestCaseDiscoverer], and this package is
+      the battle-tested implementation of exactly that. Test-graph only: the shipped library
+      stays dependency-free (R011, D001).
+    -->
+    <PackageReference Include="Xunit.StaFact" Version="1.1.11" />
   </ItemGroup>
 
   <ItemGroup>
