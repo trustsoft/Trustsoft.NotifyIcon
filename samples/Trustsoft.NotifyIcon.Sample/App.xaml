@@ -1,0 +1,10 @@
+<Application x:Class="Trustsoft.NotifyIcon.Sample.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!--
+      No StartupUri on purpose: the premise of this project is an application that owns a tray icon
+      and NO window (R001). The application therefore never shuts down by itself - OnExplicitShutdown
+      plus the Exit/SessionEnding handlers in App.xaml.cs are what end the process.
+    -->
+</Application>

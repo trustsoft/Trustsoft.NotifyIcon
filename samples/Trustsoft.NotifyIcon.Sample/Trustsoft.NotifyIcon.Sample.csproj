@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      A single TFM is enough for the live proof: the three-TFM contract belongs to the library
+      (net8.0-windows;net9.0-windows;net10.0-windows) and the sample only has to be a real WPF
+      application that shows the icon.
+    -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Trustsoft.NotifyIcon.Sample</AssemblyName>
+    <RootNamespace>Trustsoft.NotifyIcon.Sample</RootNamespace>
+    <!--
+      A demonstration app, never a package. Without this, `dotnet pack Trustsoft.NotifyIcon.sln`
+      would try to produce a sample nupkg next to the library.
+    -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj" />
+  </ItemGroup>
+
+  <!--
+    No PackageReference entries, on purpose (R011, D001): this sample is the counterexample-free
+    demonstration that a real tray icon needs no System.Windows.Forms, no System.Drawing.Common and
+    no tray-helper package. Everything it needs beyond WPF comes from the library under test.
+  -->
+
+</Project>

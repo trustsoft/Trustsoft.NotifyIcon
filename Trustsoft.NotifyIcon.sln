@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Trustsoft.NotifyIcon", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Trustsoft.NotifyIcon.Tests", "tests\Trustsoft.NotifyIcon.Tests\Trustsoft.NotifyIcon.Tests.csproj", "{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A02}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Trustsoft.NotifyIcon.Sample", "samples\Trustsoft.NotifyIcon.Sample\Trustsoft.NotifyIcon.Sample.csproj", "{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A03}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,6 +22,10 @@ Global
 		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A02}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A02}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A02}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B1D9A2E-6C4E-4F1B-9A3D-7E5C2B8F1A03}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
