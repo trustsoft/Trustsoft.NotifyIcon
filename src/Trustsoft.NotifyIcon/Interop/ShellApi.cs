@@ -28,8 +28,10 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// again on the way back into managed code.
 /// </para>
 /// <para>
-/// <b>All entry points are named explicitly with <c>ExactSpelling = true</c>.</b> Nine of these
-/// ten functions exist as a single unsuffixed export, but relying on the runtime's
+/// <b>All entry points are named explicitly with <c>ExactSpelling = true</c>.</b> The
+/// <c>CreateDIBSection</c> pair are two typed views of one export, so the count of declarations
+/// is one higher than the count of distinct functions; every other declaration is one function.
+/// These functions exist as a single unsuffixed export, but relying on the runtime's
 /// <c>CharSet</c>-driven suffix probing for them works only as long as the <c>CharSet</c> of the
 /// declaration stays <c>None</c>/<c>Ansi</c> - and <c>Shell_NotifyIconW</c> and
 /// <c>RegisterWindowMessageW</c> do need a <c>CharSet</c>. Naming every entry point and
@@ -74,6 +76,22 @@ internal sealed class ShellApi : IShellApi
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         IntPtr result = CreateIconIndirectNative(ref iconInfo);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPV5HEADER header, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        IntPtr result = CreateDIBSectionV5Native(hdc, ref header, usage, out bits, hSection, offset);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        IntPtr result = CreateDIBSectionInfoNative(hdc, ref bitmapInfo, usage, out bits, hSection, offset);
         CaptureLastError();
         return result;
     }
@@ -132,6 +150,22 @@ internal sealed class ShellApi : IShellApi
     /// </remarks>
     [DllImport("user32.dll", EntryPoint = "CreateIconIndirect", SetLastError = true, ExactSpelling = true)]
     private static extern IntPtr CreateIconIndirectNative(ref ICONINFO piconinfo);
+
+    /// <remarks>
+    /// <c>gdi32.dll</c> exports one unsuffixed <c>CreateDIBSection</c>, declared twice here in its
+    /// two typed views (see <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPV5HEADER, uint, out IntPtr, IntPtr, uint)"/>).
+    /// The <c>out</c> pixel pointer belongs to the DIB section and must not be freed by the
+    /// caller: releasing the <c>HBITMAP</c> releases the pixels.
+    /// </remarks>
+    [DllImport("gdi32.dll", EntryPoint = "CreateDIBSection", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr CreateDIBSectionV5Native(IntPtr hdc, ref BITMAPV5HEADER pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
+
+    /// <remarks>
+    /// The version-3 view, used for the monochrome mask. See
+    /// <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPINFO, uint, out IntPtr, IntPtr, uint)"/>.
+    /// </remarks>
+    [DllImport("gdi32.dll", EntryPoint = "CreateDIBSection", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr CreateDIBSectionInfoNative(IntPtr hdc, ref BITMAPINFO pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
 
     [DllImport("user32.dll", EntryPoint = "DestroyIcon", SetLastError = true, ExactSpelling = true)]
     private static extern bool DestroyIconNative(IntPtr hIcon);

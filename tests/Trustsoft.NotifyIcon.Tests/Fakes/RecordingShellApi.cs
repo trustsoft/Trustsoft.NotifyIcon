@@ -18,8 +18,9 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// <para>
 /// <b>Use it only in tests that are explicitly about signature agreement</b>, and never to
 /// perform a real <c>NIM_ADD</c>: putting an icon in the developer's notification area from a
-/// unit test is not acceptable. Side-effect-free calls (registering a message name, reading the
-/// process GDI count) and read-only failures are the intended surface.
+/// unit test is not acceptable. Side-effect-free calls (registering a message name, creating and
+/// deleting a private DIB section, reading the process GDI count) and read-only failures are the
+/// intended surface.
 /// </para>
 /// <para>
 /// Delegation preserves <c>ref</c> aliasing: the caller's own <see cref="NOTIFYICONDATAW"/> and
@@ -70,6 +71,20 @@ internal sealed class RecordingShellApi : IShellApi
     {
         _calls.Add(ShellCall.FromCreateIconIndirect(ref iconInfo));
         return _inner.CreateIconIndirect(ref iconInfo);
+    }
+
+    /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPV5HEADER header, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        _calls.Add(ShellCall.FromCreateDibSection(ref header, usage));
+        return _inner.CreateDIBSection(hdc, ref header, usage, out bits, hSection, offset);
+    }
+
+    /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        _calls.Add(ShellCall.FromCreateDibSection(ref bitmapInfo, usage));
+        return _inner.CreateDIBSection(hdc, ref bitmapInfo, usage, out bits, hSection, offset);
     }
 
     /// <inheritdoc />

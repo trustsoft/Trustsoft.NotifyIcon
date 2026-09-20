@@ -104,6 +104,65 @@ internal interface IShellApi
     IntPtr CreateIconIndirect(ref ICONINFO iconInfo);
 
     /// <summary>
+    /// Calls <c>CreateDIBSection</c> to allocate a device-independent bitmap described by a
+    /// <b>version-5</b> header.
+    /// </summary>
+    /// <param name="hdc">The device context the bitmap is compatible with;
+    /// <see cref="IntPtr.Zero"/> is accepted and is what the icon path passes.</param>
+    /// <param name="header">The bitmap description; <c>bV5Size</c> must be 124.</param>
+    /// <param name="usage">How the colour table is interpreted, <c>DIB_RGB_COLORS</c> here.</param>
+    /// <param name="bits">Receives the address of the pixel buffer, or
+    /// <see cref="IntPtr.Zero"/> when the call fails. The pixels belong to the bitmap and must
+    /// not be freed separately - deleting the <c>HBITMAP</c> releases them.</param>
+    /// <param name="hSection">A file-mapping section to back the pixels;
+    /// <see cref="IntPtr.Zero"/> asks for a private allocation, which is what the icon path
+    /// uses.</param>
+    /// <param name="offset">The byte offset into <paramref name="hSection"/>; 0 here.</param>
+    /// <returns>The new <c>HBITMAP</c>, or <see cref="IntPtr.Zero"/> on failure, in which case
+    /// <see cref="GetLastError"/> carries the reason.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Two overloads, one Win32 export.</b> <c>CreateDIBSection</c> takes a
+    /// <c>BITMAPINFO*</c> whose meaning depends on the size written into its first field, so the
+    /// seam exposes the two typed views the icon path needs rather than an untyped pointer: a
+    /// <see cref="BITMAPV5HEADER"/> for the 32bpp colour bitmap, and a
+    /// <see cref="BITMAPINFO"/> (a version-3 header plus its two-entry table) for the
+    /// monochrome AND mask. Both are the same native call, and the full 124-byte header is the
+    /// one whose extra fields the colour bitmap could not be described without.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by T06 only</b> (<c>HiconFactory</c>), and it is on the seam for a specific
+    /// reason: the two bitmaps are the GDI objects R007 is about, so their creation and release
+    /// have to be observable by the tests. With the scripted fake in place a conversion allocates
+    /// no real GDI object at all, which is what lets a unit test assert both that the count does
+    /// not grow and that the release calls were made.
+    /// </para>
+    /// </remarks>
+    IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPV5HEADER header, uint usage, out IntPtr bits, IntPtr hSection, uint offset);
+
+    /// <summary>
+    /// Calls <c>CreateDIBSection</c> to allocate a device-independent bitmap described by a
+    /// version-3 <see cref="BITMAPINFOHEADER"/> plus its colour table.
+    /// </summary>
+    /// <param name="hdc">The device context the bitmap is compatible with;
+    /// <see cref="IntPtr.Zero"/> is accepted and is what the icon path passes.</param>
+    /// <param name="bitmapInfo">The header and the colour-table entries GDI will read. Declaring
+    /// the two entries inside the structure is what keeps that read in bounds for a 1bpp
+    /// bitmap.</param>
+    /// <param name="usage">How the colour table is interpreted, <c>DIB_RGB_COLORS</c> here.</param>
+    /// <param name="bits">Receives the address of the pixel buffer, or
+    /// <see cref="IntPtr.Zero"/> when the call fails.</param>
+    /// <param name="hSection">A file-mapping section; <see cref="IntPtr.Zero"/> for a private
+    /// allocation, which is what the icon path uses.</param>
+    /// <param name="offset">The byte offset into <paramref name="hSection"/>; 0 here.</param>
+    /// <returns>The new <c>HBITMAP</c>, or <see cref="IntPtr.Zero"/> on failure.</returns>
+    /// <remarks>
+    /// <b>Consumed by T06 only</b>, for the icon's monochrome AND mask. See the version-5
+    /// overload above for why the seam carries two typed views of one export.
+    /// </remarks>
+    IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr hSection, uint offset);
+
+    /// <summary>
     /// Calls <c>DestroyIcon</c> to release an icon created by <see cref="CreateIconIndirect"/>.
     /// </summary>
     /// <param name="hIcon">The icon handle to release.</param>

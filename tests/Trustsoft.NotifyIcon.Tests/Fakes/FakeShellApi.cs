@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Trustsoft.NotifyIcon.Interop;
 
 namespace Trustsoft.NotifyIcon.Tests;
@@ -20,6 +21,10 @@ internal enum ShellOperation
 
     /// <summary><see cref="IShellApi.CreateIconIndirect"/>.</summary>
     CreateIconIndirect,
+
+    /// <summary>Both <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPV5HEADER, uint, out IntPtr, IntPtr, uint)"/>
+    /// overloads: one native export, two typed views.</summary>
+    CreateDIBSection,
 
     /// <summary><see cref="IShellApi.DestroyIcon"/>.</summary>
     DestroyIcon,
@@ -92,6 +97,28 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             iconInfo.fIcon ? 1u : 0u,
             $"hbmMask=0x{iconInfo.hbmMask.ToInt64():X}; hbmColor=0x{iconInfo.hbmColor.ToInt64():X}");
 
+    /// <summary>Builds the record for a <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPV5HEADER, uint, out IntPtr, IntPtr, uint)"/> call.</summary>
+    /// <param name="header">The version-5 header describing the bitmap.</param>
+    /// <param name="usage">The colour-table interpretation.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromCreateDibSection(ref BITMAPV5HEADER header, uint usage) =>
+        new(
+            nameof(IShellApi.CreateDIBSection),
+            0,
+            usage,
+            $"V5 size={header.bV5Size}; width={header.bV5Width}; height={header.bV5Height}; bitCount={header.bV5BitCount}; sizeImage={header.bV5SizeImage}");
+
+    /// <summary>Builds the record for a <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPINFO, uint, out IntPtr, IntPtr, uint)"/> call.</summary>
+    /// <param name="bitmapInfo">The version-3 header and colour table describing the bitmap.</param>
+    /// <param name="usage">The colour-table interpretation.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromCreateDibSection(ref BITMAPINFO bitmapInfo, uint usage) =>
+        new(
+            nameof(IShellApi.CreateDIBSection),
+            0,
+            usage,
+            $"V3 size={bitmapInfo.bmiHeader.biSize}; width={bitmapInfo.bmiHeader.biWidth}; height={bitmapInfo.bmiHeader.biHeight}; bitCount={bitmapInfo.bmiHeader.biBitCount}; sizeImage={bitmapInfo.bmiHeader.biSizeImage}");
+
     /// <summary>Builds the record for a <see cref="IShellApi.DestroyIcon"/> call.</summary>
     /// <param name="hIcon">The icon handle being released.</param>
     /// <returns>The recorded call.</returns>
@@ -149,6 +176,15 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
 /// requirement, which the real implementation satisfies by passing the caller's own instance
 /// straight to the shell.
 /// </para>
+/// <para>
+/// <b>DIB sections are emulated, and deliberately not with real GDI objects.</b>
+/// <c>CreateDIBSection</c> allocates zero-filled unmanaged memory for the pixels and returns a
+/// distinct fake handle, and <c>DeleteObject</c> captures that memory's contents before
+/// releasing it (<see cref="DibSectionRequest.ReleasedContent"/>). That means a conversion driven
+/// by this fake allocates <em>no</em> real GDI object at all, which is what makes a
+/// handle-count assertion in a unit test meaningful: the count can only stay flat if nothing
+/// bypassed the seam, and the release calls are still counted exactly.
+/// </para>
 /// </remarks>
 internal sealed class FakeShellApi : IShellApi
 {
@@ -167,9 +203,14 @@ internal sealed class FakeShellApi : IShellApi
     private readonly List<NOTIFYICONDATAW> _shellNotifyIconData = [];
     private readonly List<IntPtr> _createdIconHandles = [];
     private readonly List<string> _registeredMessages = [];
+    private readonly List<DibSectionRequest> _dibSections = [];
+    private readonly Dictionary<IntPtr, EmulatedDib> _emulatedDibs = [];
     private readonly Dictionary<ShellOperation, int> _remainingFailures = [];
+    private readonly Dictionary<ShellOperation, int> _callCounts = [];
+    private readonly Dictionary<(ShellOperation Operation, int CallNumber), bool> _ordinalFailures = [];
     private readonly HashSet<ShellOperation> _permanentFailures = [];
 
+    private IntPtr _nextDibSectionHandle = new(0x2001);
     private int _lastError;
 
     /// <summary>Gets every recorded call, in order.</summary>
@@ -200,6 +241,19 @@ internal sealed class FakeShellApi : IShellApi
 
     /// <summary>Gets the message names passed to <see cref="IShellApi.RegisterWindowMessage"/>, in call order.</summary>
     internal IReadOnlyList<string> RegisteredMessages => _registeredMessages;
+
+    /// <summary>
+    /// Gets one entry per successful <see cref="IShellApi.CreateDIBSection(IntPtr, ref BITMAPV5HEADER, uint, out IntPtr, IntPtr, uint)"/>
+    /// call, in call order: the colour bitmap first, then the monochrome mask, per conversion.
+    /// </summary>
+    /// <remarks>
+    /// The recorded headers are the evidence that the DIBs were described correctly - top-down
+    /// (negative height), 32bpp for the colour bitmap, 1bpp with a two-byte-rounded row stride
+    /// for the mask. <see cref="DibSectionRequest.ReleasedContent"/> additionally holds the
+    /// bytes the bitmap contained at the moment the factory released it, which is how a test can
+    /// assert on what the mask actually said without owning the GDI object.
+    /// </remarks>
+    internal IReadOnlyList<DibSectionRequest> DibSectionRequests => _dibSections;
 
     /// <summary>Gets the number of icons successfully created.</summary>
     /// <remarks>Failed creations are not counted; use <see cref="Calls"/> for attempts.</remarks>
@@ -265,6 +319,19 @@ internal sealed class FakeShellApi : IShellApi
     internal void FailNext(ShellOperation operation) =>
         _remainingFailures[operation] = _remainingFailures.GetValueOrDefault(operation) + 1;
 
+    /// <summary>Scripts the given 1-based call number of one operation to fail, once.</summary>
+    /// <param name="operation">The operation whose call should fail.</param>
+    /// <param name="callNumber">The 1-based ordinal of the call to that operation.</param>
+    /// <remarks>
+    /// <see cref="FailNext"/> cannot express "the second call to this operation fails", and that
+    /// is exactly the case a partial-failure test needs: the conversion allocates two DIB
+    /// sections, and the interesting failure - does the already-created colour bitmap still get
+    /// released? - only exists when the <em>second</em> allocation fails. Counting is per
+    /// operation, so calls to other operations do not shift the ordinal.
+    /// </remarks>
+    internal void FailCallNumber(ShellOperation operation, int callNumber) =>
+        _ordinalFailures[(operation, callNumber)] = true;
+
     /// <summary>Scripts every call to one operation to fail until <see cref="StopFailingAlways"/>.</summary>
     /// <param name="operation">The operation that should always fail.</param>
     /// <remarks>
@@ -282,6 +349,8 @@ internal sealed class FakeShellApi : IShellApi
     {
         _remainingFailures.Clear();
         _permanentFailures.Clear();
+        _ordinalFailures.Clear();
+        _callCounts.Clear();
     }
 
     /// <inheritdoc />
@@ -347,6 +416,34 @@ internal sealed class FakeShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPV5HEADER header, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        _calls.Add(ShellCall.FromCreateDibSection(ref header, usage));
+
+        return AllocateDibSection(
+            header.bV5Width,
+            header.bV5Height,
+            header.bV5BitCount,
+            header.bV5SizeImage,
+            usage,
+            out bits);
+    }
+
+    /// <inheritdoc />
+    public IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFO bitmapInfo, uint usage, out IntPtr bits, IntPtr hSection, uint offset)
+    {
+        _calls.Add(ShellCall.FromCreateDibSection(ref bitmapInfo, usage));
+
+        return AllocateDibSection(
+            bitmapInfo.bmiHeader.biWidth,
+            bitmapInfo.bmiHeader.biHeight,
+            bitmapInfo.bmiHeader.biBitCount,
+            bitmapInfo.bmiHeader.biSizeImage,
+            usage,
+            out bits);
+    }
+
+    /// <inheritdoc />
     public bool DeleteObject(IntPtr hObject)
     {
         _calls.Add(ShellCall.FromDeleteObject(hObject));
@@ -358,6 +455,27 @@ internal sealed class FakeShellApi : IShellApi
 
         _lastError = 0;
         DeletedObjects++;
+
+        // A real DeleteObject releases the DIB section and its pixels. Emulating that keeps the
+        // fake from leaking a heap allocation per conversion, and - more usefully - captures the
+        // bytes the bitmap held at the moment it was released, which is the only window in which
+        // a test can look at what the factory wrote into it.
+        if (_emulatedDibs.Remove(hObject, out EmulatedDib? dib))
+        {
+            var content = new byte[dib.Size];
+            Marshal.Copy(dib.Pixels, content, 0, dib.Size);
+
+            for (int i = 0; i < _dibSections.Count; i++)
+            {
+                if (_dibSections[i].Handle == hObject)
+                {
+                    _dibSections[i].ReleasedContent = content;
+                }
+            }
+
+            Marshal.FreeHGlobal(dib.Pixels);
+        }
+
         return true;
     }
 
@@ -383,13 +501,71 @@ internal sealed class FakeShellApi : IShellApi
     }
 
     /// <summary>
+    /// Emulates one <c>CreateDIBSection</c>: allocates zero-filled unmanaged memory for the
+    /// pixels (which is what a real DIB section starts as) and hands back a distinct fake
+    /// handle.
+    /// </summary>
+    /// <param name="width">The bitmap width from the header.</param>
+    /// <param name="height">The bitmap height from the header; not used for the size, because
+    /// the caller's <paramref name="sizeImage"/> is what a real DIB section allocates.</param>
+    /// <param name="bitCount">The bit depth from the header.</param>
+    /// <param name="sizeImage">The pixel buffer size from the header.</param>
+    /// <param name="usage">The colour-table interpretation.</param>
+    /// <param name="bits">Receives the emulated pixel buffer address.</param>
+    /// <returns>The fake handle, or <see cref="IntPtr.Zero"/> when the call is scripted to fail
+    /// (in which case nothing is allocated and <paramref name="bits"/> is zero).</returns>
+    private IntPtr AllocateDibSection(int width, int height, ushort bitCount, uint sizeImage, uint usage, out IntPtr bits)
+    {
+        int size = sizeImage > 0
+            ? checked((int)sizeImage)
+            : ComputeDibSectionSize(width, height, bitCount);
+
+        IntPtr pixels = Marshal.AllocHGlobal(size);
+        Marshal.Copy(new byte[size], 0, pixels, size);
+
+        if (ConsumeFailure(ShellOperation.CreateDIBSection))
+        {
+            bits = IntPtr.Zero;
+            Marshal.FreeHGlobal(pixels);
+            return IntPtr.Zero;
+        }
+
+        _lastError = 0;
+
+        IntPtr handle = _nextDibSectionHandle;
+        _nextDibSectionHandle = new IntPtr(handle.ToInt64() + 1);
+        _emulatedDibs[handle] = new EmulatedDib(pixels, size);
+        _dibSections.Add(new DibSectionRequest(handle, pixels, width, height, bitCount, (uint)size, usage));
+
+        bits = pixels;
+        return handle;
+    }
+
+    /// <summary>Computes the pixel buffer size a real DIB section would allocate.</summary>
+    /// <param name="width">The bitmap width in pixels.</param>
+    /// <param name="height">The bitmap height in pixels; the sign is ignored.</param>
+    /// <param name="bitCount">The bit depth.</param>
+    /// <returns>The size in bytes.</returns>
+    private static int ComputeDibSectionSize(int width, int height, ushort bitCount) =>
+        ((width * bitCount + 15) / 16 * 2) * Math.Abs(height);
+
+    /// <summary>
     /// Decides whether this call fails, consuming a queued one-shot failure when it does.
     /// </summary>
     /// <param name="operation">The operation being invoked.</param>
     /// <returns><see langword="true"/> when the call is scripted to fail.</returns>
     private bool ConsumeFailure(ShellOperation operation)
     {
+        int callNumber = _callCounts.GetValueOrDefault(operation) + 1;
+        _callCounts[operation] = callNumber;
+
         if (_permanentFailures.Contains(operation))
+        {
+            _lastError = LastErrorToReport;
+            return true;
+        }
+
+        if (_ordinalFailures.Remove((operation, callNumber)))
         {
             _lastError = LastErrorToReport;
             return true;
@@ -404,4 +580,86 @@ internal sealed class FakeShellApi : IShellApi
 
         return false;
     }
+
+    /// <summary>The unmanaged pixel buffer of one emulated DIB section.</summary>
+    private sealed class EmulatedDib
+    {
+        /// <summary>Initializes a new instance of the <see cref="EmulatedDib"/> class.</summary>
+        /// <param name="pixels">The pixel buffer address.</param>
+        /// <param name="size">The buffer size in bytes.</param>
+        internal EmulatedDib(IntPtr pixels, int size)
+        {
+            Pixels = pixels;
+            Size = size;
+        }
+
+        /// <summary>Gets the address of the pixel buffer.</summary>
+        internal IntPtr Pixels { get; }
+
+        /// <summary>Gets the buffer size in bytes.</summary>
+        internal int Size { get; }
+    }
+}
+
+/// <summary>
+/// One <c>CreateDIBSection</c> the fake served, with the header it was given and - once the
+/// caller deletes the bitmap - the bytes that were in it at that moment.
+/// </summary>
+/// <remarks>
+/// The header fields are copied out rather than kept as a reference to a caller's struct,
+/// because the caller's struct is a local that changes between conversions. Asserting on these
+/// values is how a test pins the things that are invisible in the returned handle: a negative
+/// (top-down) height, 32bpp versus 1bpp, and the row stride the buffer was sized with.
+/// </remarks>
+internal sealed class DibSectionRequest
+{
+    /// <summary>Initializes a new instance of the <see cref="DibSectionRequest"/> class.</summary>
+    /// <param name="handle">The fake <c>HBITMAP</c> handle.</param>
+    /// <param name="pixels">The address of the emulated pixel buffer.</param>
+    /// <param name="width">The bitmap width from the header.</param>
+    /// <param name="height">The bitmap height from the header.</param>
+    /// <param name="bitCount">The bit depth from the header.</param>
+    /// <param name="sizeImage">The pixel buffer size from the header.</param>
+    /// <param name="usage">The colour-table interpretation the caller asked for.</param>
+    internal DibSectionRequest(IntPtr handle, IntPtr pixels, int width, int height, ushort bitCount, uint sizeImage, uint usage)
+    {
+        Handle = handle;
+        Pixels = pixels;
+        Width = width;
+        Height = height;
+        BitCount = bitCount;
+        SizeImage = sizeImage;
+        Usage = usage;
+    }
+
+    /// <summary>Gets the fake <c>HBITMAP</c> handle the call returned.</summary>
+    internal IntPtr Handle { get; }
+
+    /// <summary>Gets the address of the emulated pixel buffer.</summary>
+    internal IntPtr Pixels { get; }
+
+    /// <summary>Gets the bitmap width in pixels.</summary>
+    internal int Width { get; }
+
+    /// <summary>Gets the bitmap height in pixels; negative means top-down.</summary>
+    internal int Height { get; }
+
+    /// <summary>Gets the bit depth.</summary>
+    internal ushort BitCount { get; }
+
+    /// <summary>Gets the pixel buffer size in bytes as the caller declared it.</summary>
+    internal uint SizeImage { get; }
+
+    /// <summary>Gets the colour-table interpretation the caller asked for.</summary>
+    internal uint Usage { get; }
+
+    /// <summary>Gets the row stride in bytes as implied by the buffer size and the height.</summary>
+    /// <remarks>Zero when the height is zero, which never happens for an icon bitmap.</remarks>
+    internal int RowStride => Height == 0 ? 0 : (int)(SizeImage / (uint)Math.Abs(Height));
+
+    /// <summary>
+    /// Gets or sets the bytes the bitmap held when the caller deleted it - the only point at
+    /// which a test can see what was written into the DIB section.
+    /// </summary>
+    internal byte[]? ReleasedContent { get; set; }
 }
