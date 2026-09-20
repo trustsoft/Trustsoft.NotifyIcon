@@ -124,8 +124,17 @@ internal struct NOTIFYICONDATAW
     /// the same offset, so one field is the faithful C# representation and adding a second field
     /// would silently shift every member after it. Interpretation is decided by the message:
     /// written as the protocol version for <see cref="ShellConstants.NIM_SETVERSION"/> (this
-    /// library writes <see cref="ShellConstants.NOTIFYICON_VERSION_4"/>) and as the balloon
-    /// timeout in milliseconds for <see cref="ShellConstants.NIF_INFO"/> (consumed by S04).
+    /// library writes <see cref="ShellConstants.NOTIFYICON_VERSION_4"/>) and read as the balloon
+    /// timeout in milliseconds for <see cref="ShellConstants.NIF_INFO"/>.
+    /// <para>
+    /// <b>The balloon timeout interpretation is deprecated and this library never writes it.</b>
+    /// <c>uTimeout</c> is documented as "deprecated as of Windows Vista" and is ignored by modern
+    /// shells; the display duration of a balloon is the system accessibility setting ("Show
+    /// notifications for" in Ease of Access), not a per-call value. A balloon call therefore leaves
+    /// this slot at whatever registration put there, which is the protocol version, and there is
+    /// deliberately no timeout parameter on <c>TrayIcon.ShowBalloonTip</c>. Do not write this field
+    /// on a balloon path: a value that the shell ignores would look like a working feature.
+    /// </para>
     /// </remarks>
     public uint uTimeoutOrVersion;
 
@@ -136,13 +145,24 @@ internal struct NOTIFYICONDATAW
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
     public string szInfoTitle;
 
-    /// <summary>The balloon icon flags (<c>NIIF_*</c>). Consumed by S04.</summary>
+    /// <summary>
+    /// The balloon icon flags (<c>NIIF_*</c>). Written by the balloon path: the severity in the low
+    /// nibble, plus the silent and quiet-time bits.
+    /// </summary>
+    /// <remarks>
+    /// <c>NIF_REALTIME</c> is <b>not</b> written here: it is an <c>NIF_*</c> bit and belongs in
+    /// <see cref="uFlags"/>.
+    /// </remarks>
     public uint dwInfoFlags;
 
     /// <summary>The icon's GUID, used instead of <see cref="uID"/> when <c>NIF_GUID</c> is set. Not used by S01.</summary>
     public Guid guidItem;
 
-    /// <summary>The balloon's custom icon handle. Consumed by S04.</summary>
+    /// <summary>
+    /// The balloon's custom icon handle, used only when <c>NIIF_USER</c> is among
+    /// <see cref="dwInfoFlags"/>. Left at zero: a caller-supplied balloon icon is out of scope for
+    /// this version.
+    /// </summary>
     public IntPtr hBalloonIcon;
 
     /// <summary>

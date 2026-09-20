@@ -170,6 +170,17 @@ public class TrayIcon : FrameworkElement, IDisposable
     public const string PreviewTrayMiddleClickEventName = "PreviewTrayMiddleClick";
 
     /// <summary>
+    /// The name the <see cref="BalloonTipClickedEvent"/> routed event is registered under, exposed as
+    /// a constant so that markup, diagnostics and tests cannot spell it differently.
+    /// </summary>
+    public const string BalloonTipClickedEventName = "BalloonTipClicked";
+
+    /// <summary>
+    /// The name the <see cref="PreviewBalloonTipClickedEvent"/> routed event is registered under.
+    /// </summary>
+    public const string PreviewBalloonTipClickedEventName = "PreviewBalloonTipClicked";
+
+    /// <summary>
     /// The routed event raised when the icon is single-clicked with the left mouse button.
     /// </summary>
     /// <remarks>
@@ -286,6 +297,47 @@ public class TrayIcon : FrameworkElement, IDisposable
         typeof(TrayIcon));
 
     /// <summary>
+    /// The routed event raised when the user clicks a balloon notification this instance showed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It bubbles, it is raised on this element, and its payload is a plain
+    /// <see cref="RoutedEventArgs"/> whose <see cref="RoutedEventArgs.RoutedEvent"/> is this event.
+    /// There is deliberately no balloon-specific args type in v1: a balloon click is a transient
+    /// notification, not a payload-carrying click, so there is nothing for a dedicated type to
+    /// carry that the routed event itself does not already name.
+    /// </para>
+    /// <para>
+    /// The shell reports the click as the <c>NIN_BALLOONUSERCLICK</c> callback, whose
+    /// <c>wParam</c> anchor is officially undefined - the balloon branch of the callback sink must
+    /// not read one - so unlike the click events this family carries no coordinates. Its cancellable
+    /// counterpart is <see cref="PreviewBalloonTipClickedEvent"/>.
+    /// </para>
+    /// </remarks>
+    public static readonly RoutedEvent BalloonTipClickedEvent = EventManager.RegisterRoutedEvent(
+        BalloonTipClickedEventName,
+        RoutingStrategy.Bubble,
+        typeof(EventHandler<RoutedEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The tunnel-routed event raised before <see cref="BalloonTipClickedEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// A handler that sets <see cref="RoutedEventArgs.Handled"/> here prevents the main event from
+    /// being raised at all, which is the same cancellation the click events implement in the raiser
+    /// rather than in the framework (see the class remarks). It is registered with
+    /// <see cref="RoutingStrategy.Tunnel"/> because that is the strategy WPF's own <c>Preview...</c>
+    /// events use, so the naming and the metadata agree with the framework's convention; on an
+    /// element with no parent "tunnelling" means the element's own Preview handlers run first.
+    /// </remarks>
+    public static readonly RoutedEvent PreviewBalloonTipClickedEvent = EventManager.RegisterRoutedEvent(
+        PreviewBalloonTipClickedEventName,
+        RoutingStrategy.Tunnel,
+        typeof(EventHandler<RoutedEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
     /// Identifies the <see cref="IconSource"/> dependency property.
     /// </summary>
     public static readonly DependencyProperty IconSourceProperty = DependencyProperty.Register(
@@ -378,6 +430,27 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// <see cref="char"/> is a UTF-16 code unit, so 127 characters fit next to the terminator.
     /// </summary>
     private const int MaxToolTipLength = 127;
+
+    /// <summary>
+    /// The longest balloon text the shell can hold: <c>WCHAR szInfo[256]</c> in the header, so 255
+    /// characters fit next to the terminator.
+    /// </summary>
+    /// <remarks>
+    /// Truncation to this capacity is deliberate rather than a passing of the problem to the
+    /// marshaller: a longer string would be cut by the marshaller at an arbitrary point, which can
+    /// land between the halves of a surrogate pair (see <see cref="TruncateToFieldCapacity"/>).
+    /// </remarks>
+    private const int MaxBalloonInfoLength = 255;
+
+    /// <summary>
+    /// The longest balloon title the shell can hold: <c>WCHAR szInfoTitle[64]</c> in the header, so
+    /// 63 characters fit next to the terminator.
+    /// </summary>
+    /// <remarks>
+    /// A truncated title still counts as a title, so the shell draws the severity icon; only an
+    /// empty title suppresses it.
+    /// </remarks>
+    private const int MaxBalloonTitleLength = 63;
 
     /// <summary>
     /// The process-wide source of icon ids.
@@ -662,6 +735,31 @@ public class TrayIcon : FrameworkElement, IDisposable
     }
 
     /// <summary>
+    /// Raised when the user clicks a balloon notification shown by this instance.
+    /// </summary>
+    /// <remarks>
+    /// Registers the handler for <see cref="BalloonTipClickedEvent"/>. The payload is a plain
+    /// <see cref="RoutedEventArgs"/>; a handler that throws propagates, like any routed event
+    /// handler, because the library does not swallow a caller's bug.
+    /// </remarks>
+    public event EventHandler<RoutedEventArgs> BalloonTipClicked
+    {
+        add => AddHandler(BalloonTipClickedEvent, value);
+        remove => RemoveHandler(BalloonTipClickedEvent, value);
+    }
+
+    /// <summary>
+    /// Raised before <see cref="BalloonTipClickedEvent"/>; a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> prevents the main event from being raised.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="PreviewBalloonTipClickedEvent"/>.</remarks>
+    public event EventHandler<RoutedEventArgs> PreviewBalloonTipClicked
+    {
+        add => AddHandler(PreviewBalloonTipClickedEvent, value);
+        remove => RemoveHandler(PreviewBalloonTipClickedEvent, value);
+    }
+
+    /// <summary>
     /// Gets or sets the image shown in the notification area.
     /// </summary>
     /// <value>
@@ -825,6 +923,131 @@ public class TrayIcon : FrameworkElement, IDisposable
     {
         get => (ContextMenu?)GetValue(ContextMenuProperty);
         set => SetValue(ContextMenuProperty, value);
+    }
+
+    /// <summary>
+    /// Shows a balloon notification for this icon.
+    /// </summary>
+    /// <param name="title">
+    /// The balloon's title. <see langword="null"/> is legal and is normalised to the empty string;
+    /// the shell then omits the severity icon entirely.
+    /// </param>
+    /// <param name="text">
+    /// The balloon's body text. Must not be <see langword="null"/> or empty; see the exceptions.
+    /// </param>
+    /// <param name="icon">The severity icon to show. <see cref="BalloonTipIcon.Info"/> by default.</param>
+    /// <param name="options">
+    /// Optional shell behaviours, combined as flags. <see cref="BalloonTipOptions.None"/> by
+    /// default.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="text"/> is <see langword="null"/> or empty. An empty <c>szInfo</c> under
+    /// <c>NIF_INFO</c> <em>removes</em> the balloon that is currently showing, so an "empty show"
+    /// would be a silent delete and is refused instead.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The icon is not registered (either it was never made visible or it has been disposed), or the
+    /// instance has no usable dispatcher to marshal to. In every one of those cases nothing has been
+    /// sent to the shell, so the call is not a <see cref="TrayIconException"/>: no notification-area
+    /// operation failed.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a command, not a property (D031).</b> A balloon is a transient message, so it is
+    /// a method call rather than a set of dependency properties that would have to be kept in sync
+    /// with an event that fires when the user types or clicks; there is deliberately no balloon
+    /// property to bind.
+    /// </para>
+    /// <para>
+    /// <b>The shell work is one <c>NIM_MODIFY</c> carrying <c>NIF_INFO</c>.</b> The title and the
+    /// text are truncated to what the shell's fields can hold (<c>szInfoTitle</c> 63 and
+    /// <c>szInfo</c> 255 characters) without ever splitting a surrogate pair, the severity is cast
+    /// into the low nibble of <c>dwInfoFlags</c>, <see cref="BalloonTipOptions.NoSound"/> and
+    /// <see cref="BalloonTipOptions.RespectQuietTime"/> are OR-ed into the same field, and
+    /// <see cref="BalloonTipOptions.Realtime"/> becomes <c>NIF_REALTIME</c> in <c>uFlags</c> - never
+    /// the other field, where that bit number would mean a custom user icon.
+    /// </para>
+    /// <para>
+    /// <b>There is no timeout parameter, and none is written.</b> The structure's
+    /// <c>uTimeout</c> reading of the <c>uTimeoutOrVersion</c> union is deprecated since Windows
+    /// Vista; the display duration is the system accessibility setting, so the union slot keeps
+    /// whatever registration put there (<c>NOTIFYICON_VERSION_4</c>) and this method never touches
+    /// it. <c>hBalloonIcon</c> likewise stays zero, because <c>NIIF_USER</c> and a caller-supplied
+    /// balloon icon are out of scope for this version.
+    /// </para>
+    /// <para>
+    /// <b>A refused balloon follows the runtime policy (D008).</b> The call is retried once, and if
+    /// the retry also fails the failure is written to the trace channel and raised through
+    /// <see cref="TrayError"/> with <see cref="TrayErrorEventArgs.Retried"/> <see langword="true"/>.
+    /// This method never throws because the shell refused: losing a balloon is strictly better than
+    /// losing the application.
+    /// </para>
+    /// <para>
+    /// <b>Marshalled like the property setters (R015).</b> A background-thread caller is moved to
+    /// the dispatcher that owns the host window, because the shell call belongs to the thread that
+    /// owns that window. An instance created without a dispatcher refuses with the existing
+    /// <see cref="InvalidOperationException"/> from <c>ApplyOnDispatcher</c> and makes no shell call
+    /// at all.
+    /// </para>
+    /// </remarks>
+    public void ShowBalloonTip(
+        string? title,
+        string text,
+        BalloonTipIcon icon = BalloonTipIcon.Info,
+        BalloonTipOptions options = BalloonTipOptions.None)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            throw new ArgumentException(
+                "A balloon must carry text: an empty szInfo under NIF_INFO removes the balloon that is currently shown, "
+                + "so this call would silently delete it instead of showing one. Pass the message to display.",
+                nameof(text));
+        }
+
+        ApplyOnDispatcher(() =>
+        {
+            if (_disposed || !_registered || _host is null)
+            {
+                throw new InvalidOperationException(
+                    "ShowBalloonTip requires a registered icon: a balloon can only be shown for an icon the shell currently "
+                    + "holds. Set Visible to true (and keep it true) before showing a balloon, and do not call ShowBalloonTip "
+                    + "after Dispose.");
+            }
+
+            NOTIFYICONDATAW data = CreateIconData(_host);
+
+            // NIF_INFO is what makes the balloon members valid. NIF_REALTIME is a NIF_* bit and
+            // therefore belongs here, in uFlags - see BalloonTipOptions for why placing it in
+            // dwInfoFlags would be silently wrong rather than an error.
+            data.uFlags = ShellConstants.NIF_INFO;
+
+            if ((options & BalloonTipOptions.Realtime) != 0)
+            {
+                data.uFlags |= ShellConstants.NIF_REALTIME;
+            }
+
+            data.szInfo = TruncateToFieldCapacity(text, MaxBalloonInfoLength);
+            data.szInfoTitle = TruncateToFieldCapacity(title, MaxBalloonTitleLength);
+
+            // The severity is the shell's own NIIF_NONE..NIIF_ERROR value, so this is a cast and
+            // not a lookup; the two option flags are single bits outside the severity's low nibble.
+            data.dwInfoFlags = (uint)icon;
+
+            if ((options & BalloonTipOptions.NoSound) != 0)
+            {
+                data.dwInfoFlags |= ShellConstants.NIIF_NOSOUND;
+            }
+
+            if ((options & BalloonTipOptions.RespectQuietTime) != 0)
+            {
+                data.dwInfoFlags |= ShellConstants.NIIF_RESPECT_QUIET_TIME;
+            }
+
+            // uTimeoutOrVersion is deliberately not written: the balloon timeout reading is
+            // deprecated since Vista and the slot holds the registration's protocol version.
+            // hBalloonIcon is deliberately not written: NIIF_USER is out of scope for v1.
+            ApplyShellChange(ShellConstants.NIM_MODIFY, ref data, TrayIconException.OperationModify);
+        });
     }
 
     /// <summary>
@@ -2153,17 +2376,43 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// </remarks>
     private static string TruncateToolTipText(string? text)
     {
+        return TruncateToFieldCapacity(text, MaxToolTipLength);
+    }
+
+    /// <summary>
+    /// Truncates text to what a fixed-size shell string field can hold.
+    /// </summary>
+    /// <param name="text">The text to truncate, possibly <see langword="null"/>.</param>
+    /// <param name="maxLength">
+    /// The field's capacity in UTF-16 code units, excluding the terminator - 127 for
+    /// <c>szTip</c> (128 <c>WCHAR</c>), 255 for <c>szInfo</c> (256) and 63 for <c>szInfoTitle</c>
+    /// (64).
+    /// </param>
+    /// <returns>A non-null string of at most <paramref name="maxLength"/> UTF-16 code units.</returns>
+    /// <remarks>
+    /// <b>One implementation for every fixed-size shell string.</b> The shell's <c>ByValTStr</c>
+    /// fields are copied into inline buffers, and a string longer than the buffer is cut by the
+    /// marshaller at an arbitrary point rather than reported - so the cut is made here, where it is
+    /// deliberate, and the same rule applies to the tooltip and to both balloon strings.
+    /// <para>
+    /// The cut never lands between a surrogate pair: half a pair would be an invalid string the
+    /// shell would render as a replacement character, which is a worse outcome than one character
+    /// less of text.
+    /// </para>
+    /// </remarks>
+    private static string TruncateToFieldCapacity(string? text, int maxLength)
+    {
         if (string.IsNullOrEmpty(text))
         {
             return string.Empty;
         }
 
-        if (text.Length <= MaxToolTipLength)
+        if (text.Length <= maxLength)
         {
             return text;
         }
 
-        int length = char.IsHighSurrogate(text[MaxToolTipLength - 1]) ? MaxToolTipLength - 1 : MaxToolTipLength;
+        int length = char.IsHighSurrogate(text[maxLength - 1]) ? maxLength - 1 : maxLength;
 
         return text[..length];
     }
