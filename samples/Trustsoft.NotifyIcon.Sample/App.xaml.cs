@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -59,6 +60,21 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// from the OS - the popup window's rectangle, its owner and its monitor's DPI - which is what makes
 /// the placement of a windowless process's context menu a machine read rather than a glance at the
 /// screen, and the results are recorded in <c>docs/UAT-S03.md</c>.
+/// </para>
+/// <para>
+/// <b>Balloon demonstration (S04).</b> A single left click on the icon shows a legacy
+/// <c>Shell_NotifyIcon</c> balloon, and clicking that balloon prints one
+/// <c>[sample] balloon clicked: ...</c> line next to the raw <c>NIN_BALLOONUSERCLICK</c> callback the
+/// hook already prints - the pairing that shows the shell sent the code and the library decoded it
+/// into the routed event. The severity and the sound behaviour are chosen by switches
+/// (<c>--balloon-icon info|warning|error|none</c>, <c>--balloon-nosound</c>,
+/// <c>--balloon-realtime</c>, <c>--balloon-respect-quiet-time</c>) and the effective configuration is
+/// printed at startup, so a capture records what was asked for next to what happened. Because the
+/// balloon is shown from the main click handler, <c>--cancel-preview left</c> suppresses it too: the
+/// Preview handler sets <see cref="System.Windows.RoutedEventArgs.Handled"/> and the main click event
+/// - with the balloon call inside it - never reaches the sample. <c>--show-balloon-after [seconds]</c>
+/// shows one balloon with no click injected, which is what separates "the click path is broken" from
+/// "the balloon path is broken" in a single capture.
 /// </para>
 /// <para>
 /// <b>Raw callback trace (S02).</b> The sample prints the shell's undecoded callback messages next
@@ -122,6 +138,24 @@ public partial class App : Application
     /// <summary>The click type <c>--cancel-preview</c> cancels when no type is named.</summary>
     private const string DefaultCancelPreviewType = "right";
 
+    /// <summary>The severity keyword <c>--balloon-icon</c> selects when none is named.</summary>
+    /// <remarks>
+    /// Unlike <c>--cancel-preview</c>, an <em>invalid</em> severity is never silently mapped here: the
+    /// parser rejects it, because the severity decides what the shell is asked to draw and a
+    /// substituted value would make a capture prove the wrong thing.
+    /// </remarks>
+    private const string DefaultBalloonIconKeyword = "info";
+
+    /// <summary>
+    /// The delay <c>--show-balloon-after</c> uses when it is given without a value.
+    /// </summary>
+    /// <remarks>
+    /// Five seconds, the same reasoning as <see cref="DefaultOpenMenuDelay"/>: long enough for the
+    /// startup lines - including the balloon configuration line - to be on the console before the
+    /// balloon appears, which is what keeps a capture readable.
+    /// </remarks>
+    private static readonly TimeSpan DefaultShowBalloonDelay = TimeSpan.FromSeconds(5);
+
     /// <summary>
     /// The delay <c>--open-menu-after</c> uses when it is given without a value.
     /// </summary>
@@ -148,7 +182,8 @@ public partial class App : Application
 
     /// <summary>The one-line usage text printed when an argument is not understood.</summary>
     private const string SampleUsage =
-        "[sample] usage: Trustsoft.NotifyIcon.Sample [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]]";
+        "[sample] usage: Trustsoft.NotifyIcon.Sample [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] "
+        + "[--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]]";
 
     /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>: the pseudo-handle the manifest asks for.</summary>
     /// <remarks>
@@ -168,9 +203,21 @@ public partial class App : Application
     private DispatcherTimer? _shutdownTimer;
     private DispatcherTimer? _menuOpenTimer;
     private DispatcherTimer? _menuHoldTimer;
+    private DispatcherTimer? _balloonShowTimer;
     private TraceSource? _libraryTrace;
     private bool _observersDetached;
     private int _frameIndex;
+
+    /// <summary>
+    /// The severity the demonstration's balloons are shown with, selected by <c>--balloon-icon</c>.
+    /// </summary>
+    private BalloonTipIcon _balloonIcon = BalloonTipIcon.Info;
+
+    /// <summary>
+    /// The optional behaviours the demonstration's balloons are shown with, combined from
+    /// <c>--balloon-nosound</c>, <c>--balloon-realtime</c> and <c>--balloon-respect-quiet-time</c>.
+    /// </summary>
+    private BalloonTipOptions _balloonOptions = BalloonTipOptions.None;
 
     /// <summary>
     /// The menu the icon opens on a right click (S03), or <see langword="null"/> before startup.
@@ -212,6 +259,26 @@ public partial class App : Application
 
     /// <summary>Clicks a Preview handler suppressed, for the shutdown total.</summary>
     private int _cancelledClickCount;
+
+    /// <summary>
+    /// Balloon show requests made to the library, for the shutdown total - from clicks and, when
+    /// <c>--show-balloon-after</c> was given, from the sample itself.
+    /// </summary>
+    /// <remarks>
+    /// A <em>request</em>, deliberately not a confirmation: whether the shell actually showed the
+    /// balloon is the shell's side of the protocol, reported by the <c>NIN_BALLOONSHOW</c> callback
+    /// the raw hook prints. A refusal arrives on the <see cref="TrayIcon.TrayError"/> channel instead.
+    /// </remarks>
+    private int _balloonShowRequestCount;
+
+    /// <summary>How many of the show requests the sample made without any click, for the totals.</summary>
+    private int _selfBalloonShowCount;
+
+    /// <summary>Delivered tunnel-phase balloon click events, for the shutdown total.</summary>
+    private int _balloonPreviewCount;
+
+    /// <summary>Delivered main-phase balloon click events, for the shutdown total.</summary>
+    private int _balloonClickCount;
 
     /// <summary>Raw private-range messages printed, for the shutdown total.</summary>
     private int _rawMessageCount;
@@ -272,6 +339,31 @@ public partial class App : Application
                     CultureInfo.InvariantCulture,
                     $"[sample] preview cancellation mode: {_cancelledClickType} - the Preview handler sets Handled and the main handler must stay silent."));
 
+        // S04: the balloon demonstration's configuration, applied before anything can show a balloon
+        // and printed here so a capture records what was asked for next to what the shell did with
+        // it - the same discipline as the DPI and menu-timing startup lines.
+        _balloonIcon = ToBalloonTipIcon(arguments.BalloonIconKeyword);
+        _balloonOptions = BalloonTipOptions.None;
+
+        if (arguments.BalloonNoSound)
+        {
+            _balloonOptions |= BalloonTipOptions.NoSound;
+        }
+
+        if (arguments.BalloonRealtime)
+        {
+            _balloonOptions |= BalloonTipOptions.Realtime;
+        }
+
+        if (arguments.BalloonRespectQuietTime)
+        {
+            _balloonOptions |= BalloonTipOptions.RespectQuietTime;
+        }
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] balloon demonstration: severity={_balloonIcon.ToString().ToLowerInvariant()} {DescribeBalloonOptions(_balloonOptions)} - a single left click on the icon shows this balloon, and clicking the balloon must print a balloon clicked line; --cancel-preview left suppresses both."));
+
         AttachLibraryTraceListener();
 
         // The sample's own subclass, so the --open-menu-after switch can reach the documented
@@ -296,6 +388,12 @@ public partial class App : Application
         trayIcon.PreviewTrayLeftDoubleClick += OnPreviewClick;
         trayIcon.PreviewTrayRightClick += OnPreviewClick;
         trayIcon.PreviewTrayMiddleClick += OnPreviewClick;
+
+        // S04: the balloon click pair. The tunnel line shows the Preview phase arriving; the bubble
+        // line is the event half of this slice's exit condition. Subscribed before the first
+        // registration, with the click events, so even a balloon click during startup is observed.
+        trayIcon.PreviewBalloonTipClicked += OnPreviewBalloonTipClicked;
+        trayIcon.BalloonTipClicked += OnBalloonTipClicked;
 
         _trayIcon = trayIcon;
 
@@ -377,6 +475,22 @@ public partial class App : Application
             _menuOpenTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = openMenuDelay };
             _menuOpenTimer.Tick += OnMenuOpenRequestTick;
             _menuOpenTimer.Start();
+        }
+
+        if (arguments.ShowBalloonAfter is TimeSpan showBalloonDelay)
+        {
+            // The no-click demonstration, in the shape of --open-menu-after: one balloon is shown
+            // through the library's public ShowBalloonTip path after a delay, with no shell click
+            // injected. A run that shows a balloon this way but shows none on a click localises the
+            // fault to the click path; a run that shows no balloon either way points at the balloon
+            // path itself. That is why this switch exists next to the click-driven demonstration.
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] balloon self-show requested: a balloon will be shown once after {showBalloonDelay.TotalSeconds:0.#}s (--show-balloon-after). No shell click is injected for this."));
+
+            _balloonShowTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = showBalloonDelay };
+            _balloonShowTimer.Tick += OnBalloonShowRequestTick;
+            _balloonShowTimer.Start();
         }
     }
 
@@ -664,6 +778,21 @@ public partial class App : Application
 
         Console.WriteLine(message);
         Trace.WriteLine(message, SampleTraceSourceName);
+
+        // S04: the exit condition's first half. The balloon belongs to the single left click only,
+        // and it is shown here - inside the main click handler - rather than from a separate
+        // subscription, because that is exactly what makes --cancel-preview left suppress it: the
+        // Preview handler has already set Handled, so this method never runs and no balloon can be
+        // requested. A double click raises TrayLeftDoubleClick and deliberately shows no balloon.
+        if (ReferenceEquals(e.RoutedEvent, TrayIcon.TrayLeftClickEvent))
+        {
+            TrayIcon? trayIcon = _trayIcon;
+
+            if (trayIcon is not null)
+            {
+                ShowConfiguredBalloon(trayIcon, "single left click");
+            }
+        }
     }
 
     /// <summary>
@@ -718,6 +847,133 @@ public partial class App : Application
             "middle" => ReferenceEquals(previewEvent, TrayIcon.PreviewTrayMiddleClickEvent),
             _ => false,
         };
+
+    /// <summary>
+    /// Observes the tunnel phase of a balloon click, before any handler could cancel it.
+    /// </summary>
+    /// <param name="sender">The <see cref="TrayIcon"/> that raised the event.</param>
+    /// <param name="e">The routed payload; no balloon payload exists by design (D031).</param>
+    /// <remarks>
+    /// Nothing is cancelled here - the cancellation contract for balloons is demonstrated the same
+    /// way the click contract's is: a consumer's Preview handler sets
+    /// <see cref="System.Windows.RoutedEventArgs.Handled"/> and the main line then never appears.
+    /// This line exists so a capture can tell "the tunnel phase ran and the main phase was
+    /// suppressed" from "no callback arrived at all".
+    /// </remarks>
+    private void OnPreviewBalloonTipClicked(object? sender, RoutedEventArgs e)
+    {
+        _balloonPreviewCount++;
+
+        string message = string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] balloon preview clicked: event={e.RoutedEvent.Name} phase=tunnel - the main phase must follow unless a handler sets Handled.");
+
+        Console.WriteLine(message);
+        Trace.WriteLine(message, SampleTraceSourceName);
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Prints the line this slice's exit condition is read from: the main (bubble) phase of a
+    /// balloon click, delivered as the <see cref="TrayIcon.BalloonTipClicked"/> routed event.
+    /// </summary>
+    /// <param name="sender">The <see cref="TrayIcon"/> that raised the event.</param>
+    /// <param name="e">The routed payload.</param>
+    /// <remarks>
+    /// The raw <c>NIN_BALLOONUSERCLICK</c> callback that produced this event is printed by the hook
+    /// (<see cref="OnRawHostMessage"/>) - before or after this line depending on the order WPF
+    /// invokes the hooks in, which the checklist reads off the capture rather than assumes - so the
+    /// pairing shows the shell's message and the library's decode as one interaction. Flushed per
+    /// line: this stream is the evidence.
+    /// </remarks>
+    private void OnBalloonTipClicked(object? sender, RoutedEventArgs e)
+    {
+        _balloonClickCount++;
+
+        string message = string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] balloon clicked: event={e.RoutedEvent.Name} phase=bubble - the shell accepted a click on the balloon.");
+
+        Console.WriteLine(message);
+        Trace.WriteLine(message, SampleTraceSourceName);
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Shows one balloon with the configuration the switches selected, through the library's public
+    /// <see cref="TrayIcon.ShowBalloonTip"/> exactly as a consumer would call it.
+    /// </summary>
+    /// <param name="trayIcon">The registered icon the balloon is shown for.</param>
+    /// <param name="source">What asked for the balloon, named in the balloon text so a capture
+    /// can tell a click-driven balloon from a self-shown one.</param>
+    /// <remarks>
+    /// <para>
+    /// The balloon's text repeats the effective configuration, so what the shell was asked to render
+    /// is visible inside the rendering itself. The severity keyword spelling is the same one the
+    /// startup line and the switches use, so the three can be compared in one capture.
+    /// </para>
+    /// <para>
+    /// The two argument/state exceptions are caught and written where a human can read them rather
+    /// than allowed to escape from a click event handler into an invisible unhandled exception - the
+    /// same policy as the startup failure path. A shell refusal never reaches this catch: the library
+    /// reports it through <see cref="TrayIcon.TrayError"/> and never throws for one.
+    /// </para>
+    /// </remarks>
+    private void ShowConfiguredBalloon(TrayIcon trayIcon, string source)
+    {
+        _balloonShowRequestCount++;
+
+        string title = "Trustsoft.NotifyIcon sample";
+        string text = string.Create(
+            CultureInfo.InvariantCulture,
+            $"Balloon from the {source}. severity={_balloonIcon.ToString().ToLowerInvariant()} {DescribeBalloonOptions(_balloonOptions)}. Click this balloon - the sample must print a balloon clicked line.");
+
+        try
+        {
+            trayIcon.ShowBalloonTip(title, text, _balloonIcon, _balloonOptions);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            string message = string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] balloon request refused before any shell call: {ex.GetType().Name}: {ex.Message}");
+
+            Console.Error.WriteLine(message);
+            Trace.TraceError(message);
+        }
+    }
+
+    /// <summary>
+    /// Shows the demonstration balloon once, on the sample's own initiative, with no click injected.
+    /// </summary>
+    /// <param name="sender">The timer; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// The line before the call is printed on purpose, in the shape of
+    /// <see cref="OnMenuOpenRequestTick"/>: if the balloon does not appear, the absence of the
+    /// <c>NIN_BALLOONSHOW</c> raw callback line that would follow it is a measurement rather than a
+    /// missing run.
+    /// </remarks>
+    private void OnBalloonShowRequestTick(object? sender, EventArgs e)
+    {
+        _balloonShowTimer?.Stop();
+        _balloonShowTimer = null;
+
+        TrayIcon? trayIcon = _trayIcon;
+
+        if (trayIcon is null)
+        {
+            Console.WriteLine("[sample] --show-balloon-after: no tray icon exists - no balloon was requested.");
+            return;
+        }
+
+        _selfBalloonShowCount++;
+
+        Console.WriteLine("[sample] --show-balloon-after: showing a balloon now, with no click injected.");
+        Console.Out.Flush();
+
+        ShowConfiguredBalloon(trayIcon, "--show-balloon-after (no click injected)");
+    }
 
     /// <summary>
     /// Adds a read-only hook to every WPF <see cref="HwndSource"/> this thread created, which is
@@ -885,7 +1141,15 @@ public partial class App : Application
     /// cannot make the demonstration quietly prove the wrong thing. A bare <c>--open-menu-after</c>
     /// takes the default delay for the same reason; a <em>malformed</em> delay, by contrast, is
     /// rejected, because the delay decides when the menu opens and a silently substituted value would
-    /// make a capture's timing unexplainable.
+    /// make a capture's timing unexplainable. A bare <c>--show-balloon-after</c> behaves the same way.
+    /// </para>
+    /// <para>
+    /// <b>The balloon switches are stricter, on purpose.</b> <c>--balloon-icon</c> has no silent
+    /// fallback at all: a value that is not one of the four keywords is rejected, because the severity
+    /// decides what the shell draws and a substituted value would make a capture prove the wrong
+    /// thing. The three behaviour switches are pure flags and reject a <c>=value</c> spelling, which
+    /// would otherwise be swallowed without any effect - the one failure mode an instrument must not
+    /// have.
     /// </para>
     /// </remarks>
     private static bool TryParseArguments(string[] args, out SampleArguments arguments, out string? error)
@@ -893,6 +1157,11 @@ public partial class App : Application
         TimeSpan? runSeconds = null;
         TimeSpan? openMenuAfter = null;
         string? cancelledClickType = null;
+        string balloonIconKeyword = DefaultBalloonIconKeyword;
+        bool balloonNoSound = false;
+        bool balloonRealtime = false;
+        bool balloonRespectQuietTime = false;
+        TimeSpan? showBalloonAfter = null;
         error = null;
         arguments = default!;
 
@@ -947,13 +1216,75 @@ public partial class App : Application
                     openMenuAfter = TimeSpan.FromSeconds(delaySeconds);
                     break;
 
+                case "--balloon-icon":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? balloonIconValue))
+                    {
+                        error = $"[sample] '{argument}' needs a severity: use --balloon-icon none|info|warning|error or --balloon-icon=info.";
+                        return false;
+                    }
+
+                    if (!IsBalloonIconKeyword(balloonIconValue))
+                    {
+                        error = $"[sample] '--balloon-icon' needs one of none|info|warning|error, got '{balloonIconValue}'.";
+                        return false;
+                    }
+
+                    balloonIconKeyword = balloonIconValue;
+                    break;
+
+                case "--balloon-nosound":
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --balloon-nosound.";
+                        return false;
+                    }
+
+                    balloonNoSound = true;
+                    break;
+
+                case "--balloon-realtime":
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --balloon-realtime.";
+                        return false;
+                    }
+
+                    balloonRealtime = true;
+                    break;
+
+                case "--balloon-respect-quiet-time":
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --balloon-respect-quiet-time.";
+                        return false;
+                    }
+
+                    balloonRespectQuietTime = true;
+                    break;
+
+                case "--show-balloon-after":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? showBalloonValue))
+                    {
+                        showBalloonAfter = DefaultShowBalloonDelay;
+                        break;
+                    }
+
+                    if (!double.TryParse(showBalloonValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double balloonDelaySeconds) || balloonDelaySeconds < 0)
+                    {
+                        error = $"[sample] '--show-balloon-after' needs a delay in seconds, got '{showBalloonValue}'.";
+                        return false;
+                    }
+
+                    showBalloonAfter = TimeSpan.FromSeconds(balloonDelaySeconds);
+                    break;
+
                 default:
                     error = $"[sample] unknown argument '{argument}' - this sample does not ignore arguments it does not understand.";
                     return false;
             }
         }
 
-        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter);
+        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter);
         return true;
     }
 
@@ -992,6 +1323,45 @@ public partial class App : Application
     /// <param name="value">The value to test.</param>
     /// <returns><see langword="true"/> for the four click-type keywords.</returns>
     private static bool IsCancelPreviewType(string? value) => value is "left" or "double" or "right" or "middle";
+
+    /// <summary>
+    /// Reports whether a value names one of the four balloon severities.
+    /// </summary>
+    /// <param name="value">The value to test.</param>
+    /// <returns><see langword="true"/> for the four severity keywords. The
+    /// <see cref="NotNullWhenAttribute"/> on the parameter is what lets the parser's flow analysis
+    /// treat the value as non-null after a positive answer, so no suppression is needed at the
+    /// assignment site.</returns>
+    private static bool IsBalloonIconKeyword([NotNullWhen(true)] string? value) => value is "none" or "info" or "warning" or "error";
+
+    /// <summary>
+    /// Maps a severity keyword to its <see cref="BalloonTipIcon"/> value.
+    /// </summary>
+    /// <param name="keyword">One of the four keywords <see cref="IsBalloonIconKeyword"/> accepts.</param>
+    /// <returns>The matching severity.</returns>
+    /// <remarks>
+    /// The mapping is total over the keywords the parser accepts; the fallback exists for the
+    /// compiler and can never run.
+    /// </remarks>
+    private static BalloonTipIcon ToBalloonTipIcon(string keyword) => keyword switch
+    {
+        "none" => BalloonTipIcon.None,
+        "info" => BalloonTipIcon.Info,
+        "warning" => BalloonTipIcon.Warning,
+        "error" => BalloonTipIcon.Error,
+        _ => BalloonTipIcon.Info,
+    };
+
+    /// <summary>
+    /// Names the balloon behaviours a flags value selects, in the vocabulary the startup line, the
+    /// switches and the balloon text share, so all three can be compared in one capture.
+    /// </summary>
+    /// <param name="options">The flags value in effect.</param>
+    /// <returns>A <c>sound=... realtime=... respectQuietTime=...</c> fragment.</returns>
+    private static string DescribeBalloonOptions(BalloonTipOptions options) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"sound={((options & BalloonTipOptions.NoSound) == 0 ? "on" : "off")} realtime={((options & BalloonTipOptions.Realtime) != 0 ? "on" : "off")} respectQuietTime={((options & BalloonTipOptions.RespectQuietTime) != 0 ? "on" : "off")}");
 
     /// <summary>The <c>GW_OWNER</c> selector: the popup's owner window, which is the library's anchor.</summary>
     private const uint GetWindowOwner = 4;
@@ -1268,6 +1638,8 @@ public partial class App : Application
         _menuOpenTimer = null;
         _menuHoldTimer?.Stop();
         _menuHoldTimer = null;
+        _balloonShowTimer?.Stop();
+        _balloonShowTimer = null;
 
         TrayIcon? trayIcon = _trayIcon;
         _trayIcon = null;
@@ -1283,6 +1655,8 @@ public partial class App : Application
             trayIcon.PreviewTrayLeftDoubleClick -= OnPreviewClick;
             trayIcon.PreviewTrayRightClick -= OnPreviewClick;
             trayIcon.PreviewTrayMiddleClick -= OnPreviewClick;
+            trayIcon.PreviewBalloonTipClicked -= OnPreviewBalloonTipClicked;
+            trayIcon.BalloonTipClicked -= OnBalloonTipClicked;
 
             // The icon is disposed first, while the menu's Closed handler is still attached: the
             // library closes an open menu as part of disposal, and that close is what the
@@ -1350,7 +1724,7 @@ public partial class App : Application
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"[sample] totals: raw callback lines={_rawMessageCount}, pump-observed private-range messages={_pumpMessageCount}, library trace lines={_libraryTraceLineCount}, clicks={_clickCount}, cancelled by a Preview handler={_cancelledClickCount}, menu opens={_menuOpenCount}, menu dismissals={_menuDismissedCount}."));
+            $"[sample] totals: raw callback lines={_rawMessageCount}, pump-observed private-range messages={_pumpMessageCount}, library trace lines={_libraryTraceLineCount}, clicks={_clickCount}, cancelled by a Preview handler={_cancelledClickCount}, balloon show requests={_balloonShowRequestCount} (self={_selfBalloonShowCount}), balloon clicked deliveries={_balloonClickCount}, balloon preview deliveries={_balloonPreviewCount}, menu opens={_menuOpenCount}, menu dismissals={_menuDismissedCount}."));
 
         // Flushed by hand rather than left to the process exit path: the whole point of the raw
         // capture is that the last lines of a run survive it.
@@ -1447,7 +1821,20 @@ public partial class App : Application
     /// <param name="RunSeconds">How long the sample runs before shutting itself down, or <see langword="null"/>.</param>
     /// <param name="CancelledClickType">The click type a Preview handler cancels, or <see langword="null"/>.</param>
     /// <param name="OpenMenuAfter">The delay after which the sample opens its own menu once, or <see langword="null"/>.</param>
-    private sealed record SampleArguments(TimeSpan? RunSeconds, string? CancelledClickType, TimeSpan? OpenMenuAfter);
+    /// <param name="BalloonIconKeyword">The balloon severity keyword in effect; always set, defaulting to <see cref="DefaultBalloonIconKeyword"/>.</param>
+    /// <param name="BalloonNoSound">Whether the balloon is shown without the notification sound (<c>--balloon-nosound</c>).</param>
+    /// <param name="BalloonRealtime">Whether the balloon is shown immediately rather than queued (<c>--balloon-realtime</c>).</param>
+    /// <param name="BalloonRespectQuietTime">Whether the balloon claims to honour quiet time (<c>--balloon-respect-quiet-time</c>).</param>
+    /// <param name="ShowBalloonAfter">The delay after which the sample shows one balloon with no click injected, or <see langword="null"/>.</param>
+    private sealed record SampleArguments(
+        TimeSpan? RunSeconds,
+        string? CancelledClickType,
+        TimeSpan? OpenMenuAfter,
+        string BalloonIconKeyword,
+        bool BalloonNoSound,
+        bool BalloonRealtime,
+        bool BalloonRespectQuietTime,
+        TimeSpan? ShowBalloonAfter);
 
     /// <summary>
     /// The sample's own <see cref="TrayIcon"/>, with one extra entry point: the documented
