@@ -23,6 +23,12 @@ Working today:
   by an outside click — from a process that owns no visible window, because the popup is owned by a
   1×1 activating anchor window placed at the icon. Placement reads the shell's own icon rectangle
   and the monitor's effective DPI, so the physical-to-offset scale factor is applied exactly once.
+- `TrayIcon.ShowBalloonTip(title, text, icon, options)` shows a legacy `Shell_NotifyIcon` balloon
+  with a chosen severity (`BalloonTipIcon`) and behaviour switches (`BalloonTipOptions`: `NoSound`,
+  `RespectQuietTime`, `Realtime`), and clicking the balloon raises the cancellable
+  `PreviewBalloonTipClicked`/`BalloonTipClicked` routed pair. Overlong text is truncated to the
+  shell's field capacities, never rejected. See
+  [the live balloon checks](docs/UAT-S04.md).
 - `TrayIcon.IconSource` accepts any WPF `ImageSource` (bitmap or vector drawing) and converts it to
   an `HICON` with strict GDI handle ownership. **Repeated replacement is flat for a bitmap source**
   (measured: 0 GDI objects across 50 replacements) **and for a frozen vector source**: a frozen
@@ -52,12 +58,13 @@ distinct images an application hands over, not to the number of replacements. No
 
 - click and mouse events on the icon are implemented (S02); the `ContextMenu` a right click opens
   at the icon is implemented (S03) — assign one and it opens, or set `MenuActivation="None"` to keep
-  the right click a pure event;
-- balloon notifications (S04) — and, explicitly **not delivered in S03**, icon and tooltip sizing for
-  DPI and shell settings: the menu placement reads the monitor's DPI, but the `HICON` is still
-  rasterized at a fixed 16 px, so a display at a scale above 100 % gets a correctly placed menu with
-  a scaled-up icon. That is the named follow-up the milestone roadmap carries, not a silently dropped
-  clause;
+  the right click a pure event; balloon notifications are implemented (S04) — `ShowBalloonTip` and
+  the balloon click routed pair exist, recorded in
+  [`docs/UAT-S04.md`](docs/UAT-S04.md);
+- icon and tooltip sizing for DPI and shell settings — explicitly **not delivered in S03**: the menu
+  placement reads the monitor's DPI, but the `HICON` is still rasterized at a fixed 16 px, so a
+  display at a scale above 100 % gets a correctly placed menu with a scaled-up icon. That is the
+  named follow-up the milestone roadmap carries, not a silently dropped clause;
 - explorer-restart recovery and the process-exit fallback (S05);
 - XAML usage, `NotifyIcon`-style markup support (S06);
 - NuGet packaging, licence metadata and the CI release pipeline (S07).
@@ -75,7 +82,8 @@ Add `-- --run-seconds 20` to let it exit by itself after 20 seconds — useful f
 shutdown remove the icon.
 
 Sample behaviour, including what it writes to the console when the shell refuses the registration, is
-described in [`docs/UAT-S01.md`](docs/UAT-S01.md).
+described in [`docs/UAT-S01.md`](docs/UAT-S01.md); the balloon demonstration and its switches are
+recorded in [`docs/UAT-S04.md`](docs/UAT-S04.md).
 
 ## Build and test
 
@@ -92,8 +100,10 @@ the public surface (`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`).
 
 GitHub Actions Windows runners have no interactive desktop session, so the checks that need a real
 notification area — the icon appearing at all, the alert area showing it, the tooltip on hover — are
-a manual checklist: [`docs/UAT-S01.md`](docs/UAT-S01.md). They are **not** automated coverage and are
-not reported as such.
+a manual checklist: [`docs/UAT-S01.md`](docs/UAT-S01.md), extended per slice since: click delivery
+([`docs/UAT-S02.md`](docs/UAT-S02.md)), menu placement ([`docs/UAT-S03.md`](docs/UAT-S03.md)) and
+balloon notifications ([`docs/UAT-S04.md`](docs/UAT-S04.md)). They are **not** automated coverage and
+are not reported as such.
 
 ## Licence
 

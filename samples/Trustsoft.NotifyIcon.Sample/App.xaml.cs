@@ -17,7 +17,10 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// the notification area, rotates that icon once per second, reports failures on the console and
 /// removes the icon on the way out. Since S02 it also reports every click the shell delivers - the
 /// decoded event and the raw callback that produced it - so both halves of the click contract are
-/// observable on one console.
+/// observable on one console. Since S03 a right click opens a real context menu at the icon, and
+/// since S04 a single left click shows a legacy Shell_NotifyIcon balloon whose severity and sound
+/// behaviour the --balloon-* switches choose; each demonstration has its own remarks paragraph
+/// below and its own docs/UAT-S03.md / docs/UAT-S04.md record.
 /// </summary>
 /// <remarks>
 /// <para>
