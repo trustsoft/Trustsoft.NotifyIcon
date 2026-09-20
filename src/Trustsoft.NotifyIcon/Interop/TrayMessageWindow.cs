@@ -194,11 +194,27 @@ internal sealed class TrayMessageWindow : IDisposable
     internal int TaskbarCreatedRegistrationError { get; }
 
     /// <summary>
-    /// Gets the native handle of the host window, for callers that must name a window owner - the
-    /// shell registration (<see cref="NOTIFYICONDATAW.hWnd"/>) and, later, the popup menu owner.
+    /// Gets the native handle of the host window, for callers that must name a window: the shell
+    /// registration (<see cref="NOTIFYICONDATAW.hWnd"/>) and the icon identifier
+    /// (<see cref="NOTIFYICONIDENTIFIER.Create"/>).
     /// </summary>
     /// <value>The <c>HWND</c> while the host is alive, or <see cref="IntPtr.Zero"/> once it has
     /// been disposed.</value>
+    /// <remarks>
+    /// <para>
+    /// <b>This is not the context menu's popup owner.</b> S01 documented this handle as the popup
+    /// menu owner "and, later", and the S03 measurement contradicted it: a <c>ContextMenu</c>
+    /// opened from this window with no placement target produced a popup whose owner was
+    /// <em>nonexistent</em> - <c>GetWindow(popup, GW_OWNER)</c> was <c>0x0</c> - and which an
+    /// outside click never dismissed. The popup owner is a dedicated 1x1 activating window,
+    /// <see cref="TrayMenuAnchorWindow"/>; this handle remains the window the shell posts to and
+    /// the window an icon identifier names, and it is deliberately not asked to do the menu's job.
+    /// </para>
+    /// <para>
+    /// The measurement, its harness and the test that pins the failure are described in
+    /// <see cref="TrayMenuAnchorWindow"/>'s remarks.
+    /// </para>
+    /// </remarks>
     internal IntPtr Handle => _hwndSource.Handle;
 
     /// <summary>

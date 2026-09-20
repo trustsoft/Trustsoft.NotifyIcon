@@ -23,7 +23,16 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// differently than the roadmap assumes, the failure belongs to S01 rather than to whichever later
 /// slice discovers it in the middle of its own work.
 /// </para>
+/// <para>
+/// <b>Why this class joined the serial-tail collection in S03.</b> The dismissal contract added
+/// below opens a real menu popup and injects a real outside click, and it asserts that this
+/// process's visible top-level window set is exactly the popup. That measurement needs the process
+/// to be otherwise quiet, so the class shares <see cref="TrayMenuDismissalCollection"/> with the
+/// proof that performs the same measurement (and, like it, is deliberately not the GDI collection,
+/// since nothing here reads <c>GdiHandles.Count()</c>).
+/// </para>
 /// </remarks>
+[Collection(TrayMenuDismissalCollection.Name)]
 public sealed class SliceContractTests
 {
     /// <summary>The icon edge length used by the tests that register an icon.</summary>
@@ -193,6 +202,49 @@ public sealed class SliceContractTests
 
         Assert.NotEqual(0u, realTaskbarCreated);
         Assert.NotEqual(realTaskbarCreated, host.CallbackMessageId);
+    }
+
+    /// <summary>
+    /// The dismissal contract that sits beside the popup-owner assertion above: a popup that really
+    /// dismisses on an outside click is owned by a dedicated anchor window, and explicitly not by the
+    /// registration host.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the S01 to S03 edge in its measured form, and it is the boundary record of the S03
+    /// finding: the assertion above is still true and still useful - the host handle is a legal
+    /// <c>HWND</c> for <c>NOTIFYICONIDENTIFIER.hWnd</c> and is what the shell posts to - but it is
+    /// <b>not</b> what owns a dismissable menu. A menu opened from the host shape with no placement
+    /// target gets an owner of <see cref="IntPtr.Zero"/> and never closes; a menu attached to
+    /// <see cref="TrayMenuAnchorWindow"/>'s 1x1 laid-out visual gets the anchor as its owner and
+    /// closes on an outside click.
+    /// </para>
+    /// <para>
+    /// The behavioural half is proven in full, together with the failing constructions pinned as
+    /// negative cases, in <c>TrayMenuDismissalTests</c>; here the same measurement is asserted once,
+    /// as a contract, so a future slice that replaces the anchor finds the boundary red instead of
+    /// discovering the loss mid-implementation.
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void A_dismissable_popup_is_owned_by_the_anchor_window_not_by_the_registration_host()
+    {
+        TrayMenuScenarioResult result = TrayMenuScenario.Run(MenuPlacementTargetStrategy.AnchorWindow);
+
+        Assert.Single(result.PopupWindows);
+
+        // Two distinct windows with two different jobs: the host the shell knows, and the anchor a
+        // popup can be dismissed through.
+        Assert.NotEqual(IntPtr.Zero, result.AnchorHandle);
+        Assert.NotEqual(result.HostHandle, result.AnchorHandle);
+
+        Assert.NotEqual(IntPtr.Zero, result.PopupOwnerHandle);
+        Assert.Equal(result.AnchorHandle, result.PopupOwnerHandle);
+        Assert.NotEqual(result.HostHandle, result.PopupOwnerHandle);
+
+        Assert.False(result.IsOpenAfterOutsideClick,
+            $"A popup owned by the anchor window must dismiss on an outside click. {result.Describe()}");
+        Assert.Empty(result.PopupWindowsAfterOutsideClick);
     }
 
     /// <summary>Builds a square, single-colour, fully opaque image.</summary>
