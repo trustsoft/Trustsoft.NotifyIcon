@@ -4,8 +4,8 @@ using System.Globalization;
 namespace Trustsoft.NotifyIcon;
 
 /// <summary>
-/// The library's trace channel: one named <see cref="TraceSource"/> plus the single error writer
-/// the runtime failure policy uses.
+/// The library's trace channel: one named <see cref="TraceSource"/> plus the two writers that use
+/// it - the error writer of the runtime failure policy and the Verbose click-stream writer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,6 +21,14 @@ namespace Trustsoft.NotifyIcon;
 /// consumer can subscribe the usual way - by adding a listener to that name (app.config, or
 /// <c>new TraceSource(NotifyIconTrace.SourceName)</c> from their side) - and can raise the level
 /// to see more when diagnosing.
+/// </para>
+/// <para>
+/// The two writers sit at different levels on purpose and must never swap places (MEM026):
+/// <see cref="Error"/> is reserved for failures and is the only writer at
+/// <see cref="TraceEventType.Error"/>, while <see cref="Verbose"/> carries the click stream - the
+/// raw callback payloads this library understands and the ones it does not - and is filtered out by
+/// the default level entirely. A normal run therefore emits nothing on this channel, and an
+/// unmapped event code is never reported as a failure: it is normal traffic, not a defect.
 /// </para>
 /// <para>
 /// Nothing here is public: the library exposes no logging API of its own, so the shipped surface
@@ -40,6 +48,12 @@ internal static class NotifyIconTrace
     /// rather than on the message text.
     /// </summary>
     internal const int ErrorEventId = 1;
+
+    /// <summary>
+    /// The trace event id of the Verbose click-stream lines. Stable for the same reason as
+    /// <see cref="ErrorEventId"/>, and distinct from it so a listener can tell traffic from failure.
+    /// </summary>
+    internal const int VerboseEventId = 2;
 
     /// <summary>
     /// The single source behind <see cref="Source"/>. Created once so that every failure line of
@@ -95,6 +109,39 @@ internal static class NotifyIconTrace
             // Deliberately swallowed: reporting a failure must not create a new one. See the
             // remarks above - the failure itself still reaches the caller through the exception
             // or the routed event, which are the channels that carry the full detail.
+        }
+    }
+
+    /// <summary>
+    /// Writes one Verbose line of diagnostic detail about the notification-area traffic the host
+    /// window received.
+    /// </summary>
+    /// <param name="message">The detail to write; collapsed onto a single line before it is traced.</param>
+    /// <remarks>
+    /// <para>
+    /// This is the instrument for a question the documentation does not answer: which event codes
+    /// the shell actually sends for a given interaction. It is written at
+    /// <see cref="TraceEventType.Verbose"/> so a consumer sees the stream only after deliberately
+    /// raising the level, which keeps it out of every normal log and keeps this channel's default
+    /// output failure-only (MEM026).
+    /// </para>
+    /// <para>
+    /// Like <see cref="Error"/> it never throws: a broken listener must not be able to turn ordinary
+    /// traffic into an exception on the window-procedure path that produced the line.
+    /// </para>
+    /// </remarks>
+    internal static void Verbose(string? message)
+    {
+        string line = SingleLine(message, fallback: "(no detail)");
+
+        try
+        {
+            TraceSourceInstance.TraceEvent(TraceEventType.Verbose, VerboseEventId, line);
+        }
+        catch (Exception)
+        {
+            // Deliberately swallowed, exactly as in Error: writing a diagnostic line must not
+            // create a failure. See the remarks above.
         }
     }
 

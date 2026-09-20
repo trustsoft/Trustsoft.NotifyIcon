@@ -7,6 +7,13 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// Proves the STA test harness and the GDI handle counter both work before anything in
 /// later tasks depends on them.
 /// </summary>
+/// <remarks>
+/// In <see cref="GdiCountCollection"/> because <see cref="GdiHandles_Count_TracksGdiObjectLifetimeExactly"/>
+/// asserts <em>exact</em> values of a counter owned by the whole process: a test in another
+/// collection creating or releasing a GDI object between the two reads would move it. That is the
+/// same reason <see cref="HiconFactoryTests"/> and <see cref="TrayIconLifecycleTests"/> are in it.
+/// </remarks>
+[Collection(GdiCountCollection.Name)]
 public sealed class PlaceholderTests
 {
     /// <summary>

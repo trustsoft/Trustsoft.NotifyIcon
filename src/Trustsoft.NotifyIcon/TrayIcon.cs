@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Trustsoft.NotifyIcon.Interop;
@@ -120,6 +122,163 @@ public class TrayIcon : FrameworkElement, IDisposable
         TrayErrorEventName,
         RoutingStrategy.Bubble,
         typeof(EventHandler<TrayErrorEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The name the <see cref="TrayLeftClickEvent"/> routed event is registered under, exposed as a
+    /// constant so that markup, diagnostics and tests cannot spell it differently.
+    /// </summary>
+    public const string TrayLeftClickEventName = "TrayLeftClick";
+
+    /// <summary>
+    /// The name the <see cref="TrayLeftDoubleClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string TrayLeftDoubleClickEventName = "TrayLeftDoubleClick";
+
+    /// <summary>
+    /// The name the <see cref="TrayRightClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string TrayRightClickEventName = "TrayRightClick";
+
+    /// <summary>
+    /// The name the <see cref="TrayMiddleClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string TrayMiddleClickEventName = "TrayMiddleClick";
+
+    /// <summary>
+    /// The name the <see cref="PreviewTrayLeftClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string PreviewTrayLeftClickEventName = "PreviewTrayLeftClick";
+
+    /// <summary>
+    /// The name the <see cref="PreviewTrayLeftDoubleClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string PreviewTrayLeftDoubleClickEventName = "PreviewTrayLeftDoubleClick";
+
+    /// <summary>
+    /// The name the <see cref="PreviewTrayRightClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string PreviewTrayRightClickEventName = "PreviewTrayRightClick";
+
+    /// <summary>
+    /// The name the <see cref="PreviewTrayMiddleClickEvent"/> routed event is registered under.
+    /// </summary>
+    public const string PreviewTrayMiddleClickEventName = "PreviewTrayMiddleClick";
+
+    /// <summary>
+    /// The routed event raised when the icon is single-clicked with the left mouse button.
+    /// </summary>
+    /// <remarks>
+    /// It bubbles, it is raised on this element, and its payload is
+    /// <see cref="TrayIconClickEventArgs"/>. The other three click types follow exactly this shape:
+    /// <see cref="TrayLeftDoubleClickEvent"/>,
+    /// <see cref="TrayRightClickEvent"/> and <see cref="TrayMiddleClickEvent"/>. Each one has a
+    /// <c>Preview...</c> counterpart that is raised immediately before it, where a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> suppresses this event entirely - see the class remarks
+    /// for why the raiser, not the framework, implements that suppression.
+    /// </remarks>
+    public static readonly RoutedEvent TrayLeftClickEvent = EventManager.RegisterRoutedEvent(
+        TrayLeftClickEventName,
+        RoutingStrategy.Bubble,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The routed event raised when the icon is double-clicked with the left mouse button.
+    /// </summary>
+    /// <remarks>
+    /// A double click is reported as its own event <em>and</em> as a click count of <c>2</c> in the
+    /// payload, so a consumer that handles both left-click events from one handler can still tell
+    /// them apart. Its cancellable counterpart is
+    /// <see cref="PreviewTrayLeftDoubleClickEvent"/>.
+    /// </remarks>
+    public static readonly RoutedEvent TrayLeftDoubleClickEvent = EventManager.RegisterRoutedEvent(
+        TrayLeftDoubleClickEventName,
+        RoutingStrategy.Bubble,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The routed event raised when the icon is clicked with the right mouse button.
+    /// </summary>
+    /// <remarks>
+    /// Under <c>NOTIFYICON_VERSION_4</c> the shell reports this as <c>WM_CONTEXTMENU</c>, not as a
+    /// button event. The anchor point in the payload is therefore <b>informational</b>: it is
+    /// officially undefined for that message, so menu placement must not be derived from it. Its
+    /// cancellable counterpart is <see cref="PreviewTrayRightClickEvent"/>.
+    /// </remarks>
+    public static readonly RoutedEvent TrayRightClickEvent = EventManager.RegisterRoutedEvent(
+        TrayRightClickEventName,
+        RoutingStrategy.Bubble,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The routed event raised when the icon is clicked with the middle mouse button.
+    /// </summary>
+    /// <remarks>
+    /// Its cancellable counterpart is <see cref="PreviewTrayMiddleClickEvent"/>.
+    /// </remarks>
+    public static readonly RoutedEvent TrayMiddleClickEvent = EventManager.RegisterRoutedEvent(
+        TrayMiddleClickEventName,
+        RoutingStrategy.Bubble,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The tunnel-routed event raised before <see cref="TrayLeftClickEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// A handler that sets <see cref="RoutedEventArgs.Handled"/> here prevents the main event from
+    /// being raised at all. It is registered with <see cref="RoutingStrategy.Tunnel"/> because that
+    /// is the strategy WPF's own <c>Preview...</c> events use, so the naming and the metadata agree
+    /// with the framework's convention; on an element with no parent "tunnelling" means the
+    /// element's own Preview handlers run first.
+    /// </remarks>
+    public static readonly RoutedEvent PreviewTrayLeftClickEvent = EventManager.RegisterRoutedEvent(
+        PreviewTrayLeftClickEventName,
+        RoutingStrategy.Tunnel,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The tunnel-routed event raised before <see cref="TrayLeftDoubleClickEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// A handler that sets <see cref="RoutedEventArgs.Handled"/> here prevents the main event from
+    /// being raised at all.
+    /// </remarks>
+    public static readonly RoutedEvent PreviewTrayLeftDoubleClickEvent = EventManager.RegisterRoutedEvent(
+        PreviewTrayLeftDoubleClickEventName,
+        RoutingStrategy.Tunnel,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The tunnel-routed event raised before <see cref="TrayRightClickEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is the cancellation point for the menu: a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> here stops both the main event and the element's own
+    /// right-click action.
+    /// </remarks>
+    public static readonly RoutedEvent PreviewTrayRightClickEvent = EventManager.RegisterRoutedEvent(
+        PreviewTrayRightClickEventName,
+        RoutingStrategy.Tunnel,
+        typeof(EventHandler<TrayIconClickEventArgs>),
+        typeof(TrayIcon));
+
+    /// <summary>
+    /// The tunnel-routed event raised before <see cref="TrayMiddleClickEvent"/>.
+    /// </summary>
+    /// <remarks>
+    /// A handler that sets <see cref="RoutedEventArgs.Handled"/> here prevents the main event from
+    /// being raised at all.
+    /// </remarks>
+    public static readonly RoutedEvent PreviewTrayMiddleClickEvent = EventManager.RegisterRoutedEvent(
+        PreviewTrayMiddleClickEventName,
+        RoutingStrategy.Tunnel,
+        typeof(EventHandler<TrayIconClickEventArgs>),
         typeof(TrayIcon));
 
     /// <summary>
@@ -307,6 +466,93 @@ public class TrayIcon : FrameworkElement, IDisposable
     {
         add => AddHandler(TrayErrorEvent, value);
         remove => RemoveHandler(TrayErrorEvent, value);
+    }
+
+    /// <summary>
+    /// Raised when the icon is single-clicked with the left mouse button.
+    /// </summary>
+    /// <remarks>
+    /// Registers the handler for <see cref="TrayLeftClickEvent"/>. A handler that throws propagates,
+    /// like any routed event handler; the library does not swallow a caller's bug.
+    /// </remarks>
+    public event EventHandler<TrayIconClickEventArgs> TrayLeftClick
+    {
+        add => AddHandler(TrayLeftClickEvent, value);
+        remove => RemoveHandler(TrayLeftClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised when the icon is double-clicked with the left mouse button.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="TrayLeftDoubleClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> TrayLeftDoubleClick
+    {
+        add => AddHandler(TrayLeftDoubleClickEvent, value);
+        remove => RemoveHandler(TrayLeftDoubleClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised when the icon is clicked with the right mouse button.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="TrayRightClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> TrayRightClick
+    {
+        add => AddHandler(TrayRightClickEvent, value);
+        remove => RemoveHandler(TrayRightClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised when the icon is clicked with the middle mouse button.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="TrayMiddleClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> TrayMiddleClick
+    {
+        add => AddHandler(TrayMiddleClickEvent, value);
+        remove => RemoveHandler(TrayMiddleClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised before <see cref="TrayLeftClickEvent"/>; a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> prevents the main event from being raised.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="PreviewTrayLeftClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> PreviewTrayLeftClick
+    {
+        add => AddHandler(PreviewTrayLeftClickEvent, value);
+        remove => RemoveHandler(PreviewTrayLeftClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised before <see cref="TrayLeftDoubleClickEvent"/>; a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> prevents the main event from being raised.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="PreviewTrayLeftDoubleClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> PreviewTrayLeftDoubleClick
+    {
+        add => AddHandler(PreviewTrayLeftDoubleClickEvent, value);
+        remove => RemoveHandler(PreviewTrayLeftDoubleClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised before <see cref="TrayRightClickEvent"/>; a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> prevents the main event from being raised.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="PreviewTrayRightClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> PreviewTrayRightClick
+    {
+        add => AddHandler(PreviewTrayRightClickEvent, value);
+        remove => RemoveHandler(PreviewTrayRightClickEvent, value);
+    }
+
+    /// <summary>
+    /// Raised before <see cref="TrayMiddleClickEvent"/>; a handler that sets
+    /// <see cref="RoutedEventArgs.Handled"/> prevents the main event from being raised.
+    /// </summary>
+    /// <remarks>Registers the handler for <see cref="PreviewTrayMiddleClickEvent"/>.</remarks>
+    public event EventHandler<TrayIconClickEventArgs> PreviewTrayMiddleClick
+    {
+        add => AddHandler(PreviewTrayMiddleClickEvent, value);
+        remove => RemoveHandler(PreviewTrayMiddleClickEvent, value);
     }
 
     /// <summary>
@@ -1038,19 +1284,174 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// callbacks and the <c>TaskbarCreated</c> broadcast.
     /// </summary>
     /// <param name="message">The message id.</param>
-    /// <param name="wParam">The first message parameter.</param>
-    /// <param name="lParam">The second message parameter.</param>
+    /// <param name="wParam">The first message parameter: the shell's anchor point.</param>
+    /// <param name="lParam">The second message parameter: the event code and the icon id.</param>
     /// <remarks>
-    /// S01 owns the sink and nothing else: the notification decoding (<c>LOWORD(lParam)</c> under
-    /// version 4) is S02's contract and the Explorer-restart re-registration is S05's. The sink is
-    /// wired here so the host has exactly one owner and neither later slice has to re-create,
-    /// subclass or re-hook the window. It must not throw: it runs inside a window procedure.
+    /// <para>
+    /// <b>This is where a shell callback becomes a click event.</b> The message is matched against
+    /// the callback id the host registered and then decoded by
+    /// <see cref="TrayEventDecoder.Decode"/> - the pure function that owns the
+    /// <c>NOTIFYICON_VERSION_4</c> payload layout - and a decoded click is raised as the pair of
+    /// routed events that belongs to it: the Tunnel <c>Preview...</c> event first, then, unless a
+    /// Preview handler cancelled it, the Bubble main event.
+    /// </para>
+    /// <para>
+    /// <b>The suppression is implemented here, on purpose.</b> WPF pairs a Preview event with its
+    /// Bubble twin only for input it stages itself; a manually raised pair has no such pairing, so a
+    /// Preview handler's <see cref="RoutedEventArgs.Handled"/> would have no effect on the main raise
+    /// unless the raiser honours it. The check below is that honouring, and deleting it as
+    /// "redundant" would silently turn every Preview event of this class into decoration.
+    /// </para>
+    /// <para>
+    /// <b>The message that is not ours is left completely alone.</b> The <c>TaskbarCreated</c>
+    /// broadcast S05 recovers on arrives at this same sink, and so does everything else a window
+    /// receives; none of it is decoded, filtered or traced here.
+    /// </para>
+    /// <para>
+    /// It never throws for input this library produces: the decoder cannot throw, an unmapped or
+    /// foreign payload is reported at Verbose level only, and the only exception that can leave this
+    /// method is one thrown by a consumer's own click handler - which propagates by contract, exactly
+    /// as it does for <see cref="TrayErrorEvent"/>. It needs no marshalling: the sink runs on the
+    /// thread that created the host, which is this instance's owning dispatcher thread.
+    /// </para>
     /// </remarks>
     private void OnHostMessage(uint message, IntPtr wParam, IntPtr lParam)
     {
-        _ = message;
-        _ = wParam;
-        _ = lParam;
+        TrayMessageWindow? host = _host;
+
+        if (host is null || message != host.CallbackMessageId)
+        {
+            // Not this icon's notification callback. The window is a fresh, empty instance only for
+            // the instant before the constructor stores it, and the shell's broadcast id is an
+            // entirely different number, so both conditions mean "not a tray click".
+            return;
+        }
+
+        TrayMouseEvent? decoded = TrayEventDecoder.Decode(message, wParam, lParam, host.CallbackMessageId, _iconId);
+
+        if (decoded is null)
+        {
+            // Our callback, but either another icon's id or an event code this library does not map
+            // to a click. Both are ordinary: pointer motion, keyboard selection and the balloon codes
+            // (until S04 lands) all arrive here. A Verbose line is the whole report - never an error
+            // line, which stays reserved for failures (MEM026).
+            TraceNoMappedClick(lParam);
+            return;
+        }
+
+        TrayMouseEvent click = decoded.Value;
+        (RoutedEvent Preview, RoutedEvent Main)? clickEvents = SelectClickEvents(click);
+
+        if (clickEvents is null)
+        {
+            // Unreachable while the decoder and this mapping agree on the four click types. It is
+            // still handled rather than thrown: this runs inside a window procedure, where an
+            // exception would take the host application down over a click it could have ignored.
+            TraceNoMappedClick(lParam);
+            return;
+        }
+
+        // A fresh args instance per phase, never one instance raised twice: each event carries the
+        // event it was raised for, and the two phases have different handler lists.
+        var previewArgs = new TrayIconClickEventArgs(click.Button, click.ClickCount, click.ScreenAnchor, clickEvents.Value.Preview);
+
+        RaiseEvent(previewArgs);
+
+        if (previewArgs.Handled)
+        {
+            // Cancelled before the main phase - see the remarks for why this check lives here.
+            return;
+        }
+
+        var mainArgs = new TrayIconClickEventArgs(click.Button, click.ClickCount, click.ScreenAnchor, clickEvents.Value.Main);
+
+        RaiseEvent(mainArgs);
+
+        if (!mainArgs.Handled)
+        {
+            OnTrayClick(mainArgs);
+        }
+    }
+
+    /// <summary>
+    /// Runs the default action for a click that still stands. This is the seam the context-menu
+    /// behaviour overrides.
+    /// </summary>
+    /// <param name="e">
+    /// The arguments of the main click event that was just raised - the button, the click count and
+    /// the anchor point - plus the event it was raised for; never <see langword="null"/>.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>Deliberately narrow.</b> The click events report what the user did and
+    /// <see cref="MenuActivation"/> says which click should activate the menu; acting on that -
+    /// opening the element's context menu at a rectangle taken from the shell - belongs to the class
+    /// that owns the menu. This hook exists so that behaviour has one documented place to attach,
+    /// instead of the element subscribing to its own public event (which would make the library's
+    /// default action look like a consumer of itself and would depend on subscription order).
+    /// </para>
+    /// <para>
+    /// Called on the thread that owns the host window, after the main event has been raised, and only
+    /// while the click still stands: not when a Preview handler cancelled it, and not when a handler
+    /// of the main event marked it <see cref="RoutedEventArgs.Handled"/> - WPF's own convention, where
+    /// a handled input event means the default action is not wanted. An override must call
+    /// <c>base.OnTrayClick(e)</c> so behaviour added to this class later keeps working.
+    /// </para>
+    /// </remarks>
+    protected virtual void OnTrayClick(TrayIconClickEventArgs e)
+    {
+    }
+
+    /// <summary>
+    /// Selects the Preview and main routed events for a decoded click.
+    /// </summary>
+    /// <param name="click">The decoded click.</param>
+    /// <returns>
+    /// The event pair, or <see langword="null"/> when the button and click count do not describe one
+    /// of the four click types this class reports.
+    /// </returns>
+    /// <remarks>
+    /// The mapping lives in one expression so the Preview and main halves cannot drift apart: a
+    /// missing pair would mean a click that can never be cancelled, or a cancellation that cancels
+    /// nothing.
+    /// </remarks>
+    private static (RoutedEvent Preview, RoutedEvent Main)? SelectClickEvents(TrayMouseEvent click) =>
+        (click.Button, click.ClickCount) switch
+        {
+            (MouseButton.Left, 1) => (PreviewTrayLeftClickEvent, TrayLeftClickEvent),
+            (MouseButton.Left, 2) => (PreviewTrayLeftDoubleClickEvent, TrayLeftDoubleClickEvent),
+            (MouseButton.Right, 1) => (PreviewTrayRightClickEvent, TrayRightClickEvent),
+            (MouseButton.Middle, 1) => (PreviewTrayMiddleClickEvent, TrayMiddleClickEvent),
+            _ => null,
+        };
+
+    /// <summary>
+    /// Writes the one Verbose line that records a callback payload this library raised nothing for.
+    /// </summary>
+    /// <param name="lParam">The callback payload, as the window procedure received it.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the payload is re-read here.</b> The decoder answers <see langword="null"/> for three
+    /// different reasons - a foreign icon id, an unmapped event code and a non-callback message - and
+    /// the caller has already ruled out the third. Naming the actual event code and icon id is what
+    /// turns this line into the instrument that answers the open question about the real per-click
+    /// message sequence, and it is worth the two masked reads: they mirror the layout the decoder
+    /// documents (event code in <c>LOWORD</c>, icon id in <c>HIWORD</c>) and add no behaviour of their
+    /// own. Do not move click routing logic here - the decoder remains the single authority on what a
+    /// payload means.
+    /// </para>
+    /// <para>
+    /// The line is written at Verbose level, so it is invisible until a listener raises the level and
+    /// can never be mistaken for a failure report (MEM026).
+    /// </para>
+    /// </remarks>
+    private static void TraceNoMappedClick(IntPtr lParam)
+    {
+        ulong payload = unchecked((ulong)lParam.ToInt64());
+
+        NotifyIconTrace.Verbose(string.Create(
+            CultureInfo.InvariantCulture,
+            $"TrayIcon callback carried no mapped click: event code 0x{payload & 0xFFFF:X4}, icon id {(payload >> 16) & 0xFFFF}."));
     }
 
     /// <summary>

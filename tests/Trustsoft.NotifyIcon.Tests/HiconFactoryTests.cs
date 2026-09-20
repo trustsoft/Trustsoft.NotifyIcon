@@ -39,7 +39,18 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// meaningful: it can only stay flat if nothing bypassed the seam, while the release calls are
 /// still counted exactly.
 /// </para>
+/// <para>
+/// <b>It runs in the non-parallel GDI collection.</b> Three tests here assert a delta on
+/// <see cref="GdiHandles.Count"/>, which counts objects owned by the whole process - and in the
+/// default parallel phase the tray classes create and destroy real <c>HwndSource</c> windows while
+/// this class measures, so the same counter would be moved by code that has nothing to do with the
+/// conversion. <see cref="GdiCountCollection"/> is the switch that serialises the measurements
+/// against every other collection, exactly as it does for
+/// <see cref="TrayIconLifecycleTests"/>. Their delta assertions are one-sided for the same reason:
+/// growth is the leak; shrinkage is something else in the process releasing an object mid-window.
+/// </para>
 /// </remarks>
+[Collection(GdiCountCollection.Name)]
 public sealed class HiconFactoryTests
 {
     /// <summary>The icon edge length used by most tests.</summary>
@@ -306,9 +317,19 @@ public sealed class HiconFactoryTests
     /// the seam saw exactly two bitmap releases per conversion.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A leaked <c>HBITMAP</c> pair per conversion would show a delta of about a hundred, so the
     /// assertion is decisive rather than a tolerance. The release count is the stronger of the two
     /// assertions: it cannot be satisfied by a delta that happened to cancel out.
+    /// </para>
+    /// <para>
+    /// The delta is asserted one-sidedly, like the rasterization measurement in
+    /// <see cref="Repeated_replacement_of_frozen_vector_frames_leaves_the_GDI_count_flat"/>: growth
+    /// is the failure this test names. A negative delta means an object owned by the process was
+    /// released by something other than the loop - a finalizer finishing a rasterizer of an earlier
+    /// test in this class, for instance - which is not evidence of a leak and must not fail the
+    /// run.
+    /// </para>
     /// </remarks>
     [StaFact]
     public void No_GDI_handle_leak_across_50_conversions()
@@ -330,7 +351,10 @@ public sealed class HiconFactoryTests
 
         int after = GdiHandles.Count();
 
-        Assert.InRange(after - before, 0, 2);
+        Assert.True(
+            after - before <= 2,
+            $"{conversions} conversions grew the GDI count by {after - before} (from {before} to {after}); every conversion must release both of its temporaries instead of accumulating them");
+
         Assert.Equal(conversions, fake.CreatedIcons);
         Assert.Equal(conversions, fake.DestroyedIcons);
 
@@ -565,8 +589,11 @@ public sealed class HiconFactoryTests
 
         int after = GdiHandles.Count();
 
-        // A leaked HBITMAP pair per conversion would show a delta near forty here.
-        Assert.InRange(after - before, 0, 2);
+        // A leaked HBITMAP pair per conversion would show a delta near forty here. One-sided, for
+        // the same reason as the fake-driven measurement above: only growth is a leak.
+        Assert.True(
+            after - before <= 2,
+            $"{conversions} real conversions grew the GDI count by {after - before} (from {before} to {after}); the DIB section pair of a conversion must come back to its starting state");
     }
 
     /// <summary>
