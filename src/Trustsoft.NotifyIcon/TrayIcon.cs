@@ -1738,16 +1738,28 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// callbacks and the <c>TaskbarCreated</c> broadcast.
     /// </summary>
     /// <param name="message">The message id.</param>
-    /// <param name="wParam">The first message parameter: the shell's anchor point.</param>
+    /// <param name="wParam">
+    /// The first message parameter: the anchor point for a click, and deliberately never read for a
+    /// balloon callback - see the branch comment in the body.
+    /// </param>
     /// <param name="lParam">The second message parameter: the event code and the icon id.</param>
     /// <remarks>
     /// <para>
     /// <b>This is where a shell callback becomes a click event.</b> The message is matched against
-    /// the callback id the host registered and then decoded by
-    /// <see cref="TrayEventDecoder.Decode"/> - the pure function that owns the
+    /// the callback id the host registered and then classified by
+    /// <see cref="TrayEventDecoder.Classify"/> - the pure function that owns the
     /// <c>NOTIFYICON_VERSION_4</c> payload layout - and a decoded click is raised as the pair of
     /// routed events that belongs to it: the Tunnel <c>Preview...</c> event first, then, unless a
     /// Preview handler cancelled it, the Bubble main event.
+    /// </para>
+    /// <para>
+    /// <b>A balloon callback takes its own branch.</b> <c>NIN_BALLOONUSERCLICK</c> is raised as the
+    /// cancellable <see cref="PreviewBalloonTipClickedEvent"/> /
+    /// <see cref="BalloonTipClickedEvent"/> pair with the same raiser-implemented suppression a
+    /// click uses, and the three lifecycle codes (<c>NIN_BALLOONSHOW</c>, <c>NIN_BALLOONHIDE</c>,
+    /// <c>NIN_BALLOONTIMEOUT</c>) raise no public event and are reported at Verbose only (D033).
+    /// <paramref name="wParam"/> is never read on the balloon branch: the header leaves the anchor
+    /// undefined for every balloon code.
     /// </para>
     /// <para>
     /// <b>The suppression is implemented here, on purpose.</b> WPF pairs a Preview event with its
@@ -1764,9 +1776,10 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// <para>
     /// It never throws for input this library produces: the decoder cannot throw, an unmapped or
     /// foreign payload is reported at Verbose level only, and the only exception that can leave this
-    /// method is one thrown by a consumer's own click handler - which propagates by contract, exactly
-    /// as it does for <see cref="TrayErrorEvent"/>. It needs no marshalling: the sink runs on the
-    /// thread that created the host, which is this instance's owning dispatcher thread.
+    /// method is one thrown by a consumer's own click or balloon-click handler - which propagates by
+    /// contract, exactly as it does for <see cref="TrayErrorEvent"/>. It needs no marshalling: the
+    /// sink runs on the thread that created the host, which is this instance's owning dispatcher
+    /// thread.
     /// </para>
     /// </remarks>
     private void OnHostMessage(uint message, IntPtr wParam, IntPtr lParam)
@@ -1781,14 +1794,32 @@ public class TrayIcon : FrameworkElement, IDisposable
             return;
         }
 
-        TrayMouseEvent? decoded = TrayEventDecoder.Decode(message, wParam, lParam, host.CallbackMessageId, _iconId);
+        // One classification drives the whole sink (D032): a click keeps the S02 path below
+        // unchanged, a balloon callback takes the balloon branch, and everything else - a foreign
+        // icon id or an unmapped event code - stays ordinary, Verbose-only traffic.
+        TrayCallbackClassification classification =
+            TrayEventDecoder.Classify(message, wParam, lParam, host.CallbackMessageId, _iconId);
+
+        if (classification.Outcome == TrayCallbackOutcome.BalloonEvent)
+        {
+            // Unlike the click path below, this branch never reads wParam. The header promises the
+            // anchor only for NIN_POPUPOPEN, NIN_SELECT, NIN_KEYSELECT and the mouse messages
+            // between WM_MOUSEFIRST and WM_MOUSELAST; a balloon code lies outside that set, so
+            // wParam holds whatever the shell happened to leave in the register and decoding it
+            // would invent a screen point the shell never sent. The decoder already honoured the
+            // rule - a balloon classification carries no anchor at all.
+            RaiseBalloonCallback(classification.EventCode, classification.IconId);
+            return;
+        }
+
+        TrayMouseEvent? decoded = classification.Click;
 
         if (decoded is null)
         {
             // Our callback, but either another icon's id or an event code this library does not map
-            // to a click. Both are ordinary: pointer motion, keyboard selection and the balloon codes
-            // (until S04 lands) all arrive here. A Verbose line is the whole report - never an error
-            // line, which stays reserved for failures (MEM026).
+            // to a click. Both are ordinary: pointer motion, keyboard selection and the popup codes
+            // all arrive here. A Verbose line is the whole report - never an error line, which
+            // stays reserved for failures (MEM026).
             TraceNoMappedClick(lParam);
             return;
         }
@@ -1825,6 +1856,56 @@ public class TrayIcon : FrameworkElement, IDisposable
         {
             OnTrayClick(mainArgs);
         }
+    }
+
+    /// <summary>
+    /// Raises the public outcome of one balloon callback: the user-click code becomes the cancellable
+    /// <see cref="PreviewBalloonTipClickedEvent"/> / <see cref="BalloonTipClickedEvent"/> pair, and
+    /// each lifecycle code becomes a Verbose trace line with no public event (D033).
+    /// </summary>
+    /// <param name="eventCode">The balloon event code from <c>LOWORD(lParam)</c>.</param>
+    /// <param name="iconId">The icon id from <c>HIWORD(lParam)</c>, already filtered to this icon.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>The suppression is implemented here, exactly as for a click.</b> WPF pairs a Preview event
+    /// with its Bubble twin only for input it stages itself, so the check between the two raises is
+    /// what makes <c>PreviewBalloonTipClicked</c> cancellable; deleting it as "redundant" would turn
+    /// the Preview event into decoration.
+    /// </para>
+    /// <para>
+    /// <b>It never throws for input this library produces.</b> It runs inside the window procedure,
+    /// where an exception of the library's own making would become a crash; the only exception that
+    /// can leave it is one thrown by a consumer's own balloon handler, which propagates by the same
+    /// contract as a click handler's exception.
+    /// </para>
+    /// </remarks>
+    private void RaiseBalloonCallback(uint eventCode, uint iconId)
+    {
+        if (eventCode != ShellNotifications.NIN_BALLOONUSERCLICK)
+        {
+            // SHOW, HIDE and TIMEOUT are lifecycle news, not user actions (D033): no public event,
+            // one Verbose line - never an error line, because a balloon the system suppressed,
+            // coalesced or timed out is not a library failure (D008, MEM026).
+            TraceBalloonLifecycle(eventCode, iconId);
+            return;
+        }
+
+        // A fresh args instance per phase, never one instance raised twice - the same rule the click
+        // pair follows, for MEM025's reason: RoutedEventArgs(RoutedEvent) does not validate its
+        // argument on net8.0-windows, so each phase constructs its own instance stamped with its own
+        // event at this construction site.
+        var previewArgs = new RoutedEventArgs(PreviewBalloonTipClickedEvent);
+
+        RaiseEvent(previewArgs);
+
+        if (previewArgs.Handled)
+        {
+            // Cancelled before the main phase - the same raiser-implemented suppression the click
+            // pair relies on (see the remarks on OnHostMessage for why the raiser must check).
+            return;
+        }
+
+        RaiseEvent(new RoutedEventArgs(BalloonTipClickedEvent));
     }
 
     /// <summary>
@@ -2350,6 +2431,41 @@ public class TrayIcon : FrameworkElement, IDisposable
         NotifyIconTrace.Verbose(string.Create(
             CultureInfo.InvariantCulture,
             $"TrayIcon callback carried no mapped click: event code 0x{payload & 0xFFFF:X4}, icon id {(payload >> 16) & 0xFFFF}."));
+    }
+
+    /// <summary>
+    /// Writes the one Verbose line that records a balloon lifecycle callback this library raised no
+    /// public event for.
+    /// </summary>
+    /// <param name="eventCode">The balloon event code from <c>LOWORD(lParam)</c>.</param>
+    /// <param name="iconId">The icon id from <c>HIWORD(lParam)</c>.</param>
+    /// <remarks>
+    /// <para>
+    /// Same shape as <see cref="TraceNoMappedClick"/>: one line naming the event code, the icon id
+    /// that sent it and what the phase means - "about to show", "being hidden" or "timed out" - so a
+    /// raised-level log can answer why a balloon appeared or vanished without any event. The
+    /// classification has already decoded the payload, so the values arrive as parameters instead of
+    /// a second masked read of <c>lParam</c>.
+    /// </para>
+    /// <para>
+    /// The line is written at Verbose level and never at Error: a balloon the system suppressed,
+    /// coalesced or timed out is ordinary shell behaviour, not a library failure (D008, D033,
+    /// MEM026).
+    /// </para>
+    /// </remarks>
+    private static void TraceBalloonLifecycle(uint eventCode, uint iconId)
+    {
+        string meaning = eventCode switch
+        {
+            ShellNotifications.NIN_BALLOONSHOW => "about to show",
+            ShellNotifications.NIN_BALLOONHIDE => "being hidden",
+            ShellNotifications.NIN_BALLOONTIMEOUT => "timed out",
+            _ => "unrecognised balloon phase",
+        };
+
+        NotifyIconTrace.Verbose(string.Create(
+            CultureInfo.InvariantCulture,
+            $"TrayIcon balloon callback raised no event: event code 0x{eventCode:X4} ({meaning}), icon id {iconId}."));
     }
 
     /// <summary>
