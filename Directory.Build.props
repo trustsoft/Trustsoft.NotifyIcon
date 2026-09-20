@@ -1,0 +1,22 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- TargetFramework(s) are declared per project; no shared fallback on purpose. -->
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+
+    <!--
+      Policy: public APIs carry English XML documentation (D010), but the compiler is not
+      the enforcement point. GenerateDocumentationFile emits CS1591 for every undocumented
+      public member; with TreatWarningsAsErrors on, that would fail the build for a
+      non-correctness reason during active development. Doc completeness of the shipping
+      surface is asserted later by tests. No other warning is suppressed.
+    -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0-windows;net9.0-windows;net10.0-windows</TargetFrameworks>
+    <UseWPF>true</UseWPF>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <PackageId>Trustsoft.NotifyIcon</PackageId>
+    <RootNamespace>Trustsoft.NotifyIcon</RootNamespace>
+    <AssemblyName>Trustsoft.NotifyIcon</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Zero PackageReference entries by design (R011, D001): the library talks to the shell
+    through its own P/Invoke declarations. No System.Drawing.Common (removed from the
+    shared framework in .NET 8+ and would add a dependency for HICON ownership we already
+    handle ourselves) and no Microsoft.Windows.Compatibility.
+  -->
+
+</Project>
