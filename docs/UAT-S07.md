@@ -5,7 +5,7 @@
 **Date:** 2026-09-21
 **Revision tested:** the `milestone/M001` worktree with the S07/T01, T02 and T03 work applied; the raw logs below carry the exact timestamps and the pack's own sha256.
 **Machine:** MINIBOOKX, `MINGW64_NT-10.0-26200` (Git Bash), .NET SDK `10.0.401`, single monitor 1920x1200 at 150 % scale.
-**Document status:** assembled per task as the slice runs. T05 consolidates it into the slice's evidence pack; with T01-T04 applied, the only rows this document still owes are T05's requirement verdicts and its milestone-level cross-checks.
+**Document status:** **complete.** Assembled per task as the slice ran, then consolidated by T05, which added the environment block, the task plan's verify line as a single invocation, the three milestone-level cross-checks and the R010/R011/R012 verdicts. Every command quoted in this document was run as written; the raw logs and their producers are under `docs/uat-logs/S07/`.
 
 ## Verdict so far
 
@@ -23,6 +23,12 @@
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
 | A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1518,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
 | The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `e87308ab…` identical before and after the run). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
+| The task plan's whole verify line passes as one invocation on this revision | **PASS** | T05: `docs/uat-logs/S07/t05-plan-verify.txt` — pack exit 0, inspector `VERDICT all 15 assertions hold`, suite **403 passed / 0 failed / 0 skipped** in 58 s |
+| The shipped public surface is still the seven documented types | **PASS** | T05: `PackagePurityTests` **12/12**, `Public_surface_is_only_the_documented_types` among them — `docs/uat-logs/S07/t05-milestone-claims.txt` section 1 |
+| The package contains nothing from the sample, the tests, the probe or the consumer proof | **PASS** | T05: the inspector's forbidden-entry assertion and its allowed-set assertion, both green on the artifact this run packed — same log, section 2 |
+| The declarative path the README documents is the path the sample runs | **PASS** | T05: identical namespace URI and prefix on both sides, the README's attribute set a subset of the sample's declared set (8 of 17), `TrayIconXamlContractTests` 7/7, and the live `--xaml` run printing `declaration mode: XAML` / `registered from markup` — same log, section 3 |
+| The suite's growth across S07 is accounted for by name, not assumed | **PASS** | T05: **+9 test names, 0 removed** (267 → 276 by method name), 6 in `PackagePurityTests` and 3 in `TrayIconMenuDataContextTests`; 394 (S06's closing count) + 9 = the 403 this run reports — `docs/uat-logs/S07/t05-suite-accounting.txt` |
+| The artifact's sha256 identifies the pack run, and no claim here rests on it | **PASS** | T05: two consecutive packs are byte-identical and content-identical (`dad165f3…`, 328,642 bytes, 12 entries); the older hash in the same log is the artifact T04's pack left at the same fixed path — `docs/uat-logs/S07/t05-pack-reproducibility.txt` |
 
 ## What this slice does not claim (so far)
 
@@ -374,3 +380,213 @@ Recorded here because the milestone's acceptance leans on it; the raw logs are `
 - **Foreground-sensitive popup tests.** At the T01 measurement the full suite reported 398 passed / 4 failed, all four being the popup tests that `docs/UAT-S06.md` documents as environment-dependent (`popupOwner=0x0`, `foreground=0x0()`, `setForegroundWindow=False`). At the T03 revision the same suite reported **402 passed / 0 failed** on the same machine (`docs/uat-logs/S07/t03-plan-verify.txt`), so the four are confirmed as an environment property — they pass when the desktop conditions they need are present — and no code change addresses them here. The class remains environment-dependent rather than fixed.
 - **Metadata change vs. published package.** Nothing in this repository can retract a version once published; the inspection script is the guard in front of that, not a substitute for a release process.
 - **README staleness, partly guarded by T04.** The README's `## Status` section used to say NuGet packaging was not delivered, and the list under it contradicted its own heading (items it labelled "planned, not implemented" were implemented, each with its own UAT record). T04 removed that section entirely rather than re-wording it: the README now leads with install, usage, shutdown, the interaction model, the measured traps and the deliberate exclusions, and the repository-facing material sits below a horizontal rule. Five of the facts a consumer copies are now guarded (`PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt`); the prose around them is not, and a sentence can still go stale without failing anything.
+
+---
+
+## The evidence pack, the requirement verdicts and the cross-checks (T05)
+
+**Revision tested:** `7b59f23` (worktree HEAD). T05 edited no library, sample or test file; what it added is
+`docs/uat-logs/S07/t05-*.{sh,txt}` and this section.
+
+### The environment, recorded rather than described
+
+Raw: `docs/uat-logs/S07/t05-environment.txt`.
+
+| | |
+|---|---|
+| Machine | MinibookX |
+| Windows | `Microsoft Windows [Version 10.0.26200.9457]` |
+| Shell | `MINGW64_NT-10.0-26200 3.6.10-710e5275.x86_64` (Git Bash) |
+| Active SDK | `10.0.401`; installed: 6.0.428, 7.0.410, 8.0.425, 9.0.318, 10.0.303, 10.0.401 |
+| WindowsDesktop runtimes | 6.0.36, 7.0.20, **8.0.31**, **9.0.20**, 10.0.11, **10.0.12** — the three the package targets are installed and were what the consumer runs executed against |
+| Display | one monitor 1920x1200 at 150 % scale (the context of every live run in this slice) |
+
+### The raw logs this section is built from
+
+| Log | Producer | Contents |
+|---|---|---|
+| `docs/uat-logs/S07/t05-plan-verify.txt` | `t05-plan-verify.sh` | the task plan's verify line as one invocation |
+| `docs/uat-logs/S07/t05-milestone-claims.txt` | `t05-milestone-claims.sh` | the three milestone-level cross-checks |
+| `docs/uat-logs/S07/t05-pack-reproducibility.txt` | `t05-pack-reproducibility.sh` | the artifact's identity across two consecutive packs |
+| `docs/uat-logs/S07/t05-suite-accounting.txt` | inline commands | the suite's growth across S07, by test name |
+| `docs/uat-logs/S07/t05-environment.txt` | inline commands | the environment table above |
+
+### 1. The task plan's verify line, run as one invocation
+
+```text
+dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg
+dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore
+```
+
+| Command | Exit | Output |
+|---|---|---|
+| pack | **0** | `Successfully created package '…\artifacts\Trustsoft.NotifyIcon.1.0.0.nupkg'`, sha256 `dad165f3…`, 328,642 bytes, 12 entries |
+| inspection | **0** | `VERDICT  all 15 assertions hold` — 15 `PASS` lines, no `FAIL` |
+| suite | **0** | `Passed!  - Failed: 0, Passed: 403, Skipped: 0, Total: 403, Duration: 58 s` |
+
+**The 403 is accounted for, not asserted.** The extractor that counts public test methods by name finds
+**267 names at S06's closing revision `3049495` and 276 here: +9 added, 0 removed**, which is exactly
+the runner's 394 → 403. The nine are named in `docs/uat-logs/S07/t05-suite-accounting.txt`: six in
+`PackagePurityTests` (the T01 metadata/purity/documentation pins and T04's README pin) and three in
+`TrayIconMenuDataContextTests` (T06's menu-data-context pins). Because the extractor counts methods and
+the runner counts test cases, the equality is also the cross-check that no new `Theory` cases were
+smuggled in beside the methods.
+
+### 2. The three milestone-level cross-checks
+
+| Claim | How it was made mechanical | Result |
+|---|---|---|
+| The shipped surface is still the seven documented types | `PackagePurityTests` filtered run (`Public_surface_is_only_the_documented_types`, plus the context-menu-property pin that asserts the shadowed property adds no type) | **12/12 green** |
+| The package carries nothing from the sample, the tests, the probe or the consumer proof | the inspector's forbidden-pattern assertion (patterns `Sample Tests testhost probe-live consumer-proof`) **and** its allowed-set assertion (every entry must be nuspec, README, LICENSE, `lib/<tfm>/assembly+xml` or package metadata) | both **PASS** |
+| The declarative path the README documents is the path the sample runs | four comparisons, in the log's section 3: the namespace URI the README writes equals the one `AssemblyInfo.cs` declares with `XmlnsDefinition`, and the prefix equals its `XmlnsPrefix`; every attribute the README's `tni:TrayIcon` snippet writes is one the sample's declared icon element writes; the library type the README names is the one `TrayIconXamlContractTests` parses through that namespace (7/7) and the sample element derives from it (`SampleTrayIcon : TrayIcon`); and the documented live invocation prints `declaration mode: XAML` and `registered from markup` | all **PASS** |
+
+One deliberate difference is recorded rather than smoothed over: the README snippet uses `tni:` because a
+consumer's `ApplicationDefinition` lives in another assembly, while the sample must write
+`local:SampleTrayIcon` — an assembly-qualified `clr-namespace` for a type in the definition's own project
+fails the markup compiler with MC3074, which is the trap the README documents in its own words. The
+attribute set, not the namespace spelling, is what the subset check compares.
+
+### 3. What the artifact's hash does and does not identify
+
+`t05-plan-verify.txt` prints the artifact's sha256 before and after the pack it runs, and the two values
+differ (`e8f551a2…` → `dad165f3…`). That difference is measured rather than explained away:
+
+- two consecutive packs of the unchanged tree are **byte-identical and content-identical** (`dad165f3…`,
+  328,642 bytes, the same 12 entries with the same per-entry sha256);
+- the earlier value is the artifact **T04's pack left at the same fixed path** (`docs/uat-logs/S07/t04-readme-verification.txt`
+  records `e8f551a2…`), and the T01/T02-era artifact differed again (`ffd813f0…`) — it is also the
+  smaller one (the T01 and T02 logs record that artifact at 325,181 and 325,169 bytes against this
+  run's 328,642), which is consistent with having been packed before T04 rebuilt `README.md`, itself a
+  package entry. Two readings of the same fixed path in the same era differ by 12 bytes, which is the
+  same fact from another angle: the path is repacked as the tree changes.
+
+So a nupkg's sha256 identifies the pack run that produced it, not a value to compare across logs. Nothing
+in R010, R011 or R012 depends on byte-equality: the inspector's identity assertion reads the id and the
+version back out of the project file, and its content assertions are hash-independent.
+
+### 4. Requirement verdicts
+
+#### R010 — published as `Trustsoft.NotifyIcon` with English XML documentation, an English README, a LICENSE and package metadata, installable and usable without additional setup
+
+**PASS**, with one part evidenced by review rather than by test.
+
+| Part of the requirement | Evidence |
+|---|---|
+| Package metadata a consumer sees | nuspec `id=Trustsoft.NotifyIcon`, `version=1.0.0`, `authors=Trustsoft`, `<license type="expression">MIT`, `<readme>README.md</readme>`, tags including `wpf` (T01 inspection, re-checked in `t05-plan-verify.txt`); pinned source-side by `Library_csproj_declares_the_package_metadata_a_consumer_sees` |
+| English README shipped | the package carries `README.md` and the nuspec `<readme>` names that existing entry — both asserted lines of the T05 inspection; the README's structure and facts are pinned by `Readme_documents_the_install_line_usage_and_the_shipped_surface` |
+| LICENSE file | `LICENSE` asserted present at the package root |
+| XML documentation | `Trustsoft.NotifyIcon.xml` asserted beside each framework's assembly (one line per TFM); source side pinned by `Release_build_emits_xml_documentation_beside_every_target_framework_assembly` (`GenerateDocumentationFile` true in `Directory.Build.props` and a real `T:Trustsoft.NotifyIcon.TrayIcon` entry in the file) |
+| Installable and usable from a consumer project without additional setup | T03: one `PackageReference`, one restore from the local feed, one build and one probed live run **per framework**, `18/18` presence samples, flat `gdi 13/25`, `icon-after-exit: gone` — `docs/uat-logs/S07/t03-consumer-proof.txt` |
+
+**Not evidenced:** the package was never pushed to nuget.org, and how nuget.org would render the metadata
+(description length, tag formatting) is unverified. The English-ness of the XML documentation text is
+asserted only in the same proxy sense as the description (an ASCII check, D010); the doc comments being
+English is review, and this document says so rather than implying a test.
+
+#### R011 — no runtime dependencies beyond the base class library and WPF; no WinForms, no H.NotifyIcon, no WinRT contracts
+
+**PASS.**
+
+| Part of the requirement | Evidence |
+|---|---|
+| No runtime dependency group beyond WPF | `PASS  no <dependency> entry appears in any of the 3 target-framework group(s) under <dependencies>` and `PASS  the only framework reference in the nuspec is Microsoft.WindowsDesktop.App.WPF` |
+| No WinForms, no H.NotifyIcon, no WinRT contracts | three independent checks: `Loaded_library_references_only_framework_assemblies` (the loaded assembly's own reference table), `Library_csproj_has_no_package_reference` and `No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library` (a sweep of every csproj/props file), plus the inspector's allowed-set assertion, which would reject a third-party assembly riding along under `lib/`. The consumer proof asserts the same thing from a consumer's side (its own copy reports the package's references carry no WinForms and no other tray implementation) |
+
+**Caveat, recorded because the wording would otherwise read as a technicality:** the SDK writes empty
+`<group>` elements into `<dependencies>`, so the nuspec has the element with zero `<dependency>` children
+(D038 explains why removing them trips NU5128). The claim is exactly `zero <dependency> entries`, which is
+what both the inspector and the tests assert. Test-only references (xUnit, `Microsoft.NET.Test.Sdk`) exist
+in the test project and are shown by the same assertions not to be in the package.
+
+#### R012 — builds and runs on `net8.0-windows`, `net9.0-windows` and `net10.0-windows`
+
+**PASS.**
+
+| Part of the requirement | Evidence |
+|---|---|
+| Builds on all three | T03's three `dotnet build -f <tfm>` runs (one per framework, none standing in for the rest); pinned by `Library_targets_three_windows_tfms` and `Solution_build_outputs_exist_for_all_three_tfms` |
+| Runs on all three | T03's three live probed consumer runs, one per framework; and the shipped package carries `lib/net8.0-windows7.0/`, `lib/net9.0-windows7.0/`, `lib/net10.0-windows7.0/`, each with the assembly and its XML documentation |
+
+**Not evidenced:** all three were exercised on one machine with the three WindowsDesktop runtimes installed
+(8.0.31, 9.0.20, 10.0.12); no second machine, no CI matrix, no earlier Windows build was tried.
+
+### 5. Follow-ups the milestone leaves open
+
+These are open, not closed, and each names the document or test that carries the detail:
+
+1. **Click delivery was never observed through a real shell click (S06/F1).** Every automated run in this
+   slice — sample and consumer alike — reached its menu through the documented `OnTrayClick` hook, and the
+   injected click reproduced the same non-delivery from the consumer process (`docs/UAT-S06.md`; section 8
+   of `docs/uat-logs/S07/t03-consumer-proof.txt`). A real end-user click remains unmeasured.
+2. **The S03 popup tests are foreground-sensitive and environment-dependent.** T01's measurement of the
+   full suite saw 398 passed / 4 failed with `foreground=0x0()` and `setForegroundWindow=False`; the same
+   suite passed 402/0 and then 403/0 on the same machine. The four are not fixed, they are environment-
+   dependent (`docs/UAT-S06.md`, `docs/uat-logs/S07/t01-*`).
+3. **The GDI cost of handing over a fresh vector image per change.** Every icon change converts a source
+   to a new HICON; the measured steady-state count is quoted in the README's "One measured cost" section
+   and measured in `docs/UAT-S01.md` (the consumer runs above re-confirm a flat `gdi 13/25` series).
+4. **Consumer setup discoveries.** An agent shell can arrive without the Windows known-folder variables
+   (the SDK then fails inside NuGet's restore-graph evaluation with `Value cannot be null. (Parameter
+   'path1')`), and `dotnet test` in a never-built worktree prints nothing and exits 0. Both are written
+   into the README's repository notes, because they cost time to rediscover.
+5. **The artifact path holds one file at a time.** `artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg` is
+   overwritten by every pack, and `artifacts/` is gitignored; the logs carry the hashes, so a reader can
+   see which pack a claim was measured against (section 3 above).
+6. **Publication is not attempted.** Nothing in this milestone authorises pushing to nuget.org, and D037's
+   version policy is the thing that would have to be consulted first.
+
+### 6. Reproducing this section
+
+```text
+bash docs/uat-logs/S07/t05-plan-verify.sh          # -> t05-plan-verify.txt
+bash docs/uat-logs/S07/t05-milestone-claims.sh     # -> t05-milestone-claims.txt
+bash docs/uat-logs/S07/t05-pack-reproducibility.sh # -> t05-pack-reproducibility.txt
+```
+
+`t05-environment.txt` and `t05-suite-accounting.txt` record the environment commands and the
+`git grep`-based name extraction respectively; both are transcriptions of commands run as written.
+
+## Failure Modes
+
+This unit's product is a document plus four shell scripts, so its failure surface is subprocesses and
+files, not runtime branches. Each path below was either exercised or deliberately left to the harness,
+and this table says which.
+
+| Dependency | Failure path | Handling |
+|---|---|---|
+| `dotnet pack` / `dotnet build` / `dotnet test` (4–70 s subprocesses) | non-zero exit on a broken build, a failing test, or a shell missing the Windows known-folder variables (`Value cannot be null. (Parameter 'path1')` — measured twice in this slice, in T03 and in T05's first reproducibility probe) | every script captures the exit code (`pack_exit`, `verify_exit`, `suite_exit`, `declarative_exit`), prints it, and exits 1 with `FAILURES ABOVE`. The environment-repair block at the top of each script is the measured fix for the profile-variable failure |
+| the packaged artifact (a file at a fixed path) | absent, unreadable, or stale | `verify-package.sh` exits **2** with a usage message when its argument is unreadable — distinguishable from exit 1, "an invariant is broken"; a stale file is made visible by printing the hash *before* the pack in section 0 of the plan-verify log |
+| `unzip` (the inspector's only external tool) | not installed | the script checks for it and exits 2 with a message before running an assertion |
+| a check whose extraction matches nothing | a pipeline reports the producer's exit code, so a run that printed nothing can read as a pass | handled explicitly: the attribute extraction asserts both sides are non-empty before the subset check, and the live declarative run writes to a file and asserts the run's exit code **and** at least three matched lines (`declarative run exit=0 matched lines=3`) |
+| a hung subprocess | no script imposes a timeout | **not handled by the scripts.** The harness (`gsd_exec`, 600 s) bounds it, and a hang leaves no log file rather than a false pass — recorded here instead of pretended. The longest measured command is the 58 s suite |
+
+## Load Profile
+
+No runtime load dimension. The unit is one document and four one-shot scripts over a 328 KB artifact:
+the costs are a ~4 s pack, a sub-second inspection, a 58 s suite of 403 tests and an 8 s live sample run,
+all CPU-bound and linear in artifact size and test count. Nothing is pooled, cached, rate-limited or
+shared — no network, no concurrency, no server, no queue — so there is no resource to protect and no
+breakpoint at 10x; the only saturated thing would be a single core's wall time. The one amplifying factor
+worth naming is that each script re-runs the suite (or a filtered subset) rather than reusing a previous
+result, so a repeated run costs the same again; `gsd_exec_search` is the cheaper path for a repeat.
+
+## Negative Tests
+
+The controls this slice carries. T05 adds no test; it points at the controls that exist, and it hardened
+the one instrument of its own that could have passed silently.
+
+| Negative surface | Control | Evidence |
+|---|---|---|
+| A `<dependency>` entry appears in a target-framework group (R011's own failure mode) | `scripts/verify-package.sh` on a deliberately mutated copy exits 1 and quotes the offending entry | `docs/uat-logs/S07/t02-negative-controls.txt`, control 1 |
+| A sample, test or probe entry gets packed | the same script, control 2 — caught from both sides, by the forbidden-pattern assertion and by the allowed-set assertion | same file, control 2 |
+| The nuspec version drifts from the version the project declares | the same script, control 3, which names both values (`9.9.9` vs `1.0.0`) rather than only reporting a mismatch | same file, control 3 |
+| The metadata, the `IsPackable=false` flags, the package-reference purity, the XML documentation or the README pin breaks | three source-side guard controls (one invariant each, restored byte-for-byte with `cmp`) plus five negative controls for the README pin | `docs/uat-logs/S07/t01-negative-controls.txt` and `docs/uat-logs/S07/t04-readme-guard-controls.txt`, produced by the scripts beside them |
+| The instrument itself could pass vacuously (an extractor that finds nothing, a live run whose grep matches nothing) | the hardening T05 added: non-empty extraction on both sides, and a live run whose exit code **and** matched-line count are both asserted | `docs/uat-logs/S07/t05-milestone-claims.txt` |
+| An absent or unreadable package argument | `verify-package.sh` exits 2, distinct from the exit-1 "invariant broken" path | the script's usage block; exit 0 on a real package is recorded in every log above |
+
+Suite-side negative assertions, all green at 12/12 in `PackagePurityTests`:
+`Library_csproj_has_no_package_reference`, `Loaded_library_references_only_framework_assemblies`,
+`No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library`,
+`Non_shipping_projects_are_not_packable_and_the_instruments_stay_out_of_the_solution`,
+`Public_surface_is_only_the_documented_types`.

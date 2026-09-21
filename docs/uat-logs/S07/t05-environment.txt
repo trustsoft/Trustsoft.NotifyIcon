@@ -1,0 +1,30 @@
+# S07/T05 environment
+date: 2026-09-21T16:35:53+03:00
+machine: MinibookX
+os: MINGW64_NT-10.0-26200 3.6.10-710e5275.x86_64
+revision: 7b59f23 docs: The shipped README was rebuilt around the consumer's path (inst...
+
+$ dotnet --version
+10.0.401
+
+$ dotnet --list-sdks
+6.0.428 [C:\Program Files\dotnet\sdk]
+7.0.410 [C:\Program Files\dotnet\sdk]
+8.0.425 [C:\Program Files\dotnet\sdk]
+9.0.318 [C:\Program Files\dotnet\sdk]
+10.0.303 [C:\Program Files\dotnet\sdk]
+10.0.401 [C:\Program Files\dotnet\sdk]
+
+$ dotnet --list-runtimes | grep -i windowsdesktop
+Microsoft.WindowsDesktop.App 6.0.36 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 7.0.20 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 8.0.31 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 9.0.20 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 10.0.11 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+Microsoft.WindowsDesktop.App 10.0.12 [C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App]
+
+$ cmd /c ver
+Microsoft Windows [Version 10.0.26200.9457]
+(c) Microsoft Corporation. All rights reserved.
+
+C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001>

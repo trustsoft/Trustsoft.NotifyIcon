@@ -1,0 +1,24 @@
+# S07/T05: the suite's growth across S07, by test name
+date: 2026-09-21T16:37:02+03:00
+revision: 7b59f23 docs: The shipped README was rebuilt around the consumer's path (inst...
+baseline: S06's closing revision 3049495 (the revision docs/UAT-S06.md's T05 section measured 394 passed)
+
+names at 3049495: 267
+names at HEAD:  276
+
+## added names
+  + A_consumer_set_data_context_on_the_menu_is_what_its_bound_items_resolve_against
+  + Assigning_the_menu_re_parents_nothing_and_takes_no_data_context_from_the_icon
+  + Library_csproj_declares_the_package_metadata_a_consumer_sees
+  + Loaded_library_carries_the_declared_package_version
+  + No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library
+  + Non_shipping_projects_are_not_packable_and_the_instruments_stay_out_of_the_solution
+  + Readme_documents_the_install_line_usage_and_the_shipped_surface
+  + Release_build_emits_xml_documentation_beside_every_target_framework_assembly
+  + The_icons_data_context_does_not_reach_a_menu_declared_in_a_resource_dictionary
+
+## removed names
+
+## by file, the added names
+  tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs: Library_csproj_declares_the_package_metadata_a_consumer_sees Loaded_library_carries_the_declared_package_version No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library Non_shipping_projects_are_not_packable_and_the_instruments_stay_out_of_the_solution Readme_documents_the_install_line_usage_and_the_shipped_surface Release_build_emits_xml_documentation_beside_every_target_framework_assembly 
+  tests/Trustsoft.NotifyIcon.Tests/TrayIconMenuDataContextTests.cs: A_consumer_set_data_context_on_the_menu_is_what_its_bound_items_resolve_against Assigning_the_menu_re_parents_nothing_and_takes_no_data_context_from_the_icon The_icons_data_context_does_not_reach_a_menu_declared_in_a_resource_dictionary 

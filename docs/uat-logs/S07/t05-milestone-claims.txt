@@ -1,0 +1,111 @@
+# S07/T05 raw evidence: the milestone-level cross-checks
+date: 2026-09-21T16:36:18+03:00
+machine: MinibookX / MINGW64_NT-10.0-26200
+sdk: 10.0.401
+revision: 7b59f23 docs: The shipped README was rebuilt around the consumer's path (inst...
+
+## 1. the shipped public surface is still the seven documented types (D034/D031)
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --filter "FullyQualifiedName~PackagePurityTests"
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    12, Skipped:     0, Total:    12, Duration: 76 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+purity-filter exit=0
+  The relevant claims inside that class: Public_surface_is_only_the_documented_types (the
+  exported set is exactly the documented seven).
+
+## 2. the package contains nothing from the sample, the tests, the probe or the consumer proof
+$ bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg
+package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+        sha256 dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec
+        expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
+  PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
+-- identity (the nuspec)
+  PASS  the package carries a root-level nuspec: Trustsoft.NotifyIcon.nuspec
+  PASS  the nuspec id is 'Trustsoft.NotifyIcon'
+  PASS  the nuspec version is '1.0.0'
+-- dependency groups (R011)
+  PASS  no <dependency> entry appears in any of the 3 target-framework group(s) under <dependencies> (the SDK's empty groups, D038)
+  PASS  the only framework reference in the nuspec is Microsoft.WindowsDesktop.App.WPF
+-- package content
+  PASS  the package carries exactly the three target-framework lib folders: net10.0-windows7.0 net8.0-windows7.0 net9.0-windows7.0
+  PASS  lib/net8.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  lib/net9.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  lib/net10.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  the package carries README.md at its root
+  PASS  the nuspec <readme> names 'README.md' and that entry is in the package
+  PASS  the package carries the licence file LICENSE at its root
+  PASS  no entry belongs to the sample, the tests, the probe or the consumer proof (patterns: Sample Tests testhost probe-live consumer-proof)
+  PASS  every package entry is one the package is allowed to contain (nuspec, README, LICENSE, lib/<tfm>/assembly+xml, package metadata)
+
+
+VERDICT  all 15 assertions hold
+verify-package.sh exit=0
+  The forbidden-entry assertion and the allowed-set assertion are the two lines of that
+  output that carry this claim; both name the offending entry when they fail.
+
+## 3. the README's declarative path is the path the sample runs
+
+### 3a. the namespace URI and prefix are the same string on both sides
+README namespace URI:   http://schemas.trustsoft.com/notifyicon
+library XmlnsDefinition: http://schemas.trustsoft.com/notifyicon
+library XmlnsPrefix:     tni
+PASS  the README's xmlns:tni resolves to the URI the library declares, with prefix tni
+
+### 3b. every attribute the README's snippet writes, the sample's declared icon element writes
+README snippet attributes:
+  ContextMenu
+  IconSource
+  Key
+  MenuActivation
+  ToolTipText
+  TrayError
+  TrayRightClick
+  Visible
+sample declared attributes:
+  BalloonTipClicked
+  ContextMenu
+  IconSource
+  Key
+  MenuActivation
+  PreviewBalloonTipClicked
+  PreviewTrayLeftClick
+  PreviewTrayLeftDoubleClick
+  PreviewTrayMiddleClick
+  PreviewTrayRightClick
+  ToolTipText
+  TrayError
+  TrayLeftClick
+  TrayLeftDoubleClick
+  TrayMiddleClick
+  TrayRightClick
+  Visible
+PASS  the extraction found attributes on both sides (8 in the README, 17 in the sample)
+PASS  the README's attribute set is a subset of the set the sample declares and runs
+
+### 3c. the library type the README documents parses through that namespace
+  README's element: tni:TrayIcon
+  sample's element: local:SampleTrayIcon
+    (the sample's ApplicationDefinition is in the element's own project, so it declares the
+     type by clr-namespace and cannot use the library URI - MC3074, the trap the README
+     documents; a consumer's ApplicationDefinition lives in another assembly and does use it.)
+  the sample element derives from the library type it demonstrates:
+    2179:public sealed class SampleTrayIcon : TrayIcon
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --filter "FullyQualifiedName~TrayIconXamlContractTests"
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     7, Skipped:     0, Total:     7, Duration: 287 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+xaml-contract exit=0
+
+### 3d. the sample's documented declarative invocation enters declaration mode (live)
+$ dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --xaml --run-seconds 8
+[sample] declaration mode: XAML - the icon, its menu and its image are declared in Application.Resources and wired by markup; nothing in this file assigns a property or subscribes to an event on the icon.
+[sample] tray icon registered from markup (Visible="True" and the image come from Application.Resources; no rotation runs, because nothing in C# may replace a declared value).
+[sample] tray icon disposed - it must have left the notification area.
+declarative run exit=0 matched lines=3
+PASS  'declaration mode: XAML' and 'registered from markup' show the run did not fall through to the code-first path
+
+## verdict
+  purity filter=0; package inspection=0; xaml contract=0; declarative run=0
+  All three milestone-level claims hold: the surface is the documented seven, the package
+  carries nothing from the non-shipping projects, and the documented declarative path is the
+  one the sample enters and prints.

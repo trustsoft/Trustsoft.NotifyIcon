@@ -1,0 +1,53 @@
+# S07/T05: two consecutive packs of the same working tree, compared
+date: 2026-09-21T16:35:41+03:00
+revision: 7b59f23 docs: The shipped README was rebuilt around the consumer's path (inst...
+
+$ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+pack 1 exit=0
+  pack1 sha256: dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec  (328642 bytes)
+
+$ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+pack 2 exit=0
+  pack2 sha256: dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec  (328642 bytes)
+
+## bytes
+IDENTICAL  the two packs are byte-for-byte equal
+
+## content (entry name + sha256 of the entry's bytes, sorted)
+  LICENSE d12df7fcae956bad3c47e2e77ac7fa39d0682e7a36f82aa7d67c3892f3e8826c
+  README.md e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+  Trustsoft.NotifyIcon.nuspec bc432e6161c72fb858e880f7f23c7120671df19f36f273aaff39b877644422df
+  [Content_Types].xml b3e2c57533fd7dbc87cb87607e17bafdb7e39a1b79d28a03df19b270d05ac490
+  _rels/.rels 72157cffeea7e5b0737618268f32fc39489e29a4f9e73215ebbb5f0ab3e1a3b7
+  lib/net10.0-windows7.0/Trustsoft.NotifyIcon.dll 06f19270819687f4c2ef455e6a0d6ac7ca160223394934d56a406c9bf3668603
+  lib/net10.0-windows7.0/Trustsoft.NotifyIcon.xml 2e674da4a40cbe994b21145b57e7a971c84ee32b10d0dd4f08284b853e68badc
+  lib/net8.0-windows7.0/Trustsoft.NotifyIcon.dll acca048bd6cdaba0fea7094cf6a1d7f14fc9c950184706540effe9cbeb19315c
+  lib/net8.0-windows7.0/Trustsoft.NotifyIcon.xml 2e674da4a40cbe994b21145b57e7a971c84ee32b10d0dd4f08284b853e68badc
+  lib/net9.0-windows7.0/Trustsoft.NotifyIcon.dll 1886aa8cae01b55fa9ee599acc6fb28b25da59b49dba8670b4cda7fe2efbc1c1
+  lib/net9.0-windows7.0/Trustsoft.NotifyIcon.xml 2e674da4a40cbe994b21145b57e7a971c84ee32b10d0dd4f08284b853e68badc
+  package/services/metadata/core-properties/nuget.psmdcp c9201b63f812408d0d618aab3fc851d66023eab963538562c1319019cfbb6a2d
+
+IDENTICAL  the two packs carry the same entries with the same bytes
+
+## the hashes other logs recorded for this same filename, for comparison
+  (the artifact is one fixed path, artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg, so every pack
+   overwrites the previous one; these are what earlier logs saw at that path)
+  $ grep -hoE "sha256[ =][0-9a-f]{64}" docs/uat-logs/S07/t02-*.txt docs/uat-logs/S07/t04-*.txt | sort -u
+  sha256 e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+  sha256 e8f551a2d09f8496bde3021c30701db9c86240d0826736ffeced653418b2b580
+  sha256 ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+  sha256=ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+  (T02's inspection ran before T04 rebuilt the README, which is why its package is also a
+   different size - README.md is a package entry)
+
+## verdict
+  bytes equal: yes; content equal: yes
+
+  Two consecutive packs of an unchanged tree are byte-identical here, so a pack is repeatable
+  on this machine. What the T04-vs-T05 hash difference in t05-plan-verify.txt is not, then, is
+  nondeterminism: the artifact at that fixed path was packed again between the two logs, and a
+  nupkg's sha256 therefore identifies the pack run that produced it, not a value to compare
+  across logs. The inspector's identity assertion (id + version read back from the project) is
+  what anchors a package's identity to its source, and the inspector's content assertions do
+  not depend on the hash at all.
+  PASS  the pack is content-reproducible, and the T05 log's two differing hashes are explained
