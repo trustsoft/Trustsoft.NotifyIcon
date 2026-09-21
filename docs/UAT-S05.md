@@ -3,7 +3,7 @@
 **Slice:** M001 / S05 (Continuity and teardown)
 **Requirements:** R005 (explorer-restart recovery), R006 (no stale icon after a process dies without Dispose)
 **Date:** 2026-09-21
-**Revision tested:** Check 1-8: `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied. Check 9: the committed `milestone/M001` tip (`4cd52db`), re-measured in a fresh session. Check 10: the `milestone/M001` tip (`d091f87`) plus the new second instrument `scripts/tray-inventory.ps1`, measured in a fresh session
+**Revision tested:** Check 1-8: `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied. Check 9: the committed `milestone/M001` tip (`4cd52db`), re-measured in a fresh session. Check 10: the `milestone/M001` tip (`d091f87`) plus the new second instrument `scripts/tray-inventory.ps1`, measured in a fresh session. Check 11: the T06 revision - the whole demo (window-free host, Explorer restart, balloon, menu, force kill) carried out inside a single session with one sample process, with an independent tray scan of the recovered icon in the middle of it
 **Machine:** MINIBOOKX, `Microsoft Windows NT 10.0.26200.0`, single monitor 1920x1200 physical, display scale 150 % (dpi 144), process is per-monitor-v2 DPI aware
 **Session:** interactive, single user session (`Console`, session 1)
 
@@ -11,9 +11,9 @@
 
 | Claim | Verdict | Evidence |
 |---|---|---|
-| R005 - the icon returns by itself after a real Explorer restart, with no application action | **PASS** | Check 1: presence series `present` -> `absent` for 8 s -> `present`, GDI flat at 17 across the whole event. Re-measured on the delivered revision by Check 9 (the task's own acceptance command): `present` -> `absent` for 6 readings over 7 s -> `present`, GDI flat at 17 across the event |
-| R005 - the recovered icon is still fully functional | **PASS** | Check 2 (the shell accepted a balloon from the recovered registration), Check 3 (the menu opened at the recovered icon); both re-measured in Check 9 after a second, independent restart |
-| R006 - a process that dies without Dispose leaves no stale icon | **PASS** | Check 4 (`taskkill /f`, shell no longer holds the icon), Check 5 (counter-case agrees), Check 10 (fresh `taskkill /f` on the delivered revision: probe verdict `icon-after-exit: gone` **and** two independent observations of the notification area via the shell's own tray UI agreeing) |
+| R005 - the icon returns by itself after a real Explorer restart, with no application action | **PASS** | Check 1: presence series `present` -> `absent` for 8 s -> `present`, GDI flat at 17 across the whole event. Re-measured on the delivered revision by Check 9 (the task's own acceptance command): `present` -> `absent` for 6 readings over 7 s -> `present`, GDI flat at 17 across the event. Measured a third time by Check 11, inside the same session that then shows a balloon, opens the menu and force-kills the process: `absent` for 8 readings over 8 s -> `present` at t=24 s, with the shell's own tray UI agreeing at t=25 s |
+| R005 - the recovered icon is still fully functional | **PASS** | Check 2 (the shell accepted a balloon from the recovered registration), Check 3 (the menu opened at the recovered icon); both re-measured in Check 9 after a second, independent restart, and a third time in Check 11 - the `NIN_BALLOONSHOW` callback and a real popup window at the icon, both after the restart and both on the same process that then died |
+| R006 - a process that dies without Dispose leaves no stale icon | **PASS** | Check 4 (`taskkill /f`, shell no longer holds the icon), Check 5 (counter-case agrees), Check 10 (fresh `taskkill /f` on the delivered revision: probe verdict `icon-after-exit: gone` **and** two independent observations of the notification area via the shell's own tray UI agreeing), Check 11 (the same verdict at the end of the single end-to-end session: `taskkill /f` -> `icon=absent` with `gdi=0`, `icon-after-exit: gone`, and the tray UI answering `ABSENT`) |
 | The teardown verdict is not stuck on one answer | **PASS** | Check 6 (positive control: a live icon is reported `still present`) and Check 7 (guard: a process that never had an icon reports `NOT OBSERVED`, exit code 1) |
 | The teardown verdict does not rest on a single oracle | **PASS** | Check 10: the shell's tray UI, read through UI Automation, exposed `Trustsoft.NotifyIcon sample - the icon changes every second` before the kill and nothing matching it afterwards, while the two oracles agreed on the same 60x60 slot in between; the scanner's own two-way control is in the same check |
 
@@ -543,6 +543,40 @@ Run A shows the verdict is not "everything matches"; run B, three seconds later 
 
 ---
 
+## Check 11 - the whole demo in one session (the slice's exit condition)
+
+Checks 1-10 measured the pieces separately: 1-3 and 9 the restart with the post-recovery balloon and menu, 10 the teardown. This check is the exit condition the roadmap states for S05 - **one** sample process, in **one** session, that hosts the icon with no window, loses it when Explorer is replaced, gets it back without the application doing anything, still takes a balloon and opens a menu on the recovered registration, and then leaves nothing behind when it is force-killed. The run is `docs/uat-logs/S05/t06-e2e-demo.txt`, the operator log is `t06-e2e-demo.ops.txt`.
+
+**Command** (the plan recorded in the operator log: kill Explorer at t=16, start it again at t=20, scan the tray at t~26, balloon at t=40, menu at t=50, kill the sample at t=70):
+
+```
+dotnet run --project scripts/probe-live -c Release --no-build -- \
+    samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 100 \
+    --balloon-after 40 --menu-after 50 --kill-after 70 \
+    --sample-arg --run-seconds --sample-arg 200
+```
+
+**The six legs, in order, out of one process (pid 2348).**
+
+| # | Leg | Evidence |
+|---|---|---|
+| 1 | a window-free application hosts the icon | `[sample] no window is shown - check the notification area, not the taskbar.` and `[sample] tray icon registered, rotating 3 frames every 1s.`, with `[probe] t=1s pid=2348 icon=present rect=(1446,1128,1494,1200)` |
+| 2 | the icon goes when Explorer is replaced | operator log `taskkill //f //im explorer.exe -> exit 0` at 12:23:44; `icon=absent hr=0x80004005` for t=15..t=23, with nothing touching the sample |
+| 3 | it comes back by itself | `[probe] t=24s pid=2348 icon=present rect=(1446,1128,1494,1200)` - no click, no `Visible` toggle, no process action of any kind; the only producer-side output in the window is the sample's own `Modify` failure line while the shell was down |
+| 4 | the recovered icon is the shell's icon, not just an answer to an API question | tray inventory at 12:23:55, mid-recovery: `verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'`. The probe's own reading at t=27 names `rect=(1321,1043,1381,1103)` - the flyout's rectangle, while that scan had the flyout open |
+| 5 | a balloon and a menu still work on it | `[sample] --show-balloon-after: showing a balloon now` -> `raw callback hwnd=0x510016 msg=0x0401 event=0x0402` (the shell's `NIN_BALLOONSHOW`); `[sample] menu opened: popup=0x60164 ... rect=1446,1045 296x83 dpi=144`, with GDI rising 17 -> 29 as the popup's surface appears, then `[sample] menu dismissed.` |
+| 6 | a force kill leaves nothing behind | `[probe] taskkill /f /pid 2348 -> exit 0`; `t=70s ... icon=absent hr=0x80004005 gdi=0`; `icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x510016 uID=1)`; and after the kill the tray inventory answers `verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'`. The probe exits **0**, which it only does when the icon was observed present |
+
+**What this check proves, and what it does not.**
+
+- It proves the four claims in one continuity: the restart cost the consumer neither its balloon nor its menu, and the recovered registration died with the process that owned it.
+- The balloon and the menu in leg 5 are the sample's own switches (`--show-balloon-after`, `--open-menu-after`), exactly as in Checks 9 and 10e, and the sample says so: "No shell click is injected for this." What they prove is that the **recovered registration** still accepts a balloon and can still be opened at the icon. The click-driven path is Check 10's (`--click-after`, a real right click on the icon's own rectangle) and the seam half is `TrayIconMenuActivationTests`.
+- Leg 2 is the one leg that has to be live: the absence is the shell's own answer (`E_FAIL`) while Explorer restarts, not an inference from a log line the application produced.
+- One reading is unintelligible taken alone and is called out rather than left to puzzle the reader: the final `identity:` line prints `title="(no title)"` because the probe reads the host window's title after the sample has died. The handle in that line (`0x510016`) is the one resolved while the process was alive, and it is the same handle the presence series and the after-exit verdict use - so the identity is intact and only the title text is missing.
+- This check does not repeat the teardown counter-case, the positive control or the scanner's two-way discrimination (Checks 6, 7 and 10g); it cites them instead.
+
+---
+
 ## Verification summary - what the seam tests pin, and what the suite says
 
 This section exists so a reader can tell proven from assumed without opening the test files.
@@ -563,15 +597,61 @@ This section exists so a reader can tell proven from assumed without opening the
 | `SliceContractTests.Explorer_restart_recovery_re_adds_and_touches_nothing_else` | the S03/S04 boundary: never a `NIM_MODIFY`-only update, never `NIF_INFO`, no icon created or destroyed inside the recovery window, version re-selected |
 | `TrayIconMenuActivationTests.An_explorer_restart_while_the_menu_is_open_leaves_the_menu_and_its_anchor_alone` | with a real popup open, the broadcast leaves the menu instance, the anchor handle, the popup window and `IsOpen` exactly as they were |
 
-**Full suite and build.**
+**Full suite and build** (the closing measurement for the slice, all three target frameworks, recorded in `docs/uat-logs/S05/t06-suite.txt`).
 
 | Measurement | Result |
 |---|---|
-| `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore` | succeeded, **0 warnings, 0 errors** (all three target frameworks: net8.0-windows, net9.0-windows, net10.0-windows) |
-| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` (measured at the slice build, before T03 and T04 added theirs) | **384 passed, 0 failed, 0 skipped** |
-| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` (Check 10, the T05 acceptance revision) | **394 passed, 0 failed, 0 skipped**, 49 s - the ten added in between are T03's negative controls and T04's live-recovery seam tests |
-| Baseline at the start of this slice | 373 passed, 0 failed - so the slice as a whole added **21 tests** |
-| Public surface | unchanged: recovery is a private method, adds no public type and no exception operation constant, and the surface-pin tests in `PackagePurityTests` stay green without being touched - the seven documented public types from D034 are still seven |
+| `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore` | succeeded, **0 warnings, 0 errors** - net8.0-windows, net9.0-windows and net10.0-windows |
+| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` | **394 passed, 0 failed, 0 skipped**, 51 s |
+| Baseline at the start of this slice (`docs/UAT-S04.md`, S04 complete) | **373 passed, 0 failed, 0 skipped** |
+| Delta | **+21 tests**, and every one of them is named below |
+| Public surface | unchanged: recovery is a private branch, adds no public type and no exception operation constant. `tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs` is **not in the diff between the baseline commit and this revision**, so `Public_surface_is_only_the_documented_types` and `TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type` were neither edited nor relaxed; the seven documented public types from D034 are still seven |
+
+**The 21 tests added since the baseline, by name.** Measured by diffing the test method names of `tests/` between the baseline commit `15694bd` and this revision, and corroborated by per-class counts from `dotnet test --list-tests`, which sum to the same 394. The name diff yields 23 names; `OnTrayLeftClick` and `OnPreviewTrayLeftClick` are markup event handlers in the XAML test file, not tests, and are excluded.
+
+| # | Test | File | Owner |
+|---|---|---|---|
+| 1 | `TaskbarCreated_broadcast_re_adds_with_the_retained_handle` | `TrayIconRecoveryTests.cs` | S05 |
+| 2 | `Re_add_carries_the_registration_flags_and_the_tooltip_but_never_a_balloon_flag` | `TrayIconRecoveryTests.cs` | S05 |
+| 3 | `An_instance_that_never_showed_an_icon_has_no_host_to_recover_into` | `TrayIconRecoveryTests.cs` | S05 |
+| 4 | `Re_add_of_an_icon_without_an_image_keeps_showtip_and_omits_the_icon_flag` | `TrayIconRecoveryTests.cs` | S05 |
+| 5 | `Broadcast_after_the_icon_was_removed_is_a_silent_no_op` | `TrayIconRecoveryTests.cs` | S05 |
+| 6 | `Broadcast_after_disposal_is_a_no_op` | `TrayIconRecoveryTests.cs` | S05 |
+| 7 | `Each_broadcast_recovers_and_nothing_is_destroyed` | `TrayIconRecoveryTests.cs` | S05 |
+| 8 | `Failed_re_add_retries_once_then_raises_TrayError_without_throwing` | `TrayIconRecoveryTests.cs` | S05 |
+| 9 | `Failed_SetVersion_during_recovery_rolls_back_and_keeps_the_handle` | `TrayIconRecoveryTests.cs` | S05 |
+| 10 | `ShowBalloonTip_still_reaches_the_shell_after_recovery` | `TrayIconRecoveryTests.cs` | S05 |
+| 11 | `Successful_recovery_writes_one_verbose_line_naming_the_broadcast` | `TrayIconRecoveryTests.cs` | S05 |
+| 12 | `Explorer_restart_recovery_re_adds_and_touches_nothing_else` | `SliceContractTests.cs` | S05 |
+| 13 | `Teardown_declares_no_finalizer_anywhere_in_the_library` | `SliceContractTests.cs` | S05 |
+| 14 | `An_explorer_restart_while_the_menu_is_open_leaves_the_menu_and_its_anchor_alone` | `TrayIconMenuActivationTests.cs` | S05 |
+| 15 | `A_parsed_parentless_instance_disposes_cleanly` | `TrayIconXamlContractTests.cs` | S06 |
+| 16 | `Declarative_property_markup_creates_a_configured_instance_without_registering` | `TrayIconXamlContractTests.cs` | S06 |
+| 17 | `Markup_event_attributes_bind_and_fire_for_bubble_and_preview` | `TrayIconXamlContractTests.cs` | S06 |
+| 18 | `Markup_event_attributes_in_a_resource_dictionary_are_a_pinned_boundary` | `TrayIconXamlContractTests.cs` | S06 |
+| 19 | `Markup_resolves_the_library_owned_context_menu_property_and_the_menu_by_identity` | `TrayIconXamlContractTests.cs` | S06 |
+| 20 | `One_resource_key_yields_one_instance` | `TrayIconXamlContractTests.cs` | S06 |
+| 21 | `The_consumer_namespace_is_declared_and_markup_resolves_through_it` | `TrayIconXamlContractTests.cs` | S06 |
+
+Arithmetic: 373 + 11 (`TrayIconRecoveryTests`) + 2 (`SliceContractTests`) + 1 (`TrayIconMenuActivationTests`) + 7 (`TrayIconXamlContractTests`) = **394**. Per-class counts agree: 11 / 8 / 16 / 7 at this revision against 0 / 6 / 15 / 0 at the baseline.
+
+**Two honest notes about that table.** *(a) It is 21 added tests, not 21 of this slice's tests.* Rows 15-21 live in S06's file, which is already on the shared `milestone/M001` branch - one worktree per milestone, so a later slice's file can be present while an earlier slice is still finishing. They are part of the delta against the baseline and are therefore named here rather than absorbed into an S05 total; S05's own contribution is the 14 in rows 1-14. *(b) An earlier revision of this table carried an interim `384` reading and attributed "the ten added in between" to T03 and T04.* That attribution does not survive the by-name accounting above and is replaced by it: the interim number measured an intermediate working tree, while this table is measured against the baseline commit and against names.
+
+**One flaky measurement, recorded rather than smoothed over.** The first full-suite run in this task reported **3 failed / 391 passed / 394 total**, all three in `TrayIconMenuActivationTests` (`An_unregistered_icon_falls_back_to_the_cursor_and_records_that_the_shell_was_not_asked`, `Replacing_the_menu_between_two_clicks_opens_the_new_one`, `A_second_right_click_while_the_menu_is_open_opens_nothing_new`), each failing with `popupWindows=[]`, `menuIsOpen=False` and `foreground=0xBF056E(Notepad3)`: the popup never opened while a third-party window held the foreground. Re-run immediately, same command and same binaries (`--no-build`), it is **394 passed, 0 failed**; the same three tests run alone are **16 passed, 0 failed**. None of the three is an S05 test and no library file differs between the two runs, so this is the full-suite popup interference `docs/UAT-S03.md` already records as finding F5, not a regression from this slice. The flaky run, the re-run and the isolation run are all in `docs/uat-logs/S05/t06-suite.txt`.
+
+---
+
+## What this slice deliberately leaves open
+
+Recorded so the next slice inherits them as open items rather than rediscovering them.
+
+| Item | What stays true after S05 | Where it is pinned |
+|---|---|---|
+| A **failed** recovery leaves the icon absent | The library retries once, traces and raises `TrayError`, and then stops. There is no timer, no backoff and no second attempt: the icon stays absent until the shell broadcasts again or the consumer toggles `Visible`. Recovery never re-broadcasts on its own behalf. This is a scope boundary rather than an oversight - a retry loop inside a window procedure the shell invoked is a decision for a later slice. | `Failed_re_add_retries_once_then_raises_TrayError_without_throwing`, `Failed_SetVersion_during_recovery_rolls_back_and_keeps_the_handle` |
+| S03's finding **F1** is unchanged | A disposal-driven menu close still does not deliver `Closed`. S05 changed the recovery branch and the teardown-free contract and touched no menu-close path, so F1 sits exactly where S03 left it. | `docs/UAT-S03.md` (F1); the S05 menu test asserts the menu is left *alone* across a restart, which is a different claim from closing it |
+| **S06 hand-off** | Recovery is a private branch on the same `TrayIcon` both surfaces use, and its guard is `IsRegistered`, which every registration path sets - so nothing in it is declaration-specific. What is worth watching at the S06 boundary is the timing of a declared instance's first registration: a declarative instance that registers later simply has a later `IsRegistered` edge, and a broadcast before it is a no-op by construction (`An_instance_that_never_showed_an_icon_has_no_host_to_recover_into`). | `TrayIconXamlContractTests`, `docs/UAT-S06.md` |
+| Recovery's **Verbose line was never observed from the sample** | The sample's own `sample|`/`sample!` stream in Checks 9-11 shows the `Modify` failure line but no `Verbose` recovery line, because the sample never raises the library's trace level above its `Warning` default. The library's line is proven by the seam test, not by the live runs - which is what the note in "What this slice does not claim" above says. | `Successful_recovery_writes_one_verbose_line_naming_the_broadcast` |
+| The **full-suite popup flake** (S03 F5's class) | A third-party window holding the foreground can stop WPF popups from opening during a full-suite run; it did so once here, in three pre-existing tests. Not fixed in S05 - it is a test-harness interaction, and hiding it behind retries would trade a visible flake for an invisible one. | `docs/uat-logs/S05/t06-suite.txt`, `docs/UAT-S03.md` (F5) |
 
 ---
 
@@ -598,6 +678,10 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 | Check 10g (the scanner's own two-way control) | `docs/uat-logs/S05/t05-scanner-discrimination.txt` |
 | Check 10 suite re-run (build plus 394 tests on the T05 revision) | `docs/uat-logs/S05/t05-suite.txt` |
 | Check 10 operator log (every command issued and every scan timestamp) | `docs/uat-logs/S05/t05-live-teardown.ops.txt` |
+| Check 11 (the whole demo in one session: window-free host, Explorer restart, balloon, menu, force kill) | `docs/uat-logs/S05/t06-e2e-demo.txt` |
+| Check 11 operator log (every command issued, with wall-clock timestamps) | `docs/uat-logs/S05/t06-e2e-demo.ops.txt` |
+| Check 11 independent tray inventories (during recovery, and after the kill) | `docs/uat-logs/S05/t06-tray-during-recovery.txt`, `docs/uat-logs/S05/t06-tray-after-kill.txt` |
+| T06 build and suite measurement (three TFMs, 394 tests, the flaky run, the isolation run, the per-class composition) | `docs/uat-logs/S05/t06-suite.txt` |
 
 The logs for Checks 1-8 were written to `/tmp` while the runs were made and copied here afterwards; the Check 9 and Check 10 logs were written straight into `docs/uat-logs/S05/` by the runs themselves. The `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer, `sample|` / `sample!` for the sample's standard output and error, and `[t05 ...]` for the Check 10 operator log.
 

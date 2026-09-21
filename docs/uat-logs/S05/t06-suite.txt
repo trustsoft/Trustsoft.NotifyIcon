@@ -1,0 +1,80 @@
+T06 cross-framework regression - full solution build and complete test suite
+recorded 2026-09-21 12:30:43 on MinibookX, revision dfe4f24 on branch milestone/M001
+
+== command 1: dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore ==
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon.Sample -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
+  Trustsoft.NotifyIcon.Tests -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+== command 2 (first full-suite run): dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build ==
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.An_unregistered_icon_falls_back_to_the_cursor_and_records_that_the_shell_was_not_asked [1 s]
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.Replacing_the_menu_between_two_clicks_opens_the_new_one [2 s]
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.A_second_right_click_while_the_menu_is_open_opens_nothing_new [1 s]
+Failed!  - Failed:     3, Passed:   391, Skipped:     0, Total:   394, Duration: 51 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+-- the three failures of run 2, verbatim -----------------------------------
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.An_unregistered_icon_falls_back_to_the_cursor_and_records_that_the_shell_was_not_asked [1 s]
+  Error Message:
+   menuAssigned=True menuIsOpen=False placement=AbsolutePoint offset=(426.667,320) openMenu=none anchor=none host=0x2230738 iconRectHresult=not attempted cursorFallback=True registered=False getRectCalls=0 popupWindows=[] popupOwner=n/a foreground=0xBF056E(Notepad3) anchorIsForeground=False
+--
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.Replacing_the_menu_between_two_clicks_opens_the_new_one [2 s]
+  Error Message:
+   menuAssigned=True menuIsOpen=False placement=AbsolutePoint offset=(66.667,144) openMenu=none anchor=none host=0x42A063E iconRectHresult=0x00000000 cursorFallback=False registered=True getRectCalls=2 popupWindows=[] popupOwner=n/a foreground=0xBF056E(Notepad3) anchorIsForeground=False
+--
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.A_second_right_click_while_the_menu_is_open_opens_nothing_new [1 s]
+  Error Message:
+   menuAssigned=True menuIsOpen=False placement=AbsolutePoint offset=(66.667,144) openMenu=none anchor=none host=0x24508B8 iconRectHresult=0x00000000 cursorFallback=False registered=True getRectCalls=1 popupWindows=[] popupOwner=n/a foreground=0xBF056E(Notepad3) anchorIsForeground=False
+
+-- same three tests, run alone (--filter FullyQualifiedName~TrayIconMenuActivationTests) --
+Passed!  - Failed:     0, Passed:    16, Skipped:     0, Total:    16, Duration: 20 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+== command 3 (second full-suite run, same command as 2) ==
+Passed!  - Failed:     0, Passed:   394, Skipped:     0, Total:   394, Duration: 51 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+== composition of the suite at this revision ==
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --list-tests | count by class
+     82 TrayIconPlacementTests
+     53 TrayEventDecoderTests
+     28 TrayIconClickEventsTests
+     16 TrayIconMenuActivationTests
+     15 TrayIconLifecycleTests
+     15 TrayIconBalloonTipTests
+     14 HiconFactoryTests
+     13 BalloonCallbackTests
+     11 TrayIconRecoveryTests
+     10 TrayIconClickEventArgsTests
+     10 HostWindowTests
+      9 NotifyIconDataLayoutTests
+      9 FakeShellApiTests
+      8 SliceContractTests
+      8 ShellConstantsTests
+      8 NotifyIconIdentifierLayoutTests
+      7 TrayIconXamlContractTests
+      7 TrayIconExceptionTests
+      7 NotifyIconTraceTests
+      6 TrayMenuDismissalTests
+      6 TrayIconNegativeTests
+      6 TrayIconMarshallingTests
+      6 TrayIconClickEventContractTests
+      6 TrayErrorEventArgsTests
+      6 ShellNotifyIconGetRectTests
+      6 RealShellApiSignatureProbeTests
+      6 PackagePurityTests
+      5 TrayIconMenuContractTests
+      3 TrayIconMenuOwnerLifetimeTests
+      3 PlaceholderTests
+      2 ShellApiLastErrorTests
+      2 IconInfoLayoutTests
+      1 RecordingShellApiTests
+
+NOTE ON RUN 2: three pre-existing TrayIconMenuActivationTests (S03) failed once and passed
+on re-run and in isolation. The failure text shows popupWindows=[] with the desktop's
+foreground held by a third-party window (Notepad3), i.e. the popup never opened; UAT-S03
+F5 records the same full-suite popup interference. None of the three is an S05 test and no
+library file differs between the two runs, so this is harness interference, not a slice
+regression. Run 3 (the re-run) and the isolation run are the recorded results.

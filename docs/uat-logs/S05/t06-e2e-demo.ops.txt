@@ -1,0 +1,15 @@
+[t06] e2e demo driver - one sample process, one session
+[t06] machine=MinibookX date=2026-09-21 12:23:28
+[t06] probe: dotnet run --project scripts/probe-live -c Release --no-build -- samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 100 --balloon-after 40 --menu-after 50 --kill-after 70 --sample-arg --run-seconds --sample-arg 200
+[t06] plan: t=16 kill explorer; t=20 start explorer; t=~28 scan tray during recovery; t=40 balloon; t=50 menu; t=70 kill sample
+[t06 12:23:44] t=16 operator: taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 9648 has been terminated.
+[t06 12:23:45] taskkill exit=0
+[t06 12:23:49] t=20 operator: cmd //c start "" explorer.exe
+[t06 12:23:49] explorer start exit=0
+[t06 12:23:55] t~26 independent tray inventory DURING RECOVERY (needle Trustsoft.NotifyIcon)
+[t06 12:23:58] recovery scan verdict: verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t06 12:24:41] probe finished: probe-exit=0
+[t06 12:24:44] independent tray inventory AFTER KILL
+[t06 12:24:47] after-kill scan verdict: verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t06 12:24:47] done
