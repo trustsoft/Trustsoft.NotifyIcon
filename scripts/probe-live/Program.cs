@@ -31,12 +31,15 @@ namespace Trustsoft.NotifyIcon.ProbeLive;
 /// <para>
 /// <b>Usage.</b>
 /// <code>
-/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--click-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
+/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--click-after &lt;seconds&gt;] [--balloon-after &lt;seconds&gt;] [--menu-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
 /// </code>
 /// Everything after the first two arguments is passed through to the sample, which owns its own
 /// demonstration switches (<c>--run-seconds</c>, <c>--show-balloon-after</c>,
-/// <c>--open-menu-after</c>). The sample's own output is echoed with a <c>sample</c> prefix so one
-/// captured stream holds both sides of the observation.
+/// <c>--open-menu-after</c>). <c>--balloon-after</c> and <c>--menu-after</c> are the probe's own
+/// spellings for the two post-recovery demonstrations and forward the value to those sample
+/// switches; the pass-through <c>--sample-arg</c> form stays available for everything else. The
+/// sample's own output is echoed with a <c>sample</c> prefix so one captured stream holds both
+/// sides of the observation.
 /// </para>
 /// <para>
 /// <b>Verdicts, not impressions.</b> The observation is a once-per-second series. The program exits
@@ -47,6 +50,11 @@ namespace Trustsoft.NotifyIcon.ProbeLive;
 /// </remarks>
 internal static class Program
 {
+    /// <summary>The accepted command line, printed on every usage error.</summary>
+    private const string Usage =
+        "usage: probe-live <sampleExe> <observeSeconds> [--kill-after <seconds>] [--click-after <seconds>] "
+        + "[--balloon-after <seconds>] [--menu-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...";
+
     /// <summary>The window title <c>TrayMessageWindow</c> gives the host it creates.</summary>
     /// <remarks>
     /// Diagnostic only: the probe finds the host by enumerating the sample's top-level windows, so a
@@ -77,13 +85,15 @@ internal static class Program
     {
         if (args.Length < 2 || !int.TryParse(args[1], CultureInfo.InvariantCulture, out int observeSeconds))
         {
-            Console.Error.WriteLine("usage: probe-live <sampleExe> <observeSeconds> [--kill-after <seconds>] [--sample-arg <arg>]...");
+            Console.Error.WriteLine(Usage);
             return 2;
         }
 
         string sampleExe = args[0];
         TimeSpan? killAfter = null;
         TimeSpan? clickAfter = null;
+        TimeSpan? balloonAfter = null;
+        TimeSpan? menuAfter = null;
         bool keepSampleAlive = false;
         var sampleArgs = new List<string>();
 
@@ -118,6 +128,38 @@ internal static class Program
                 continue;
             }
 
+            if (args[i] is "--balloon-after" or "--menu-after")
+            {
+                // Native spellings for the two post-recovery demonstrations, so a check composes as
+                // one command line instead of a chain of --sample-arg pairs. The value is validated
+                // here rather than passed through: a typo must not quietly degrade into "no
+                // demonstration was requested", which is how a run that showed nothing would read as
+                // a run that showed something.
+                bool balloon = args[i] == "--balloon-after";
+
+                if (i + 1 >= args.Length || !double.TryParse(args[i + 1], CultureInfo.InvariantCulture, out double demonstrationSeconds))
+                {
+                    Console.Error.WriteLine($"probe-live: '{args[i]}' needs a delay in seconds: use {args[i]} <seconds>");
+                    Console.Error.WriteLine(Usage);
+                    return 2;
+                }
+
+                sampleArgs.Add(balloon ? "--show-balloon-after" : "--open-menu-after");
+                sampleArgs.Add(args[i + 1]);
+
+                if (balloon)
+                {
+                    balloonAfter = TimeSpan.FromSeconds(demonstrationSeconds);
+                }
+                else
+                {
+                    menuAfter = TimeSpan.FromSeconds(demonstrationSeconds);
+                }
+
+                i++;
+                continue;
+            }
+
             if (args[i] == "--sample-arg" && i + 1 < args.Length)
             {
                 sampleArgs.Add(args[i + 1]);
@@ -128,9 +170,20 @@ internal static class Program
             sampleArgs.Add(args[i]);
         }
 
+        if (!File.Exists(sampleExe))
+        {
+            // The one dependency the probe cannot report its way out of: with no target there is nothing
+            // to observe. It is reported as a usage error rather than left to Process.Start to throw,
+            // because a stack trace reads like a broken instrument when the real cause is a typo in the
+            // path - and a reader who cannot tell those apart cannot trust the runs that do work.
+            Console.Error.WriteLine($"probe-live: sample executable not found: {sampleExe}");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
         Console.WriteLine($"[probe] probe-live start {DateTime.Now:yyyy-MM-dd HH:mm:ss}; os={Environment.OSVersion.VersionString}; machine={Environment.MachineName}");
         Console.WriteLine($"[probe] sample exe: {sampleExe}");
-        Console.WriteLine($"[probe] observe: {observeSeconds}s; kill-after: {(killAfter is null ? "no" : $"{killAfter.Value.TotalSeconds:0}s")}; sample args: {string.Join(' ', sampleArgs)}");
+        Console.WriteLine($"[probe] observe: {observeSeconds}s; kill-after: {(killAfter is null ? "no" : $"{killAfter.Value.TotalSeconds:0}s")}; click-after: {(clickAfter is null ? "no" : $"{clickAfter.Value.TotalSeconds:0}s")}; balloon-after: {(balloonAfter is null ? "no" : $"{balloonAfter.Value.TotalSeconds:0}s")}; menu-after: {(menuAfter is null ? "no" : $"{menuAfter.Value.TotalSeconds:0}s")}; sample args: {string.Join(' ', sampleArgs)}");
 
         using var sample = StartSample(sampleExe, sampleArgs);
 

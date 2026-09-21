@@ -1,0 +1,94 @@
+T03 - negative controls: the probe must not pass, and must not invent evidence, when there is no icon
+=====================================================================================================
+Machine: MINIBOOKX, Microsoft Windows NT 10.0.26200.0. Date: 2026-09-21.
+All runs use: dotnet run --project scripts/probe-live -c Release --no-build -- <target> <seconds> [args]
+
+N1 - a process that exits before registering anything (the sample, handed a switch it rejects)
+-------------------------------------------------------------------------------------------------
+Command: ... Trustsoft.NotifyIcon.Sample.exe 6 --sample-arg --definitely-not-a-switch
+Result:  probe exit 1. reached 'observed-present: no', refused 'gone', printed the NOT OBSERVED guard.
+
+[probe] probe-live start 2026-09-21 11:51:13; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 6s; kill-after: no; sample args: --definitely-not-a-switch
+[probe] launched pid=8448
+sample! [sample] unknown argument '--definitely-not-a-switch' - this sample does not ignore arguments it does not understand.
+sample! [sample] usage: Trustsoft.NotifyIcon.Sample [--xaml] [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] [--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]]
+[probe] sample-exited at t=1s with exit code 2
+[probe] identity: hwnd=0x0 uID=0 title="(none resolved)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: -1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: no
+[probe] sample-alive-at-end: False; exit-code: 2
+[probe] icon-after-exit: NOT OBSERVED (the icon was never observed present, so its current absence proves nothing)
+
+N2 - DISCARDED ATTEMPT, recorded so it is not mistaken for a result
+------------------------------------------------------------------
+Command: ... cmd.exe 10 --sample-arg /c --sample-arg "ping -n 9 127.0.0.1"
+Result:  discarded. MSYS path conversion turned '/c' into 'C:/' before the probe ever saw it, so cmd.exe
+         was launched with a meaningless argument, exited immediately, and the run proved nothing about a
+         live process. Same class of mangling as the 'taskkill /f' trap the UAT-S05 procedure section
+         records. The live-process case is covered by N3 instead.
+
+[probe] probe-live start 2026-09-21 11:51:25; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: C:\Windows\System32\cmd.exe
+[probe] observe: 10s; kill-after: no; sample args: C:/ ping -n 9 127.0.0.1
+[probe] launched pid=9464
+[probe] sample-exited at t=1s with exit code 0
+[probe] identity: hwnd=0x0 uID=0 title="(none resolved)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: -1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: no
+[probe] sample-alive-at-end: False; exit-code: 0
+[probe] icon-after-exit: NOT OBSERVED (the icon was never observed present, so its current absence proves nothing)
+
+N3 - a live process that owns windows and registers no icon at all (Windows Character Map)
+--------------------------------------------------------------------------------------------
+Command: ... C:/Windows/System32/charmap.exe 8
+Result:  probe exit 1. The scan found seven top-level windows owned by the target and tried all 32 icon
+         ids per window (224 shell calls) without a single success, so every reading is 'icon=no-reading'
+         and never 'icon=absent' - an unresolvable identity is reported as no reading, not as absence.
+         'observed-present: no', and the teardown half printed the NOT OBSERVED guard, not 'gone'.
+         This is the strongest negative: the target is alive for the whole observation and is window-rich,
+         which is the shape in which a bare 'absent' series could be misread as teardown evidence.
+
+[probe] probe-live start 2026-09-21 11:51:37; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: C:/Windows/System32/charmap.exe
+[probe] observe: 8s; kill-after: no; sample args: 
+[probe] launched pid=15256
+[probe] t=1s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=45
+[probe] t=2s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=3s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=4s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=5s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=6s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=7s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] t=8s pid=15256 icon=no-reading (scanned 7 window(s) x 32 icon id(s)) gdi=43
+[probe] identity: hwnd=0x0 uID=0 title="(none resolved)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 0 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: no
+[probe] sample-alive-at-end: True; exit-code: (running)
+[probe] the sample is still running at the end of the observation; killing it so the teardown verdict is about a dead process
+[probe] taskkill /f /pid 15256 -> exit 0; SUCCESS: The process with PID 15256 has been terminated.
+[probe] icon-after-exit: NOT OBSERVED (the icon was never observed present, so its current absence proves nothing)
+
+N4 - the probe's own switches must fail loudly rather than silently drop a demonstration
+-----------------------------------------------------------------------------------------
+A: ... Trustsoft.NotifyIcon.Sample.exe 5 --balloon-after            -> exit 2
+B: ... Trustsoft.NotifyIcon.Sample.exe 5 --menu-after soon          -> exit 2
+stderr A: probe-live: '--balloon-after' needs a delay in seconds: use --balloon-after <seconds>
+stderr B: probe-live: '--menu-after' needs a delay in seconds: use --menu-after <seconds>
+          usage: probe-live <sampleExe> <observeSeconds> [--kill-after <seconds>] [--click-after <seconds>] \
+                 [--balloon-after <seconds>] [--menu-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...
+Why it matters: without the validation a typo would degrade into 'no demonstration was requested', and a
+         run that demonstrated nothing would read exactly like a run that demonstrated something.
+
+N5 - the target path does not exist
+-----------------------------------
+Command: ... samples/Docs.Do.Not.Exist/NoSuchApp.exe 5
+Result:  probe exit 2, nothing on stdout, one message plus the usage line on stderr.
+         Measured stderr:
+           probe-live: sample executable not found: samples/Docs.Do.Not.Exist/NoSuchApp.exe
+           usage: probe-live <sampleExe> <observeSeconds> [--kill-after <seconds>] [--click-after <seconds>] \
+                  [--balloon-after <seconds>] [--menu-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...
+         Before the guard was added this path threw out of Process.Start onto a stack trace, which exited
+         non-zero too - so it never produced a verdict - but read like a broken instrument when the real
+         cause was a typo in the path.

@@ -47,12 +47,16 @@ A wrong identity cannot produce a false pass: it produces *no reading at all*, w
 **Command line.**
 
 ```
-dotnet build scripts/probe-live/probe-live.csproj -c Release
+dotnet restore scripts/probe-live/probe-live.csproj
+dotnet build scripts/probe-live/probe-live.csproj -c Release --no-restore
 dotnet run --project scripts/probe-live -c Release --no-build -- <sampleExe> <observeSeconds> \
-    [--kill-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...
+    [--kill-after <seconds>] [--click-after <seconds>] [--balloon-after <seconds>] \
+    [--menu-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...
 ```
 
-The sample owns its own demonstration switches, so a check is composed by passing them through: `--run-seconds N`, `--show-balloon-after N`, `--open-menu-after N`.
+**The `--no-restore` is not optional in this worktree.** A bare `dotnet build` here fails with `NuGet.targets(782,5): error : Value cannot be null. (Parameter 'path1')` - the repository-hygiene issue `docs/UAT-S04.md` already records (duplicate `NuGet.config`/`nuget.config` pair reachable from the worktree). `dotnet restore` succeeds on its own and the build is clean immediately afterwards, so the check is reproducible but needs the two commands.
+
+**Composing a check.** The sample owns its own demonstration switches (`--run-seconds N`, `--show-balloon-after N`, `--open-menu-after N`), and the probe has native spellings for the post-recovery ones: `--balloon-after <seconds>` forwards as `--show-balloon-after <seconds>` and `--menu-after <seconds>` as `--open-menu-after <seconds>`. Both are validated, so a missing or non-numeric value exits **2** with the usage line rather than degrading into "no demonstration was requested" - a typo must not be able to produce a run that reads like a successful demonstration of nothing. `--click-after <seconds>` injects a real right click at the icon's own rectangle through the shell, and `--sample-arg <arg>` stays available for anything else. The startup line prints the effective triggers and the composed sample arguments, so a capture records what was asked for next to what happened.
 
 **Shell-restart pitfall (recorded because it silently invalidated a first attempt).** In Git Bash, `taskkill /f /im explorer.exe` is mangled by MSYS path conversion into `taskkill -F:/ -im explorer.exe` and fails with `ERROR: Invalid argument/option - 'F:/'`. Use the doubled form:
 
@@ -243,6 +247,30 @@ The process exits **1** (measured: `EXIT=1`). A target that never had an icon ca
 
 ---
 
+## Check 8 - the harness re-verified independently (T03 closeout)
+
+The runs above were made while the slice was being built. This check re-did the harness's own acceptance from a clean state, on the delivered revision, so the instrument is known to still work and not merely to have worked once. Three logs, all in `docs/uat-logs/S05/`.
+
+**8a - the task's own acceptance command** (`t03-plan-verify.txt`): the plain 20 s observation run, re-built and re-run. Twenty consecutive `icon=present` readings for the same identity, GDI `13,15,17` and then flat at `17` for the remaining 18 s, `icons-in-notification-area: 1`, **zero** `TrayError` lines, `icon-after-exit: gone`, probe exit **0**, and `0 Warning(s), 0 Error(s)` from the build.
+
+The GDI series deserves one honest word: it ramps `13 -> 15 -> 17` over the first three seconds because the sample materialises its three rotation frames lazily, then holds flat. "Flat" here means flat after the sample's own start-up, which is the window in which any leak from the icon's lifetime would appear. The recovery runs in Check 1 start from the settled value.
+
+**8b - the negative controls** (`t03-negative-controls.txt`):
+
+| Case | Target | Result |
+|---|---|---|
+| N1 | the sample handed a switch it rejects, so it exits at t=1 s having registered nothing | probe exit **1**, `observed-present: no`, `icon-after-exit: NOT OBSERVED` - never `gone` |
+| N2 | `cmd.exe` with `/c` | **discarded**, recorded as such: MSYS path conversion rewrote `/c` to `C:/` before the probe saw it, so the run proved nothing. Same mangling class as the `taskkill /f` trap above |
+| N3 | Windows Character Map - alive for the whole run, owning **seven** top-level windows and no icon | probe exit **1**; the scan tried all 32 ids on every window (224 shell calls) and found nothing, so every reading is `icon=no-reading` and **never** `icon=absent`; `observed-present: no`; teardown half printed `NOT OBSERVED` |
+| N4 | `--balloon-after` with no value, and `--menu-after soon` | exit **2** with the usage line, in both cases |
+| N5 | a target path that does not exist | exit **2**, nothing on stdout, one message plus the usage line on stderr - a usage error rather than a stack trace |
+
+N3 is the one that matters most, because it is the shape in which the instrument could fool a reader: the target is alive and window-rich for the entire observation, so a series of bare "not there" readings could be mistaken for teardown evidence. The probe reports `no-reading` for an identity it could not confirm and reserves `absent` for an identity it *did* confirm, which keeps "I could not find it" and "the shell does not have it" as different facts.
+
+**8c - the probe-triggered actions and the oracle's positive control** (`t03-alias-triggers.txt`): `--balloon-after 6 --menu-after 11` forwards to the sample's switches (the startup line prints the composed `--show-balloon-after 6 --open-menu-after 11`), the balloon request is followed by the shell's own `event=0x0402` (`NIN_BALLOONSHOW`) for `iconId=1`, and the menu opens at `rect=1542,1045 296x83` directly above the icon at `(1542,1128)-(1590,1200)` with `dpi=144` applied once. With `--keep-sample-alive` the after-exit verdict prints `still present` for a live icon, which is the control that makes `gone` in Checks 4, 5 and 8a a change in the shell's answer rather than a constant.
+
+---
+
 ## Verification summary - what the seam tests pin, and what the suite says
 
 This section exists so a reader can tell proven from assumed without opening the test files.
@@ -284,9 +312,12 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 | Check 4, 5 (hard kill, graceful) | `docs/uat-logs/S05/check4-5-hard-kill-and-graceful.log` |
 | Check 6 (positive control) | `docs/uat-logs/S05/check6-positive-control.log` |
 | Check 7 (guard) | `docs/uat-logs/S05/check7-guard.log` |
+| Check 8a (harness re-verification, the acceptance run) | `docs/uat-logs/S05/t03-plan-verify.txt` |
+| Check 8b (negative controls, including the discarded attempt) | `docs/uat-logs/S05/t03-negative-controls.txt` |
+| Check 8c (probe-triggered balloon/menu, and the positive control) | `docs/uat-logs/S05/t03-alias-triggers.txt` |
 
 The logs were written to `/tmp` while the runs were made and copied here afterwards; the `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
 
-**Note for anyone tidying the repository:** these four files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. They were added with `git add -f`.
+**Note for anyone tidying the repository:** these files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. The Check 1-7 logs predate that rule and were added with `git add -f`; the Check 8 logs carry the `.txt` extension instead so they are committed by the ordinary add rather than by a hand-forced one, because evidence that depends on remembering a special flag is evidence that can be lost by forgetting it.
 
 The two commands that make a check reproducible are the probe line above and, for Check 1 only, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so Check 1 is a once-per-session measurement, not a loop.
