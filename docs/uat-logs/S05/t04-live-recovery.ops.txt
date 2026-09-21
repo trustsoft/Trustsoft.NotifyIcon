@@ -1,0 +1,16 @@
+[t04] host=MinibookX os=
+Microsoft Windows [Version 10.0.26200.9457]
+[t04] run start wall clock: 11:58:18
+[t04] 11:58:34 t+16s: taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 5616 has been terminated.
+[t04] 11:58:36 explorer after kill (expect none):
+INFO: No tasks are running which match the specified criteria.
+[t04] 11:58:36 starting explorer.exe
+[t04] 11:58:36 explorer process is back (after 1s of polling)
+[t04] probe exit code: 0
+[t04] 11:59:49 explorer at end of run:
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+explorer.exe                  9648 Console                    1    248,936 K
+[t04] done

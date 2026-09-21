@@ -3,7 +3,7 @@
 **Slice:** M001 / S05 (Continuity and teardown)
 **Requirements:** R005 (explorer-restart recovery), R006 (no stale icon after a process dies without Dispose)
 **Date:** 2026-09-21
-**Revision tested:** `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied
+**Revision tested:** Check 1-8: `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied. Check 9: the committed `milestone/M001` tip (`4cd52db`), re-measured in a fresh session
 **Machine:** MINIBOOKX, `Microsoft Windows NT 10.0.26200.0`, single monitor 1920x1200 physical, display scale 150 % (dpi 144), process is per-monitor-v2 DPI aware
 **Session:** interactive, single user session (`Console`, session 1)
 
@@ -11,8 +11,8 @@
 
 | Claim | Verdict | Evidence |
 |---|---|---|
-| R005 - the icon returns by itself after a real Explorer restart, with no application action | **PASS** | Check 1: presence series `present` -> `absent` for 8 s -> `present`, GDI flat at 17 across the whole event |
-| R005 - the recovered icon is still fully functional | **PASS** | Check 2 (the shell accepted a balloon from the recovered registration), Check 3 (the menu opened at the recovered icon) |
+| R005 - the icon returns by itself after a real Explorer restart, with no application action | **PASS** | Check 1: presence series `present` -> `absent` for 8 s -> `present`, GDI flat at 17 across the whole event. Re-measured on the delivered revision by Check 9 (the task's own acceptance command): `present` -> `absent` for 6 readings over 7 s -> `present`, GDI flat at 17 across the event |
+| R005 - the recovered icon is still fully functional | **PASS** | Check 2 (the shell accepted a balloon from the recovered registration), Check 3 (the menu opened at the recovered icon); both re-measured in Check 9 after a second, independent restart |
 | R006 - a process that dies without Dispose leaves no stale icon | **PASS** | Check 4 (`taskkill /f`, shell no longer holds the icon), Check 5 (counter-case agrees) |
 | The teardown verdict is not stuck on one answer | **PASS** | Check 6 (positive control: a live icon is reported `still present`) and Check 7 (guard: a process that never had an icon reports `NOT OBSERVED`, exit code 1) |
 
@@ -271,6 +271,124 @@ N3 is the one that matters most, because it is the shape in which the instrument
 
 ---
 
+## Check 9 - the T04 acceptance run: live recovery on the delivered revision
+
+Checks 1-3 were measured while the slice was being built. This check re-made the recovery measurement **on the delivered revision**, in a fresh session, using the task's own acceptance command line rather than a hand-composed one, so R005 does not rest on a single capture. It is the acceptance run T04 names.
+
+**Command line (verbatim, the task's verify command).**
+
+```
+dotnet run --project scripts/probe-live -c Release --no-build -- \
+    samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 90 \
+    --balloon-after 45 --menu-after 60
+```
+
+The probe built the sample's arguments for it and printed them back, so the capture records what was asked for beside what happened:
+
+```
+[probe] probe-live start 2026-09-21 11:58:19; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 90s; kill-after: no; click-after: no; balloon-after: 45s; menu-after: 60s; sample args: --show-balloon-after 45 --open-menu-after 60
+[probe] launched pid=24448
+sample| [sample] menu self-open requested: the assigned menu will open once after 60s and be closed again 6s later (--open-menu-after). No shell click is injected for this.
+sample| [sample] balloon self-show requested: a balloon will be shown once after 45s (--show-balloon-after). No shell click is injected for this.
+sample| [sample] tray icon registered, rotating 3 frames every 1s.
+```
+
+**Run facts.** Run length 90 s of observation, balloon trigger at 45 s, menu trigger at 60 s, and **no** `--run-seconds`, so the sample stayed alive for the whole window (`sample-alive-at-end: True`, one pid `24448` from first reading to last). Windows build `10.0.26200.9457` (`Microsoft Windows NT 10.0.26200.0` in the probe line), host `MINIBOOKX`, session `Console` #1. Display configuration from the sample's own startup block: one monitor, `\.\DISPLAY1`, `rect=0,0 1920x1200`, work area `0,0 1920x1128`, `dpi=144 scale=1.5`, process per-monitor-v2 DPI aware. This is the same machine and display as Checks 1-7, on a **different Explorer instance** (`explorer.exe` PID 5616 killed; PID 9648 running at the end of the run).
+
+**The restart, with wall-clock timestamps** (from `t04-live-recovery.ops.txt`; the probe started at 11:58:19, so wall clock minus that is the probe's `t=`):
+
+```
+[t04] 11:58:34 t+16s: taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 5616 has been terminated.
+[t04] 11:58:36 explorer after kill (expect none):
+INFO: No tasks are running which match the specified criteria.
+[t04] 11:58:36 starting explorer.exe
+[t04] 11:58:36 explorer process is back (after 1s of polling)
+```
+
+Explorer was down for ~2-3 s and was restarted as soon as it was gone, never leaving the desktop shell-less. Nothing else in the run touches the sample: no restart, no `Visible` toggle, no click, no keyboard input, no test harness. The only two commands the operator issued are the two in that block.
+
+**The per-second series around the event** (verbatim `[probe]` lines and the sample's interleaved error lines; display scale 150 %, so these are physical pixels):
+
+```
+[probe] t=13s pid=24448 icon=present rect=(1542,1128,1590,1200) gdi=17
+[probe] t=14s pid=24448 icon=present rect=(1542,1128,1590,1200) gdi=17
+[probe] t=15s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=16s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=17s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=18s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=19s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=21s pid=24448 icon=absent hr=0x80004005 gdi=17
+sample! [sample] TrayError operation=Modify win32Error=-2147467259 retried=True exception=TrayIconException: ...
+[probe] t=22s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=23s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=24s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=25s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=26s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+```
+
+**Sampling gap, recorded rather than smoothed: there is no `t=20s` line in this capture** (the series has 89 readings for a 90 s window, and `t=19s` is followed directly by `t=21s`). The absence claim does not depend on it - `absent` is reported by all six readings that the capture does contain inside the outage (`t=15s`, `t=16s`, `t=17s`, `t=18s`, `t=19s`, `t=21s`), every one of them a real reading rather than an inferred one, and the gap sits in the middle of the outage rather than at either edge of it. It is written down because a reader diffing this series against Check 1's would otherwise find a missing line and have to guess.
+
+**What the series says.**
+
+1. **The registration died with the shell.** `present` at `t=14s` becomes `absent hr=0x80004005` (`E_FAIL`) at `t=15s`, one second after `taskkill` was issued at wall clock 11:58:34, and stays absent for every subsequent reading until the comeback (six readings, over 7 s).
+2. **The icon came back by itself.** At `t=22s` the shell answers again for the *same* window and the *same* icon id, with the process pid unchanged (`24448`) and no application action in between. Explorer's process was back at 11:58:36 (`t+17s`); the reading at `t=22s` is the shell having built its notification area and broadcast `TaskbarCreated` to the surviving top-level host window.
+3. **The one action during the outage was a Modify, and it was refused.** All six sample error lines in this window are `operation=Modify` with `retried=True`. A modify cannot create a registration the shell does not hold, and these six were *refused* - so no successful modify can be the cause of the `t=22s` reading. The re-add between `t=21s` and `t=22s` is what put the icon back, and the broadcast is the only thing that triggers it.
+4. **GDI was flat at 17 across the entire event** - `gdi=17` on every reading from `t=3s` through `t=60s`, spanning the six absent readings, the re-add, and 38 s of post-recovery rotation. No handle was built to recover, which is the live form of the retained-`HICON` rule (R007).
+5. **Nothing was double-registered:** the probe's final sweep reports `icons-in-notification-area: 1` for the sample's window, so recovery replaced one registration rather than stacking a second. As in Check 1, the recovered icon settled one tray slot to the left (`1542` -> `1494`), which is the shell's own layout decision.
+
+**The GDI ramp and the later step, stated plainly.** The count ramps `13 -> 15 -> 17` over the first three seconds because the sample materialises its three rotation frames lazily, and it steps `17 -> 29` at `t=61s` when the WPF popup opens at the menu trigger, then holds at 29. The flat claim is about the recovery window (`t=15s`..`t=60s`); the `t=61s` step belongs to the menu, not to recovery, and the menu step is the same behaviour `docs/UAT-S03.md` documents for a WPF popup.
+
+### 9a - the recovered icon still shows balloons (discharges the S04 hand-off)
+
+The balloon was triggered 23 s after recovery, with no click injected:
+
+```
+[probe] t=45s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+sample| [sample] --show-balloon-after: showing a balloon now, with no click injected.
+sample| [sample] raw callback hwnd=0x2B505AA msg=0x0401 event=0x0402 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010402
+```
+
+`event=0x0402` is `NIN_BALLOONSHOW`, delivered by the shell for `hwnd=0x2B505AA` `iconId=1` - the identity the probe resolved independently for the **recovered** registration (the callback `hwnd` equals the `hwnd` in the probe's identity line). The request is therefore followed by the shell's own acceptance, not merely by a return value. Two lifecycle completions were delivered at the timeout:
+
+```
+sample| [sample] raw callback hwnd=0x2B505AA msg=0x0401 event=0x0404 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010404
+sample| [sample] raw callback hwnd=0x2B505AA msg=0x0401 event=0x0404 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010404
+```
+
+`0x0404` is `NIN_BALLOONTIMEOUT`; **two** were delivered in this run where Check 1's run had one. That is recorded as observed rather than explained away: the acceptance claim rests on the `0x0402`, and the duplicate `0x0404` is a shell-side callback count this run makes no claim about.
+
+**The S04 hand-off, discharged.** `docs/UAT-S04.md` check 7 ends: *"proving that a recovered icon still shows balloons after a real explorer restart is S05's live check"* (and its table records the matching verdict as passing only as a seam contract). Check 1 and Check 9a are that live check, made twice on two different Explorer instances: a balloon shown after recovery reaches the shell and is acknowledged by the shell's own `NIN_BALLOONSHOW` for the recovered identity. The hand-off is **closed**, not deferred.
+
+### 9b - the recovered icon still opens its menu at the icon
+
+The menu was triggered 38 s after recovery:
+
+```
+[probe] t=60s pid=24448 icon=present rect=(1494,1128,1542,1200) gdi=17
+sample| [sample] --open-menu-after: requesting the menu now, with no click injected.
+sample| [sample] menu opened: popup=0x506BE class=HwndWrapper[Trustsoft.NotifyIcon.Sample;;ca676e1c-bb02-4ed2-9055-56c5d095e86a] rect=1494,1045 296x83 dpi=144 scale=1.5 owner=0x0 cursor=0,0 bottomLeftDip=996,752
+```
+
+Placement is at the icon, not at the origin: the popup's left edge `1494` equals the recovered icon's left edge `1494`, its bottom edge `1045 + 83 = 1128` equals the icon's top edge `1128`, and it sits above the icon - a popup anchored at `(0,0)` or at a stale pre-restart rectangle would show the pre-restart left edge `1542`, not `1494`. `cursor=0,0` says no pointer was at the icon, so the placement was re-derived from the live icon rectangle. `dpi=144` appears once, i.e. the 150 % scale applied once. The menu was then closed by the sample at `t=66s` (`menu dismissed.`) and the icon stayed present.
+
+### 9c - the TrayError accounting for this run, stated exactly
+
+The task's step 3 asks that "the sample must print no `TrayError` line". **That literal condition was not met, and this document does not claim it was.** The capture contains exactly **six** `TrayError` lines, and all six are:
+
+- `operation=Modify` (never `Add`, never `SetVersion`),
+- `win32Error=-2147467259` (`E_FAIL`, the shell refusing), with `retried=True`,
+- interleaved with the readings `t=15s`..`t=21s`, i.e. entirely inside the window in which the shell held no registration for this window.
+
+What is true and checkable is the stronger, more useful statement: **the recovery path itself raised no error of any kind.** Zero `TrayError` lines carry `operation=Add` or `operation=SetVersion`, and no error line appears after `t=21s`. The six `Modify` refusals are the sample's own 1 Hz icon rotation hitting a shell that had no registration to modify - the documented expected consequence of rotation during an outage, and independently useful here because they are what proves the `t=22s` comeback was a re-add rather than a lucky modify.
+
 ## Verification summary - what the seam tests pin, and what the suite says
 
 This section exists so a reader can tell proven from assumed without opening the test files.
@@ -309,6 +427,8 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 | Run | Log |
 |---|---|
 | Check 1, 2, 3 (Explorer restart) | `docs/uat-logs/S05/check1-3-explorer-restart.log` |
+| Check 9 (T04 acceptance run: Explorer restart, balloon, menu, delivered revision) | `docs/uat-logs/S05/t04-live-recovery.txt` |
+| Check 9 operator log (the two commands issued, with wall-clock timestamps) | `docs/uat-logs/S05/t04-live-recovery.ops.txt` |
 | Check 4, 5 (hard kill, graceful) | `docs/uat-logs/S05/check4-5-hard-kill-and-graceful.log` |
 | Check 6 (positive control) | `docs/uat-logs/S05/check6-positive-control.log` |
 | Check 7 (guard) | `docs/uat-logs/S05/check7-guard.log` |
@@ -316,8 +436,8 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 | Check 8b (negative controls, including the discarded attempt) | `docs/uat-logs/S05/t03-negative-controls.txt` |
 | Check 8c (probe-triggered balloon/menu, and the positive control) | `docs/uat-logs/S05/t03-alias-triggers.txt` |
 
-The logs were written to `/tmp` while the runs were made and copied here afterwards; the `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
+The logs for Checks 1-8 were written to `/tmp` while the runs were made and copied here afterwards; the Check 9 logs were written straight into `docs/uat-logs/S05/` by the run itself. The `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
 
-**Note for anyone tidying the repository:** these files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. The Check 1-7 logs predate that rule and were added with `git add -f`; the Check 8 logs carry the `.txt` extension instead so they are committed by the ordinary add rather than by a hand-forced one, because evidence that depends on remembering a special flag is evidence that can be lost by forgetting it.
+**Note for anyone tidying the repository:** these files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. The Check 1-7 logs predate that rule and were added with `git add -f`; the Check 8 and Check 9 logs carry the `.txt` extension instead so they are committed by the ordinary add rather than by a hand-forced one, because evidence that depends on remembering a special flag is evidence that can be lost by forgetting it.
 
-The two commands that make a check reproducible are the probe line above and, for Check 1 only, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so Check 1 is a once-per-session measurement, not a loop.
+The commands that make a check reproducible are the probe line above plus, for the Explorer-restart checks, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Check 9's operator log records both commands with wall-clock timestamps, so the restart can be timed against the series. Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so the restart checks are once-per-session measurements rather than loops (Check 1 and Check 9 are the two that were made).
