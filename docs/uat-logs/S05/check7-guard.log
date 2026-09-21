@@ -1,0 +1,13 @@
+[probe] probe-live start 2026-09-21 08:55:30; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: cmd.exe
+[probe] observe: 5s; kill-after: no; sample args: 
+[probe] launched pid=19708
+sample| Microsoft Windows [Version 10.0.26200.9457]
+sample| (c) Microsoft Corporation. All rights reserved.
+sample| 
+sample| C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001>
+[probe] sample-exited at t=1s with exit code 0
+[probe] identity: hwnd=0x0 uID=0 title="(none resolved)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] observed-present: no
+[probe] sample-alive-at-end: False; exit-code: 0
+[probe] icon-after-exit: NOT OBSERVED (the icon was never observed present, so its current absence proves nothing)

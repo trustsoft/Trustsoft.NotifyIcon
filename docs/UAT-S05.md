@@ -287,4 +287,6 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 
 The logs were written to `/tmp` while the runs were made and copied here afterwards; the `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
 
+**Note for anyone tidying the repository:** these four files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. They were added with `git add -f`.
+
 The two commands that make a check reproducible are the probe line above and, for Check 1 only, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so Check 1 is a once-per-session measurement, not a loop.

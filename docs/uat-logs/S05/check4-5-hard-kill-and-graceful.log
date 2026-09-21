@@ -1,0 +1,81 @@
+########## RUN A: hard kill (taskkill /f) after 20s ##########
+[probe] probe-live start 2026-09-21 09:02:16; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 34s; kill-after: 20s; sample args: --run-seconds 300
+[probe] launched pid=4368
+sample| [sample] process DPI awareness: GetProcessDpiAwareness=0x00000000 value=2 (DPI_AWARENESS_PER_MONITOR_AWARE); threadContextAwareness=2 (DPI_AWARENESS_PER_MONITOR_AWARE) isPerMonitorV2=True.
+sample| [sample] display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical, primaryPhysical=1920x1200
+sample| [sample] monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5 hr=0x00000000
+sample| [sample] tray monitor: primary monitor device=\\.\DISPLAY1 dpi=144 scale=1.5 - the notification area lives on the primary monitor's taskbar; the popup's own dpi= reading in the menu-open line is the authoritative per-open value.
+sample| [sample] preview cancellation mode: off - every click reaches its main handler.
+sample| [sample] balloon demonstration: severity=info sound=on realtime=off respectQuietTime=off - a single left click on the icon shows this balloon, and clicking the balloon must print a balloon clicked line; --cancel-preview left suppresses both.
+sample| [sample] library trace listener attached to source 'Trustsoft.NotifyIcon', level Verbose.
+sample| [sample] tray icon registered, rotating 3 frames every 1s.
+sample| [sample] no window is shown - check the notification area, not the taskbar.
+sample| [sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] raw callback trace: hooked 1 HwndSource(s) owned by this thread, watching 0x0400..0x7FFF; the pump counter is armed as the control.
+sample| [sample] will shut down by itself after 300s (graceful close check).
+[probe] t=1s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=13
+[probe] t=2s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=15
+[probe] t=3s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=4s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=5s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=6s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=7s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=8s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=9s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=10s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=11s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=12s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=13s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=14s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=15s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=16s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=17s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=18s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=19s pid=4368 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] taskkill /f /pid 4368 -> exit 0; SUCCESS: The process with PID 4368 has been terminated.
+[probe] t=20s pid=4368 icon=absent hr=0x80004005 gdi=0
+[probe] sample-exited at t=21s with exit code 1
+[probe] identity: hwnd=0x40236 uID=1 title="(no title)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: False; exit-code: 1
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x40236 uID=1)
+RUN A EXIT=0
+########## RUN B: graceful exit (counter-case, sample disposes itself) ##########
+[probe] probe-live start 2026-09-21 09:02:39; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 20s; kill-after: no; sample args: --run-seconds 12
+[probe] launched pid=23392
+sample| [sample] process DPI awareness: GetProcessDpiAwareness=0x00000000 value=2 (DPI_AWARENESS_PER_MONITOR_AWARE); threadContextAwareness=2 (DPI_AWARENESS_PER_MONITOR_AWARE) isPerMonitorV2=True.
+sample| [sample] display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical, primaryPhysical=1920x1200
+sample| [sample] monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5 hr=0x00000000
+sample| [sample] tray monitor: primary monitor device=\\.\DISPLAY1 dpi=144 scale=1.5 - the notification area lives on the primary monitor's taskbar; the popup's own dpi= reading in the menu-open line is the authoritative per-open value.
+sample| [sample] preview cancellation mode: off - every click reaches its main handler.
+sample| [sample] balloon demonstration: severity=info sound=on realtime=off respectQuietTime=off - a single left click on the icon shows this balloon, and clicking the balloon must print a balloon clicked line; --cancel-preview left suppresses both.
+sample| [sample] library trace listener attached to source 'Trustsoft.NotifyIcon', level Verbose.
+sample| [sample] tray icon registered, rotating 3 frames every 1s.
+sample| [sample] no window is shown - check the notification area, not the taskbar.
+sample| [sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] raw callback trace: hooked 1 HwndSource(s) owned by this thread, watching 0x0400..0x7FFF; the pump counter is armed as the control.
+sample| [sample] will shut down by itself after 12s (graceful close check).
+[probe] t=1s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=13
+[probe] t=2s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=15
+[probe] t=3s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=4s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=5s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=6s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=7s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=8s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=9s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=10s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=11s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=12s pid=23392 icon=present rect=(1398,1128,1446,1200) gdi=17
+sample| [sample] tray icon disposed - it must have left the notification area.
+sample| [sample] totals: raw callback lines=0, pump-observed private-range messages=0, library trace lines=0, clicks=0, cancelled by a Preview handler=0, balloon show requests=0 (self=0), balloon clicked deliveries=0, balloon preview deliveries=0, menu opens=0, menu dismissals=0.
+[probe] sample-exited at t=13s with exit code 0
+[probe] identity: hwnd=0x5026A uID=1 title="(no title)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: False; exit-code: 0
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x5026A uID=1)
+RUN B EXIT=0

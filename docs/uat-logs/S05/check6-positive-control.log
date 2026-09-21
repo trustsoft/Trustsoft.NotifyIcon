@@ -1,0 +1,38 @@
+[probe] probe-live start 2026-09-21 09:03:09; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 12s; kill-after: no; sample args: --run-seconds 60
+[probe] launched pid=23656
+sample| [sample] process DPI awareness: GetProcessDpiAwareness=0x00000000 value=2 (DPI_AWARENESS_PER_MONITOR_AWARE); threadContextAwareness=2 (DPI_AWARENESS_PER_MONITOR_AWARE) isPerMonitorV2=True.
+sample| [sample] display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical, primaryPhysical=1920x1200
+sample| [sample] monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5 hr=0x00000000
+sample| [sample] tray monitor: primary monitor device=\\.\DISPLAY1 dpi=144 scale=1.5 - the notification area lives on the primary monitor's taskbar; the popup's own dpi= reading in the menu-open line is the authoritative per-open value.
+sample| [sample] preview cancellation mode: off - every click reaches its main handler.
+sample| [sample] balloon demonstration: severity=info sound=on realtime=off respectQuietTime=off - a single left click on the icon shows this balloon, and clicking the balloon must print a balloon clicked line; --cancel-preview left suppresses both.
+sample| [sample] library trace listener attached to source 'Trustsoft.NotifyIcon', level Verbose.
+sample| [sample] tray icon registered, rotating 3 frames every 1s.
+sample| [sample] no window is shown - check the notification area, not the taskbar.
+sample| [sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] raw callback trace: hooked 1 HwndSource(s) owned by this thread, watching 0x0400..0x7FFF; the pump counter is armed as the control.
+sample| [sample] will shut down by itself after 60s (graceful close check).
+[probe] t=1s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=13
+[probe] t=2s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=15
+[probe] t=3s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=4s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=5s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=6s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=7s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=8s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=9s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=10s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=11s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] t=12s pid=23656 icon=present rect=(1398,1128,1446,1200) gdi=17
+[probe] identity: hwnd=0x17C0116 uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: True; exit-code: (running)
+[probe] note: --keep-sample-alive, so the next verdict is the oracle's positive control - a live icon must be reported as still present
+[probe] after-exit check pending: still present at t+0.0s (settling)
+[probe] after-exit check pending: still present at t+1.0s (settling)
+[probe] after-exit check pending: still present at t+2.0s (settling)
+[probe] after-exit check pending: still present at t+3.0s (settling)
+[probe] after-exit check pending: still present at t+4.0s (settling)
+[probe] icon-after-exit: still present rect=(1398,1128,1446,1200) after 5s - the registration outlived the process
