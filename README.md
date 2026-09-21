@@ -117,7 +117,19 @@ recorded in [`docs/UAT-S04.md`](docs/UAT-S04.md).
 ```text
 dotnet build Trustsoft.NotifyIcon.sln -c Release
 dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows
+dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg
 ```
+
+The last two lines are the packaging path: the pack writes the nupkg into `artifacts/`, and
+`scripts/verify-package.sh` inspects the packed file and asserts its invariants one at a time — the
+nuspec identity against the version this project declares, no `<dependency>` entry in any
+target-framework group, the three framework folders each carrying the assembly and its XML
+documentation, the README and the licence at the package root, and no entry from the sample, the
+tests or the probe. It prints one `PASS`/`FAIL` line per assertion, exits non-zero and quotes the
+offending entry when one is broken, and needs only `unzip`: it never calls the SDK, so the artifact
+check still runs in an environment where `dotnet build` does not. Raw output, and the same script
+failing on three deliberately broken packages, is in [`docs/UAT-S07.md`](docs/UAT-S07.md).
 
 The test suite asserts the struct layout against the Windows SDK header, the exact shell call
 sequence, GDI handle counts across repeated icon replacement, the failure policies and the purity of

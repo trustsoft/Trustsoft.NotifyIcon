@@ -1,0 +1,49 @@
+# S07/T02 raw evidence: negative controls for scripts/verify-package.sh
+date: 2026-09-21T14:34:54+03:00
+machine: unknown / MINGW64_NT-10.0-26200
+sdk: 10.0.401
+real package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg sha256=ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+
+Every control below runs the real script against a deliberately broken COPY of the real
+package, in a temporary directory. The real package is never modified; the sha256 comparison
+at the end proves it, and the copies are removed with the temporary directory.
+
+## control 1 - a <dependency> entry inside the net8.0-windows group (R011 / D038)
+$ bash scripts/verify-package.sh /tmp/tmp.Z3cKtTPGHj/broken-dependency.nupkg
+(exit=1)
+
+  FAIL  the nuspec declares 1 <dependency> entry/entries; offenders:
+          <dependency id="H.NotifyIcon" version="9.9.9" />
+VERDICT  1 of 15 assertions failed
+
+  control holds: non-zero exit, and the offending entry is quoted above
+
+## control 2 - an entry from the sample under lib/ (a shipped package must contain nothing of the sort)
+$ bash scripts/verify-package.sh /tmp/tmp.Z3cKtTPGHj/broken-sample-entry.nupkg
+(exit=1)
+
+  FAIL  the package contains 1 entry/entries it must not; offenders:
+          lib/net8.0-windows7.0/Trustsoft.NotifyIcon.Sample.dll
+  FAIL  the package contains 1 entry/entries outside the allowed set; offenders:
+          lib/net8.0-windows7.0/Trustsoft.NotifyIcon.Sample.dll
+VERDICT  2 of 15 assertions failed
+
+  control holds: non-zero exit, and the offending entry is quoted above
+
+## control 3 - the nuspec version disagrees with the library project (1.0.0 -> 9.9.9)
+$ bash scripts/verify-package.sh /tmp/tmp.Z3cKtTPGHj/broken-version.nupkg
+(exit=1)
+
+  FAIL  the nuspec version is '9.9.9' but the library project declares '1.0.0'
+VERDICT  1 of 15 assertions failed
+
+  control holds: non-zero exit, and the offending entry is quoted above
+
+## the real package is untouched
+  before: ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+  after:  ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+  PASS  the real package is byte-for-byte unchanged (325169 bytes)
+
+## verdict
+  Three controls, three non-zero exits, each naming the offending entry. The green run against
+  the real package is a separate command (docs/uat-logs/S07/t02-verify-package.txt).

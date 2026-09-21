@@ -1,0 +1,44 @@
+# S07/T02 raw evidence: the packaged artifact, inspected by scripts/verify-package.sh
+date: 2026-09-21T14:35:01+03:00
+machine: MinibookX / MINGW64_NT-10.0-26200
+sdk: 10.0.401
+environment: APPDATA='C:\Users\Maxim\AppData\Roaming' LOCALAPPDATA='C:\Users\Maxim\AppData\Local' TEMP='C:\Users\Maxim\AppData\Local\Temp'
+
+## 1. the plan's verify command, as written
+$ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release && bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg
+
+pack exit=0
+
+package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+        sha256 ffd813f0900e5d15704900daaeb637a944ea203b71fa68a40f739bfc17524191
+        expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
+  PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
+-- identity (the nuspec)
+  PASS  the package carries a root-level nuspec: Trustsoft.NotifyIcon.nuspec
+  PASS  the nuspec id is 'Trustsoft.NotifyIcon'
+  PASS  the nuspec version is '1.0.0'
+-- dependency groups (R011)
+  PASS  no <dependency> entry appears in any of the 3 target-framework group(s) under <dependencies> (the SDK's empty groups, D038)
+  PASS  the only framework reference in the nuspec is Microsoft.WindowsDesktop.App.WPF
+-- package content
+  PASS  the package carries exactly the three target-framework lib folders: net10.0-windows7.0 net8.0-windows7.0 net9.0-windows7.0
+  PASS  lib/net8.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  lib/net9.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  lib/net10.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+  PASS  the package carries README.md at its root
+  PASS  the nuspec <readme> names 'README.md' and that entry is in the package
+  PASS  the package carries the licence file LICENSE at its root
+  PASS  no entry belongs to the sample, the tests, the probe or the consumer proof (patterns: Sample Tests testhost probe-live consumer-proof)
+  PASS  every package entry is one the package is allowed to contain (nuspec, README, LICENSE, lib/<tfm>/assembly+xml, package metadata)
+
+
+VERDICT  all 15 assertions hold
+verify-package.sh exit=0
+
+## 2. what the script does not print, and why that is deliberate
+  The nuspec is never dumped: every assertion above read the one value it is about and named it.
+  The entry list is never dumped either - the per-framework and per-entry assertions name the
+  entries they found, and an unexpected entry would be quoted by the assertion that rejects it.
+
+## verdict: pack exit=0, inspection exit=0
+  The package a consumer would install matches the declared identity and carries nothing it must not.
