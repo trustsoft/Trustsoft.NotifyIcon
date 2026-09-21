@@ -19,9 +19,9 @@
 | The inspection is an executable proof, not a reading exercise | **PASS** | T02: `scripts/verify-package.sh` prints one `PASS`/`FAIL` line per assertion and exits non-zero quoting the offender. Three deliberately broken copies produced three non-zero exits with the offending entry quoted — `docs/uat-logs/S07/t02-negative-controls.txt` |
 | The inspection is part of the repository's documented verification path | **PASS** | `README.md`, "Repository notes → Build, test and pack": the pack and `bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg` with the explanation of what it asserts. T04 ran that line verbatim after the restructure (`docs/uat-logs/S07/t04-readme-verification.txt`) |
 | The library's own build declares the metadata and the non-shipping projects cannot be packed | **PASS** | T01: `PackagePurityTests` 11/11, plus three negative controls that break one invariant each and are restored byte-for-byte (`docs/uat-logs/S07/t01-negative-controls.txt`) |
-| A fresh consumer project installs the package from the local feed and shows a working icon on each of the three frameworks (R010, R012) | **PASS** | T03: `docs/uat-logs/S07/t03-consumer-proof.txt` — one build, one surface assertion and one probed live run per framework, each `18/18` presence samples, `gdi 13/25`, `sample-exit 0`, `icon-after-exit: gone`. That the package came from `artifacts/` and from nowhere else is proved by two controls: the same restore with a fresh global-packages folder succeeds with the feed present and fails with `NU1101 ... in source(s): artifacts-local-feed` with the feed emptied |
+| A fresh consumer project installs the package from the local feed and shows a working icon on each of the three frameworks (R010, R012) | **PASS** | T03: `docs/uat-logs/S07/t03-consumer-proof.txt` — one build, one surface assertion and one probed live run per framework, each `18/18` presence samples, a `gdi` series that rises only while the menu's popup is created and then never grows again, `sample-exit 0`, `icon-after-exit: gone`. That the package came from `artifacts/` and from nowhere else is proved by two controls: the same restore with a fresh global-packages folder succeeds with the feed present and fails with `NU1101 ... in source(s): artifacts-local-feed` with the feed emptied |
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
-| A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1518,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
+| A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1326,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
 | The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `e87308ab…` identical before and after the run). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
 | The task plan's whole verify line passes as one invocation on this revision | **PASS** | T05: `docs/uat-logs/S07/t05-plan-verify.txt` — pack exit 0, inspector `VERDICT all 15 assertions hold`, suite **403 passed / 0 failed / 0 skipped** |
 | The shipped public surface is still the seven documented types | **PASS** | T05: `PackagePurityTests` **12/12**, `Public_surface_is_only_the_documented_types` among them — `docs/uat-logs/S07/t05-milestone-claims.txt` section 1 |
@@ -65,7 +65,7 @@ Three mechanisms, because a project that inherits anything from this repository 
 
 ### The commands and what they printed
 
-**Raw evidence:** `docs/uat-logs/S07/t03-consumer-proof.txt` (407 lines), produced by `bash docs/uat-logs/S07/t03-consumer-proof.sh`.
+**Raw evidence:** `docs/uat-logs/S07/t03-consumer-proof.txt` (415 lines), produced by `bash docs/uat-logs/S07/t03-consumer-proof.sh`.
 
 ```
 dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
@@ -80,11 +80,11 @@ The per-framework columns, extracted from the three probed runs (section 7 of th
 ```
 framework        present(s)  gdi first/max sample-exit  teardown
 net8.0-windows   18          13/25         0            gone
-net9.0-windows   18          13/25         0            gone
-net10.0-windows  18          13/25         0            gone
+net9.0-windows   18          11/25         0            gone
+net10.0-windows  18          11/25         0            gone
 ```
 
-Each row also carried `icons-in-notification-area: 1`, `surface assertion: PASS` and `consumer evidence: 1 menu open(s), 1 dismissal(s), 1 balloon request(s), 0 shell click(s) delivered`. The single step in the GDI series (13 → 25) is the menu's own WPF popup window, created when the assigned menu opens; the count does not return to 13 after the dismissal, because WPF keeps the popup's resources, and from that point the series is unchanged at 25 for the rest of the run — no growth per balloon request, per menu open or per disposal, which is the property the README's GDI paragraph reports for a fixed frozen source.
+Each row also carried `icons-in-notification-area: 1`, `surface assertion: PASS` and `consumer evidence: 1 menu open(s), 1 dismissal(s), 1 balloon request(s), 0 shell click(s) delivered`. The `gdi` series is printed per run in the log's own verdict block instead of being summarised into one fixed pair of numbers, because the opening samples differ between runs — the first sample can fall while WPF is still realising resources. This run's three series were `13>25`, `11>13>19>25` and `11>13>19>25`, each reaching `25` by `t=8s` and holding it for the last 11 or 12 of its 18 samples; the rise is the menu's own WPF popup window, created when the assigned menu opens at 6 s. The count does not fall back after the dismissal, because WPF keeps the popup's resources, and no sample after the plateau is higher than the one before it — no growth per balloon request, per menu dismissal or on disposal, which is the property the README's GDI paragraph reports for a fixed frozen source.
 
 `dotnet list package` (section 4) resolves `Trustsoft.NotifyIcon 1.0.0` for all three frameworks, and the consumer's own startup lines name the package the run actually loaded:
 
@@ -118,7 +118,7 @@ A consumer cannot pass the sample's `--open-menu-after` switch: that belongs to 
 The stronger path, the physical click, was attempted again here with `--click-after 8` and **no** self-open switch, so anything the consumer logged could only have come from the injected click (section 8):
 
 ```
-[probe] click injected: right click at (1518,1164) - the icon's own rectangle ...
+[probe] click injected: right click at (1326,1164) - the icon's own rectangle ...
 [consumer] totals: clicks=0, preview deliveries=0, menu opens=0, menu dismissals=0, ..., balloon show requests=1
 click columns: injected=1 click(s); delivered to the consumer=0; menu opens=0
 ```
@@ -487,7 +487,7 @@ version back out of the project file, and its content assertions are hash-indepe
 | English README shipped | the package carries `README.md` and the nuspec `<readme>` names that existing entry — both asserted lines of the T05 inspection; the README's structure and facts are pinned by `Readme_documents_the_install_line_usage_and_the_shipped_surface` |
 | LICENSE file | `LICENSE` asserted present at the package root |
 | XML documentation | `Trustsoft.NotifyIcon.xml` asserted beside each framework's assembly (one line per TFM); source side pinned by `Release_build_emits_xml_documentation_beside_every_target_framework_assembly` (`GenerateDocumentationFile` true in `Directory.Build.props` and a real `T:Trustsoft.NotifyIcon.TrayIcon` entry in the file) |
-| Installable and usable from a consumer project without additional setup | T03: one `PackageReference`, one restore from the local feed, one build and one probed live run **per framework**, `18/18` presence samples, flat `gdi 13/25`, `icon-after-exit: gone` — `docs/uat-logs/S07/t03-consumer-proof.txt` |
+| Installable and usable from a consumer project without additional setup | T03: one `PackageReference`, one restore from the local feed, one build and one probed live run **per framework**, `18/18` presence samples, a `gdi` series flat at its plateau of `25` once the menu's popup exists, `icon-after-exit: gone` — `docs/uat-logs/S07/t03-consumer-proof.txt` |
 
 **Not evidenced:** the package was never pushed to nuget.org, and how nuget.org would render the metadata
 (description length, tag formatting) is unverified. The English-ness of the XML documentation text is
@@ -531,11 +531,15 @@ These are open, not closed, and each names the document or test that carries the
    of `docs/uat-logs/S07/t03-consumer-proof.txt`). A real end-user click remains unmeasured.
 2. **The S03 popup tests are foreground-sensitive and environment-dependent.** T01's measurement of the
    full suite saw 398 passed / 4 failed with `foreground=0x0()` and `setForegroundWindow=False`; the same
-   suite passed 402/0 and then 403/0 on the same machine. The four are not fixed, they are environment-
+   suite passed 402/0 and then 403/0 on the same machine, and the T03 rerun saw one run report
+   `Failed: 1, Passed: 402` between two 403/0 runs — that failing test's name was not recorded by the
+   producer of the day, so `docs/uat-logs/S07/t03-plan-verify.sh` now prints every failing test name it
+   is given. The four are not fixed, they are environment-
    dependent (`docs/UAT-S06.md`, `docs/uat-logs/S07/t01-*`).
 3. **The GDI cost of handing over a fresh vector image per change.** Every icon change converts a source
    to a new HICON; the measured steady-state count is quoted in the README's "One measured cost" section
-   and measured in `docs/UAT-S01.md` (the consumer runs above re-confirm a flat `gdi 13/25` series).
+   and measured in `docs/UAT-S01.md` (the consumer runs above re-confirm a `gdi` series flat at its
+   plateau after the menu popup's rise).
 4. **Consumer setup discoveries.** An agent shell can arrive without the Windows known-folder variables
    (the SDK then fails inside NuGet's restore-graph evaluation with `Value cannot be null. (Parameter
    'path1')`), and `dotnet test` in a never-built worktree prints nothing and exits 0. Both are written

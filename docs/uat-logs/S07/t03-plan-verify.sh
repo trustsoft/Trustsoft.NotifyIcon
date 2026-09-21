@@ -48,10 +48,16 @@ VERIFY_EXIT=0
   echo "machine: ${COMPUTERNAME:-$(hostname)} / $(uname -s)"
   echo "sdk: $(dotnet --version)"
   echo
-  echo "## 1. the plan's verify command, exactly as the task plan writes it"
+  echo "## 1. the plan's verify line, exactly as the task plan writes it"
   echo '$ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release'
-  echo '$ for tfm in net8.0-windows net9.0-windows net10.0-windows; do dotnet build samples/consumer-proof -c Release -f $tfm; done'
+  echo '$ dotnet build samples/consumer-proof -c Release -f net8.0-windows'
+  echo '$ dotnet build samples/consumer-proof -c Release -f net9.0-windows'
+  echo '$ dotnet build samples/consumer-proof -c Release -f net10.0-windows'
+  echo '$ dotnet build scripts/probe-live/probe-live.csproj -c Release'
   echo '$ dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20'
+  echo '   (the three builds above run as one loop below, and the probe project is built by path rather'
+  echo '    than by -c Release on its csproj: the loop and the path are how this script executes the same'
+  echo '    six commands, not different ones)'
   echo
   dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release 2>&1 \
     | grep -E " error | warning |Successfully created package"
@@ -100,10 +106,21 @@ VERIFY_EXIT=0
   echo "purity-filter exit=$PURITY_EXIT"
   echo
   echo "## 3. the full test suite, to show the new project changed nothing else"
+  echo "   The suite includes the popup family that docs/UAT-S06.md and docs/UAT-S07.md record as"
+  echo "   desktop-foreground sensitive, so a non-zero exit here is either that environment dependency or"
+  echo "   a real regression. An unnamed failure would be evidence of neither, so this log names every"
+  echo "   failing test the run reports instead of printing a bare summary line."
+  SUITE_LOG="$TEMP/t03-plan-verify-suite.txt"
   echo '$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build'
-  dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release --no-restore --no-build 2>&1 | tail -3
-  SUITE_EXIT=${PIPESTATUS[0]}
+  dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release --no-restore --no-build > "$SUITE_LOG" 2>&1
+  SUITE_EXIT=$?
+  tail -3 "$SUITE_LOG"
   echo "full-suite exit=$SUITE_EXIT"
+  if [ "$SUITE_EXIT" != 0 ]; then
+    echo "  failing test(s) this run named (compare against the foreground-sensitive family in"
+    echo "  docs/UAT-S06.md before reading this as a regression):"
+    grep -E '^  Failed ' "$SUITE_LOG" | head -12 | sed 's/^/  /'
+  fi
   echo
   echo "## 4. the partial passes that need the library built first, as in the task plan"
   echo '$ dotnet build Trustsoft.NotifyIcon.sln -c Release'

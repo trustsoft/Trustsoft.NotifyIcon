@@ -242,9 +242,29 @@ PROBE_BUILD_EXIT=0
     echo '  FAILURES ABOVE'
     exit 1
   fi
-  echo "  Every framework's consumer process was built from the package, showed its icon, and held a"
-  echo "  flat GDI series after the menu popup's single step up (13 -> 25 at the open, then unchanged for"
-  echo "  the rest of the run), and left no icon behind at exit, and the restore consumed the local feed and"
+  echo "  Every framework's consumer process was built from the package, showed its icon, and left no icon"
+  echo "  behind at exit. Each run's GDI series, as its distinct values in order and the sample where it"
+  echo "  stopped rising - computed from the runs above rather than asserted here. The opening values differ"
+  echo "  because a run's first samples can fall while WPF is still realising resources, which is why this"
+  echo "  verdict names the plateau instead of a fixed pair of numbers:"
+  for tfm in "${TFMS[@]}"; do
+    log="$SCRATCH/probe-$tfm.txt"
+    series=$(grep -oE "gdi=[0-9]+" "$log" | cut -d= -f2)
+    distinct=$(echo "$series" | uniq | paste -sd'>' -)
+    plateau=$(echo "$series" | tail -1)
+    total=$(echo "$series" | wc -l | tr -d ' ')
+    held=$(echo "$series" | grep -c "^$plateau$")
+    flat_from=$(grep -E "t=[0-9]+s.*gdi=[0-9]+" "$log" | awk '
+      { t=""; g="";
+        if (match($0, /t=[0-9]+s/)) t=substr($0, RSTART+2, RLENGTH-3);
+        if (match($0, /gdi=[0-9]+/)) g=substr($0, RSTART+4, RLENGTH-4);
+        if (t != "" && g != "") { if (g != prev) { last=t; prev=g } } }
+      END { print last }')
+    echo "    $tfm: gdi $distinct; last increase at t=${flat_from}s, then flat at $plateau for the last $held of $total samples"
+  done
+  echo "  The last increases coincide with the assigned menu's own WPF popup window (the consumer opens it"
+  echo "  at 6s and the count has plateaued by 8s); after each plateau no sample grows - not per balloon"
+  echo "  request at 10s, not per menu dismissal, not on disposal. The restore consumed the local feed and"
   echo "  nothing else (control A succeeded, control B failed). The click-attempt exit code is"
   echo "  intentionally not part of this verdict: the click is an instrument question (S06/F1), and"
   echo "  what it produced is read off section 8 rather than asserted here."

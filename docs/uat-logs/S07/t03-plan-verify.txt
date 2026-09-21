@@ -1,21 +1,27 @@
 # S07/T03 raw evidence: the plan's verify command, and the regression checks around it
-date: 2026-09-21T15:44:52+03:00
+date: 2026-09-22T00:19:00+03:00
 machine: MinibookX / MINGW64_NT-10.0-26200
 sdk: 10.0.401
 
-## 1. the plan's verify command, exactly as the task plan writes it
+## 1. the plan's verify line, exactly as the task plan writes it
 $ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
-$ for tfm in net8.0-windows net9.0-windows net10.0-windows; do dotnet build samples/consumer-proof -c Release -f $tfm; done
+$ dotnet build samples/consumer-proof -c Release -f net8.0-windows
+$ dotnet build samples/consumer-proof -c Release -f net9.0-windows
+$ dotnet build samples/consumer-proof -c Release -f net10.0-windows
+$ dotnet build scripts/probe-live/probe-live.csproj -c Release
 $ dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+   (the three builds above run as one loop below, and the probe project is built by path rather
+    than by -c Release on its csproj: the loop and the path are how this script executes the same
+    six commands, not different ones)
 
 pack exit=0
-  ConsumerProof -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\ConsumerProof.dll
+  ConsumerProof -> C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\ConsumerProof.dll
 Build succeeded.
 build net8.0-windows exit=0
-  ConsumerProof -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net9.0-windows\ConsumerProof.dll
+  ConsumerProof -> C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net9.0-windows\ConsumerProof.dll
 Build succeeded.
 build net9.0-windows exit=0
-  ConsumerProof -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net10.0-windows\ConsumerProof.dll
+  ConsumerProof -> C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net10.0-windows\ConsumerProof.dll
 Build succeeded.
 build net10.0-windows exit=0
 
@@ -24,18 +30,18 @@ build net10.0-windows exit=0
   missing instrument reads as an absent icon. Measured - T03's consumer script failed exactly
   that way on its first run in a re-materialized worktree.
 $ dotnet build scripts/probe-live -c Release
-  probe-live -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\scripts\probe-live\bin\Release\net8.0-windows\probe-live.dll
+  probe-live -> C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\scripts\probe-live\bin\Release\net8.0-windows\probe-live.dll
 Build succeeded.
 probe-live build exit=0
 
-[probe] probe-live start 2026-09-21 15:45:05; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] probe-live start 2026-09-22 00:19:23; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
 [probe] sample exe: samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe
 [probe] observe: 20s; kill-after: no; click-after: no; left-click-after: no; balloon-after: no; menu-after: no; sample args: 
-[probe] launched pid=24120
-sample| [consumer] ConsumerProof start 2026-09-21 15:45:05; machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0
-sample| [consumer] package assembly: C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+[probe] launched pid=17124
+sample| [consumer] ConsumerProof start 2026-09-22 00:19:23; machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0
+sample| [consumer] package assembly: C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
 sample| [consumer] package identity: Trustsoft.NotifyIcon assemblyVersion=1.0.0.0 informationalVersion=1.0.0+e4f9f84ba78453e6a81ae8d5953b6805841a087c
-sample| [consumer] this build targets: .NETCoreApp,Version=v8.0 (base directory C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\)
+sample| [consumer] this build targets: .NETCoreApp,Version=v8.0 (base directory C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\)
 sample| [consumer] public surface: 7 exported type(s): Trustsoft.NotifyIcon.BalloonTipIcon, Trustsoft.NotifyIcon.BalloonTipOptions, Trustsoft.NotifyIcon.TrayErrorEventArgs, Trustsoft.NotifyIcon.TrayIcon, Trustsoft.NotifyIcon.TrayIconClickEventArgs, Trustsoft.NotifyIcon.TrayIconException, Trustsoft.NotifyIcon.TrayMenuActivation
 sample| [consumer] PASS the package surfaces exactly the 7 documented public types and no others, checked from this consumer assembly rather than from the library's test project.
 sample| [consumer] package assembly references: PresentationCore, PresentationFramework, System.Collections, System.Diagnostics.TraceSource, System.Runtime, System.Runtime.InteropServices, System.Threading, System.Xaml, WindowsBase
@@ -44,34 +50,34 @@ sample| [consumer] tray icon registered from code; tooltip and a 2-item menu ass
 sample| [consumer] interaction model: a right click opens the assigned menu, the four click types are routed events, the menu is this application's own instance, and a balloon is a method call rather than a property.
 sample| [consumer] no window is shown - check the notification area, not the taskbar.
 sample| [consumer] run plan: 20s, self-open menu off, balloon shown once mid-run.
-[probe] t=1s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=2s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=3s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=4s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=5s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=6s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=7s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=8s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=9s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=10s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
+[probe] t=1s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=2s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=3s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=4s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=5s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=6s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=7s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=8s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=9s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=10s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
 sample| [consumer] balloon show request #1 through ShowBalloonTip(title, text, BalloonTipIcon.Info).
-[probe] t=11s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=12s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=13s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=14s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=15s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=16s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=17s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=18s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=19s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] t=20s pid=24120 icon=present rect=(1494,1128,1542,1200) gdi=13
-[probe] identity: hwnd=0x402F4 uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] t=11s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=12s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=13s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=14s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=15s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=16s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=17s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=18s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=19s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=20s pid=17124 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] identity: hwnd=0x1010046 uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
 [probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
 [probe] observed-present: yes
 [probe] sample-alive-at-end: True; exit-code: (running)
 [probe] the sample is still running at the end of the observation; killing it so the teardown verdict is about a dead process
-[probe] taskkill /f /pid 24120 -> exit 0; SUCCESS: The process with PID 24120 has been terminated.
-[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x402F4 uID=1)
+[probe] taskkill /f /pid 17124 -> exit 0; SUCCESS: The process with PID 17124 has been terminated.
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x1010046 uID=1)
 plan verify exit=0
 
   Note: with no run switch the consumer uses its documented default (a 20s run and one balloon
@@ -91,14 +97,18 @@ solution build (prerequisite for the --no-build test runs) exit=0
 $ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --filter "FullyQualifiedName~PackagePurityTests"
 A total of 1 test files matched the specified pattern.
 
-Passed!  - Failed:     0, Passed:    11, Skipped:     0, Total:    11, Duration: 85 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+Passed!  - Failed:     0, Passed:    12, Skipped:     0, Total:    12, Duration: 139 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
 purity-filter exit=0
 
 ## 3. the full test suite, to show the new project changed nothing else
+   The suite includes the popup family that docs/UAT-S06.md and docs/UAT-S07.md record as
+   desktop-foreground sensitive, so a non-zero exit here is either that environment dependency or
+   a real regression. An unnamed failure would be evidence of neither, so this log names every
+   failing test the run reports instead of printing a bare summary line.
 $ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build
 A total of 1 test files matched the specified pattern.
 
-Passed!  - Failed:     0, Passed:   402, Skipped:     0, Total:   402, Duration: 58 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+Passed!  - Failed:     0, Passed:   403, Skipped:     0, Total:   403, Duration: 1 m 9 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
 full-suite exit=0
 
 ## 4. the partial passes that need the library built first, as in the task plan
@@ -109,7 +119,7 @@ solution build exit=0
 ## 5. the package inspection, to show the consumer proof did not leak into the nupkg
 $ bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg
 package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
-        sha256 a8c9107f8de222e1cd9adce072e008153e4b66c55b208460a8946f885328564a
+        sha256 1b842bd6cdffaafa7c684815f51f427b583b381385aa4416ce6cde00ac14b97b
         expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
   PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
 -- identity (the nuspec)
