@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Markup;
@@ -45,6 +46,12 @@ public sealed class TrayIconXamlContractTests
 
     /// <summary>The test assembly, used to parse a root type declared in this file.</summary>
     private const string TestNamespace = "clr-namespace:Trustsoft.NotifyIcon.Tests;assembly=Trustsoft.NotifyIcon.Tests";
+
+    /// <summary>
+    /// The consumer namespace URI the library declares for markup, so the sample, a consumer and this
+    /// test cannot disagree about it.
+    /// </summary>
+    private const string ConsumerNamespace = "http://schemas.trustsoft.com/notifyicon";
 
     /// <summary>
     /// The property surface of a declarative declaration resolves from markup, and the declared
@@ -212,6 +219,48 @@ public sealed class TrayIconXamlContractTests
             """;
 
         Assert.Throws<XamlParseException>(() => XamlReader.Parse(markup));
+    }
+
+    /// <summary>
+    /// The consumer namespace is declared on the assembly, and markup really resolves through it.
+    /// </summary>
+    /// <remarks>
+    /// The attribute is the difference between markup that needs
+    /// <c>clr-namespace:...;assembly=...</c> and markup that needs one short URI - and the assembly
+    /// part is not optional, because the parser has no local-assembly context to fall back on. Both
+    /// halves are asserted: the declaration itself, so a documented namespace cannot silently
+    /// disappear, and a real parse through the URI, because an attribute that nothing resolves is
+    /// just a string.
+    /// </remarks>
+    [StaFact]
+    public void The_consumer_namespace_is_declared_and_markup_resolves_through_it()
+    {
+        System.Reflection.Assembly library = typeof(TrayIcon).Assembly;
+
+        System.Windows.Markup.XmlnsDefinitionAttribute definition = library
+            .GetCustomAttributes<System.Windows.Markup.XmlnsDefinitionAttribute>()
+            .Single(attribute => attribute.ClrNamespace == "Trustsoft.NotifyIcon");
+
+        Assert.Equal(ConsumerNamespace, definition.XmlNamespace);
+
+        System.Windows.Markup.XmlnsPrefixAttribute prefix = library
+            .GetCustomAttributes<System.Windows.Markup.XmlnsPrefixAttribute>()
+            .Single(attribute => attribute.XmlNamespace == ConsumerNamespace);
+
+        Assert.Equal("tni", prefix.Prefix);
+
+        // The attribute is only worth declaring if the parser honours it.
+        object parsed = XamlReader.Parse(
+            $"""
+            <tni:TrayIcon xmlns:tni="{ConsumerNamespace}" ToolTipText="mapped namespace" Visible="False" />
+            """);
+
+        var icon = Assert.IsType<TrayIcon>(parsed);
+
+        Assert.Equal("mapped namespace", icon.ToolTipText);
+        Assert.False(icon.IsRegistered);
+
+        icon.Dispose();
     }
 
     /// <summary>

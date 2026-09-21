@@ -11,7 +11,8 @@ shipped assembly has **zero package references** — no `System.Windows.Forms`, 
 
 ## Status
 
-**Early development. Only the core icon lifecycle of the first slice is implemented.**
+**Early development. The core tray-icon surface (S01-S05) and the declarative XAML path (S06) are
+implemented; NuGet packaging and the release pipeline are not (S07).**
 
 Working today:
 
@@ -42,6 +43,17 @@ Working today:
   owning dispatcher.
 - Failures are named: `TrayIconException` carries an `Operation` and a `Win32ErrorCode`, and runtime
   failures are raised through the bubbling `TrayError` routed event after one retry.
+- Explorer-restart recovery: after Explorer restarts the icon re-registers itself with no application
+  action, because the `TaskbarCreated` broadcast re-issues `NIM_ADD` plus `NIM_SETVERSION(4)` with the
+  handle the icon already owns. Teardown needs no code at all — the registration is bound to the host
+  window, so a process that dies without `Dispose` leaves nothing behind. Both are measured live in
+  [`docs/UAT-S05.md`](docs/UAT-S05.md).
+- Declarative use: the icon, its image, its menu and its event handlers can be declared in markup and
+  resolved from `Application.Resources`, using the `http://schemas.trustsoft.com/notifyicon` namespace
+  (prefix `tni`) this assembly declares. Run the sample with `-- --xaml --run-seconds 20` to see the
+  same behaviour reached without a line of property or event wiring in C#; the boundary — event
+  attributes in a resource are wired by the compiled XAML, not by a runtime parse — is pinned in
+  `tests/Trustsoft.NotifyIcon.Tests/TrayIconXamlContractTests.cs`.
 - Target frameworks: `net8.0-windows`, `net9.0-windows`, `net10.0-windows`. Windows only.
 
 **Known limitation ([F1](docs/UAT-S01.md#gdi-evidence-as-measurements-r007), measured 2026-09-20):**
@@ -65,8 +77,15 @@ distinct images an application hands over, not to the number of replacements. No
   placement reads the monitor's DPI, but the `HICON` is still rasterized at a fixed 16 px, so a
   display at a scale above 100 % gets a correctly placed menu with a scaled-up icon. That is the
   named follow-up the milestone roadmap carries, not a silently dropped clause;
-- explorer-restart recovery and the process-exit fallback (S05);
-- XAML usage, `NotifyIcon`-style markup support (S06);
+- explorer-restart recovery and undisposed termination are implemented (S05) — the live evidence is
+  [`docs/UAT-S05.md`](docs/UAT-S05.md). There is deliberately **no** process-exit fallback: a forced
+  kill runs no managed code, so a finalizer or `ProcessExit` handler could not run in the case it
+  would have to cover, and the host-window mechanism is the guarantee instead;
+- declarative XAML usage is implemented (S06) — see the bullet above. What is **not** delivered is
+  `NotifyIcon`-style markup *convenience*: there are no balloon dependency properties (a balloon stays
+  a method call by decision), and the declarative path uses the library's `TrayIcon` rather than a
+  sample-specific subclass, because an `ApplicationDefinition` cannot resolve a type from its own
+  project (measured: the markup compiler reports `MC3074`);
 - NuGet packaging, licence metadata and the CI release pipeline (S07).
 
 ## Try it
@@ -79,7 +98,9 @@ dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release
 ```
 
 Add `-- --run-seconds 20` to let it exit by itself after 20 seconds — useful for watching a graceful
-shutdown remove the icon.
+shutdown remove the icon. Add `-- --xaml` to run the same application from the declaration in
+`App.xaml` instead of the C# construction path; both modes print the same lines, which is what makes
+a diff between two captures meaningful.
 
 Sample behaviour, including what it writes to the console when the shell refuses the registration, is
 described in [`docs/UAT-S01.md`](docs/UAT-S01.md); the balloon demonstration and its switches are
@@ -101,8 +122,9 @@ the public surface (`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`).
 GitHub Actions Windows runners have no interactive desktop session, so the checks that need a real
 notification area — the icon appearing at all, the alert area showing it, the tooltip on hover — are
 a manual checklist: [`docs/UAT-S01.md`](docs/UAT-S01.md), extended per slice since: click delivery
-([`docs/UAT-S02.md`](docs/UAT-S02.md)), menu placement ([`docs/UAT-S03.md`](docs/UAT-S03.md)) and
-balloon notifications ([`docs/UAT-S04.md`](docs/UAT-S04.md)). They are **not** automated coverage and
+([`docs/UAT-S02.md`](docs/UAT-S02.md)), menu placement ([`docs/UAT-S03.md`](docs/UAT-S03.md)),
+balloon notifications ([`docs/UAT-S04.md`](docs/UAT-S04.md)) and continuity/teardown
+([`docs/UAT-S05.md`](docs/UAT-S05.md)). They are **not** automated coverage and
 are not reported as such.
 
 ## Licence

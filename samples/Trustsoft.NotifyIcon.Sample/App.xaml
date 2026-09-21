@@ -1,7 +1,7 @@
 <Application x:Class="Trustsoft.NotifyIcon.Sample.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:tni="clr-namespace:Trustsoft.NotifyIcon;assembly=Trustsoft.NotifyIcon"
+             xmlns:tni="http://schemas.trustsoft.com/notifyicon"
              ShutdownMode="OnExplicitShutdown">
     <!--
       No StartupUri on purpose: the premise of this project is an application that owns a tray icon
