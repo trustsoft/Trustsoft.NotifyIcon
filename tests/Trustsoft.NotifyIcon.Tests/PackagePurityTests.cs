@@ -497,6 +497,116 @@ public class PackagePurityTests
     }
 
     /// <summary>
+    /// The README ships as the package's <c>PackageReadmeFile</c>, so the facts a consumer acts on
+    /// must stay true of the package they installed with: the install line, the markup namespace,
+    /// the consumer sections and the documented public surface.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the guard S07/T04 left behind. The README before that restructure was an
+    /// early-development status note which said packaging was not delivered and then listed
+    /// delivered features under "planned, not implemented" - prose nothing failed on, and which a
+    /// consumer would have read as "the package you just installed does not exist". A language
+    /// check is neither possible nor wanted here; what is asserted is the small set of strings a
+    /// reader copies verbatim and which rot silently: the <c>PackageReference</c> id and version,
+    /// the consumer namespace URI and prefix, the consumer sections in order, and the seven public
+    /// type names.
+    /// </para>
+    /// <para>
+    /// The version is read from the library project rather than repeated, so a version bump that
+    /// forgets the README fails here instead of publishing a document that describes a package
+    /// nobody can install.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Readme_documents_the_install_line_usage_and_the_shipped_surface()
+    {
+        string root = RepositoryRoot();
+        string projectPath = Path.Combine(root, LibraryProjectDirectory, "Trustsoft.NotifyIcon.csproj");
+        Dictionary<string, string> properties = ReadProperties(projectPath);
+        string packageId = RequiredProperty(properties, "PackageId", projectPath);
+        string version = RequiredProperty(properties, "Version", projectPath);
+        string readmeFileName = RequiredProperty(properties, "PackageReadmeFile", projectPath);
+        string readmePath = Path.Combine(root, readmeFileName);
+
+        Assert.True(
+            File.Exists(readmePath),
+            $"R010: PackageReadmeFile names '{readmeFileName}', which does not exist at the repository root. "
+            + "The file this test reads is the one a consumer downloads with the package.");
+
+        string readme = File.ReadAllText(readmePath);
+
+        string installLine = $"<PackageReference Include=\"{packageId}\" Version=\"{version}\" />";
+
+        Assert.True(
+            readme.Contains(installLine, StringComparison.Ordinal),
+            $"R010: the README is the package's readme, so it must show the install line a consumer copies: {installLine}. "
+            + "It is built from the library project's own PackageId and Version here, so a version bump has to update the document instead of "
+            + "shipping a README that tells a consumer to install a version that does not exist.");
+
+        // The two halves of the markup a consumer writes: the namespace URI the assembly declares
+        // with XmlnsDefinition and the prefix it suggests with XmlnsPrefix (Properties/AssemblyInfo.cs).
+        Assert.True(
+            readme.Contains("http://schemas.trustsoft.com/notifyicon", StringComparison.Ordinal),
+            "R010: the README must document the consumer markup namespace http://schemas.trustsoft.com/notifyicon, "
+            + "which is what a declarative consumer writes instead of a clr-namespace and an assembly name.");
+
+        Assert.True(
+            readme.Contains("xmlns:tni=", StringComparison.Ordinal),
+            $"R010: the README documents the namespace URI but not the 'tni' prefix a consumer declares with it "
+            + "(xmlns:tni=\"http://schemas.trustsoft.com/notifyicon\"). The prefix is the one the assembly suggests via XmlnsPrefix.");
+
+        // The consumer path, in the order a consumer's questions arrive (T04). Asserting the headings
+        // rather than the prose keeps this a structural check that a rewrite can satisfy without
+        // matching sentences.
+        string[] consumerSections =
+        [
+            "## Install",
+            "## Quick start",
+            "## Declarative usage",
+            "## Windowless shutdown",
+            "## Interaction model",
+        ];
+
+        foreach (string section in consumerSections)
+        {
+            Assert.True(
+                readme.Contains(section, StringComparison.Ordinal),
+                $"R010: the README must carry a '{section}' section. A consumer who installs the package reads this file first, "
+                + "and these are the questions they arrive with: how to install it, how to use it from code, how to declare it in markup, "
+                + "what a windowless application must do about shutdown, and how the interaction model behaves.");
+        }
+
+        // Repository-facing material belongs below the consumer material (T04), which is what keeps a
+        // contributor's build instructions out of the path a package user reads.
+        int repositoryNotesIndex = readme.IndexOf("## Repository notes", StringComparison.Ordinal);
+
+        Assert.True(
+            repositoryNotesIndex > readme.IndexOf(installLine, StringComparison.Ordinal),
+            "R010: the README's repository-facing content must sit below the consumer content. "
+            + "A '## Repository notes' heading that precedes the install line puts the repository's build instructions in front of a package user.");
+
+        Type[] documentedTypes =
+        [
+            typeof(TrayIcon),
+            typeof(TrayIconException),
+            typeof(TrayErrorEventArgs),
+            typeof(TrayIconClickEventArgs),
+            typeof(TrayMenuActivation),
+            typeof(BalloonTipIcon),
+            typeof(BalloonTipOptions),
+        ];
+
+        string[] unnamed = [.. documentedTypes.Select(type => type.Name).Where(name => !readme.Contains(name, StringComparison.Ordinal))];
+
+        Assert.True(
+            unnamed.Length == 0,
+            $"R010: the README documents the shipped public surface, but does not name [{string.Join(", ", unnamed)}]. "
+            + "Public_surface_is_only_the_documented_types pins the shipped set; this assertion is what makes the word 'documented' "
+            + "mean the readme the package ships, rather than a list that exists only inside the test suite.");
+    }
+
+    /// <summary>
     /// The compiled assembly carries the version the package metadata declares.
     /// </summary>
     /// <remarks>

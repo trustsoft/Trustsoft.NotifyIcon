@@ -5,7 +5,7 @@
 **Date:** 2026-09-21
 **Revision tested:** the `milestone/M001` worktree with the S07/T01, T02 and T03 work applied; the raw logs below carry the exact timestamps and the pack's own sha256.
 **Machine:** MINIBOOKX, `MINGW64_NT-10.0-26200` (Git Bash), .NET SDK `10.0.401`, single monitor 1920x1200 at 150 % scale.
-**Document status:** assembled per task as the slice runs. T05 consolidates it into the slice's evidence pack; the rows marked *pending* are the ones later tasks will add.
+**Document status:** assembled per task as the slice runs. T05 consolidates it into the slice's evidence pack; with T01-T04 applied, the only rows this document still owes are T05's requirement verdicts and its milestone-level cross-checks.
 
 ## Verdict so far
 
@@ -17,12 +17,12 @@
 | Nothing from the sample, the tests or `scripts/probe-live` is packaged | **PASS** | T02: the forbidden-pattern assertion (no entry matching `Sample`, `Tests`, `testhost`, `probe-live`, `consumer-proof`) and the allowed-set assertion (every entry is one of nuspec, README, LICENSE, `lib/<tfm>/assembly+xml`, package metadata) both hold |
 | The package carries the README and the licence it advertises | **PASS** | T02: `README.md` and `LICENSE` are package entries, and the nuspec `<readme>` names an entry that exists |
 | The inspection is an executable proof, not a reading exercise | **PASS** | T02: `scripts/verify-package.sh` prints one `PASS`/`FAIL` line per assertion and exits non-zero quoting the offender. Three deliberately broken copies produced three non-zero exits with the offending entry quoted — `docs/uat-logs/S07/t02-negative-controls.txt` |
-| The inspection is part of the repository's documented verification path | **PASS** | `README.md`, "Build and test": the pack and `bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg` with the explanation of what it asserts |
+| The inspection is part of the repository's documented verification path | **PASS** | `README.md`, "Repository notes → Build, test and pack": the pack and `bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg` with the explanation of what it asserts. T04 ran that line verbatim after the restructure (`docs/uat-logs/S07/t04-readme-verification.txt`) |
 | The library's own build declares the metadata and the non-shipping projects cannot be packed | **PASS** | T01: `PackagePurityTests` 11/11, plus three negative controls that break one invariant each and are restored byte-for-byte (`docs/uat-logs/S07/t01-negative-controls.txt`) |
 | A fresh consumer project installs the package from the local feed and shows a working icon on each of the three frameworks (R010, R012) | **PASS** | T03: `docs/uat-logs/S07/t03-consumer-proof.txt` — one build, one surface assertion and one probed live run per framework, each `18/18` presence samples, `gdi 13/25`, `sample-exit 0`, `icon-after-exit: gone`. That the package came from `artifacts/` and from nowhere else is proved by two controls: the same restore with a fresh global-packages folder succeeds with the feed present and fails with `NU1101 ... in source(s): artifacts-local-feed` with the feed emptied |
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
 | A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1518,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
-| The README documents install, code-first use, declarative use and windowless shutdown | *pending* | S07/T04 |
+| The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `e87308ab…` identical before and after the run). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
 
 ## What this slice does not claim (so far)
 
@@ -144,7 +144,110 @@ bash docs/uat-logs/S07/t03-plan-verify.sh      # ~2 min: the plan's verify comma
 
 The script repairs the shell environment first (an agent shell can arrive without the Windows known-folder variables, and with that environment the SDK fails inside NuGet's restore-graph evaluation with `Value cannot be null. (Parameter 'path1')`), deletes the previous nupkg so the log names the artifact it produced, builds the probe instrument it is about to run, and prints the raw output of every step. Both producers build the binaries their `--no-build` runs need, because a re-materialized worktree has none (`bin/` and `obj/` are gitignored): measured on this script's first run in such a worktree, where all three probe runs failed to start the instrument and the log read `0` presence samples on every framework — the absence of the instrument masquerading as the absence of the icon, which is why the build now appears in the log verbatim. `artifacts/` and every `*.nupkg` are gitignored, so the log and its producer are the durable evidence, not the package file.
 
-The same re-materialized worktree produced a second, quieter trap in the test command: `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore` exits `0` and prints **nothing at all** while the test project has never been built there, because the test target never runs — a silent zero-count green that reads exactly like a pass. Measured this attempt: two such invocations produced zero bytes of output and exit `0`; the same command reported `Passed! - Failed: 0, Passed: 402` once the test project had been built (`dotnet build tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release`), and `dotnet vstest …Trustsoft.NotifyIcon.Tests.dll --TestCaseFilter:"FullyQualifiedName~PackagePurityTests"` reported `11` passed independently of the SDK's test subcommand. Build before running tests here, and treat an empty `dotnet test` log as “nothing ran”, not as success.
+The same re-materialized worktree produced a second, quieter trap in the test command: `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore` exits `0` and prints **nothing at all** while the test project has never been built there, because the test target never runs — a silent zero-count green that reads exactly like a pass. Measured this attempt: two such invocations produced zero bytes of output and exit `0`; the same command reported `Passed! - Failed: 0, Passed: 402` once the test project had been built (`dotnet build tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release`), and `dotnet vstest …Trustsoft.NotifyIcon.Tests.dll --TestCaseFilter:"FullyQualifiedName~PackagePurityTests"` reported `11` passed independently of the SDK's test subcommand — `11` and `402` are this revision's counts, and both grew by one with T04's README guard (the class to 12, the suite to 403). Build before running tests here, and treat an empty `dotnet test` log as “nothing ran”, not as success.
+
+---
+
+## The README as the install and usage document (T04)
+
+### The requirement this answers
+
+R010 names an English README as part of the published package, and `PackageReadmeFile` makes this file the first thing a package consumer reads. Before T04 it was an early-development status note that predated the package existing: it opened with `**Early development. ... NuGet packaging and the release pipeline are not (S07).**` and then listed, under the heading *"Planned, not implemented — nothing below exists yet, so do not code against it"*, a series of features that were implemented, each with its own UAT record. A consumer following that document would have concluded that the package they had just installed did not exist and that the features they were holding were not delivered.
+
+### What changed
+
+The file was rebuilt around the order a consumer's questions actually arrive, with the repository-facing material moved below a horizontal rule rather than mixed into the usage text:
+
+| Section | What it answers |
+|---|---|
+| Title paragraph | what the library is, what it does not depend on, which frameworks it targets |
+| **Install** | the `PackageReference` line, the version and the fact that it is **not on nuget.org**; what else travels in the package (XML documentation, README, licence) |
+| **Quick start — code first** | the whole windowless shape in one block: construct on the UI thread, subscribe, assign the caller's own menu, set an `ImageSource`, register with `Visible`, `ShowBalloonTip` |
+| **Declarative usage** | the `http://schemas.trustsoft.com/notifyicon` namespace (prefix `tni`) and a self-consistent `Application.Resources` declaration, plus the three facts that bite: build-time handler validation, BAML's deferred construction, `x:Shared` |
+| **Windowless shutdown** | `ShutdownMode="OnExplicitShutdown"`, no `StartupUri`, `Dispose` on `Exit`/`SessionEnding`, why no process-exit fallback exists, explorer-restart re-registration, and `TrayIconException` as the named failure of a refused registration |
+| **Interaction model** | the four routed click pairs with their `Preview` twins, `MenuActivation`, the menu being the caller's own instance and **never written by the library**, and the balloon being a method call rather than a dependency property |
+| **Declarative traps the slices measured** | `MC3074` from an assembly-qualified local `clr-namespace`, and resource-scope event attributes being compiled-XAML only |
+| **What this package deliberately is not** | no WinForms / no `System.Drawing.Common` / no `H.NotifyIcon` / no WinRT contracts package; balloons only in v1 with toasts in M002 (D005); no balloon dependency properties (D031); no DPI-driven icon resizing yet; `NOTIFYICON_VERSION_4` only; no `RepositoryUrl`/`PackageProjectUrl` |
+| *(measured cost)* | the GDI paragraph, with the bitmap/frozen-vector numbers quoted from the S01 table and the remaining per-distinct-image cost of a fresh vector source |
+| **Repository notes** | build, test, pack, `scripts/verify-package.sh`, the sample, `scripts/probe-live`, the CI-less live checklist and the `docs/UAT-S0N.md` index |
+| **Licence** | MIT |
+
+The stale `## Status` section was **removed, not re-worded**: its accurate material (what each slice delivered, with its limitations) is now carried by the interaction-model, trap and exclusion sections, each next to the evidence path that measured it, and every limitation is attributed to the document that measured it rather than paraphrased into reassurance. The public surface is named as the seven documented types, which is the list `samples/consumer-proof/` asserts from a consumer assembly — so the README, the library's test and the consumer's test now name the same set.
+
+### Every quoted command, run as written
+
+**Raw evidence:** `docs/uat-logs/S07/t04-readme-verification.txt` (198 lines), produced by `bash docs/uat-logs/S07/t04-readme-verification.sh`. The producer executes each command through `bash -c` so the line in the log is the line in the document, prints `README.md`'s sha256 before and after, and exits with the number of failures:
+
+```
+README.md:   sha256 e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+
+command                                                                             exit  duration
+-------------------------------------------------------------------------------------------------
+dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release                124*  12s
+  (the README documents this invocation as running until the session ends; the harness stopped
+   it at 12s, and its output shows the icon registered before that - 0 leftover processes)
+dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --run-seconds 20   0  24s
+dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --xaml --run-seconds 20  0  25s
+dotnet build Trustsoft.NotifyIcon.sln -c Release                                    0   4s
+dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows  0  63s
+dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release         0   4s
+bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg               0   2s
+dotnet build samples/Trustsoft.NotifyIcon.Sample -c Release -f net8.0-windows       0   3s
+dotnet run --project scripts/probe-live -c Release -- samples/.../Trustsoft.NotifyIcon.Sample.exe 12 --run-seconds 8  0  12s
+
+SUMMARY  9 command(s), 0 failure(s)
+README.md sha256 before: e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+README.md sha256 after:  e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+```
+
+`*` the only non-zero exit is the documented-watchdog case, and the script fails the run if that command stops for any other reason. Two independent checks came out of the same log: `dotnet test` reported `Passed! - Failed: 0, Passed: 403` — 402 at the T03 revision plus T04's README guard, so the README's build-then-test advice in the repository notes describes a real suite rather than an empty silent pass — and the probed sample run reported `icons-in-notification-area: 1`, `observed-present: yes`, `gdi=13,15,17,17,17,17,17,17` across its eight samples, `sample-exit 0` and `icon-after-exit: gone (hr=0x80004005)` — the same columns every other slice's live evidence uses. The `verify-package.sh` line in the log is the 15-assertion PASS block quoted in the T02 section, re-run against the package this README revision was packed into.
+
+The lines the README tells a consumer to trust were therefore not read for sense: each was executed, and the log records the exit code for each. The command set is exactly the one the document quotes - the developer-facing commands, the two live sample invocations (code-first and declarative, with their documented `--run-seconds` value) and the probe invocation - so nothing in the README is a command nobody ran.
+
+### The guard the restructure left behind, and its five negative controls
+
+Prose cannot be unit-tested, but the facts a consumer copies out of the README can be. `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface` reads the file `PackageReadmeFile` names and asserts:
+
+- the install line, **built from the library project's own `PackageId` and `Version`**, so a version bump that forgets the document fails instead of publishing a README that tells a consumer to install a version that does not exist;
+- the consumer markup namespace `http://schemas.trustsoft.com/notifyicon` and the `xmlns:tni=` declaration that goes with it;
+- the five consumer sections (`## Install`, `## Quick start`, `## Declarative usage`, `## Windowless shutdown`, `## Interaction model`) as structural headings rather than prose;
+- that `## Repository notes` sits *below* the install line, which is the T04 requirement that repository instructions stay out of a package user's way;
+- that all seven documented public type names appear, which is what makes the word *documented* in `Public_surface_is_only_the_documented_types` refer to the readme the package ships rather than to a list that exists only in the test suite.
+
+A guard that has never been seen to fail is not a guard, so the same five facts were each broken in the real README, on a copy-restore cycle that proves the file is byte-identical afterwards.
+
+**Raw evidence:** `docs/uat-logs/S07/t04-readme-guard-controls.txt` (125 lines), produced by `bash docs/uat-logs/S07/t04-readme-guard-controls.sh`:
+
+```
+positive control - the README as it stands                          PASS  guard passes (exit 0)
+control 1 - install line advertises version 9.9.9                  PASS  guard fails, names "must show the install line a consumer copies"
+control 2 - the namespace URI is removed everywhere it appears     PASS  guard fails, names "must document the consumer markup namespace"
+control 3 - "## Windowless shutdown" is dropped                     PASS  guard fails, names "must carry a '## Windowless shutdown' section"
+control 4 - "## Repository notes" moves above the install line       PASS  guard fails, names "repository-facing content must sit below the consumer content"
+control 5 - "BalloonTipOptions" is no longer named                  PASS  guard fails, names "does not name [BalloonTipOptions]"
+every control                                                      PASS  README restored byte-for-byte (e87308ab…)
+
+SUMMARY  0 control failure(s)
+```
+
+Control 2 failed on this script's first run and produced the useful correction in it: mutating one occurrence of the URI left the guard legitimately satisfied by the other two (the URI is documented three times), so the control now rewrites all of them, and the comment in the script records the measured reason. That is the kind of thing a control is for - it caught a control that proved less than its label claimed, before this document could quote it.
+
+### What this section does not claim
+
+- **The README's code samples are not compiled by this task.** There is no literate-testing harness in this repository; the C# example and the XAML snippet are the shape the consumer proof and the in-repo sample already exercise and measure (`samples/consumer-proof/App.xaml.cs`, `docs/UAT-S06.md`), and the two facts that a reader could get wrong from the snippet - the namespace URI and the caller-owned menu `DataContext` - are each pinned by a test (`TrayIconXamlContractTests`, `TrayIconMenuDataContextTests`). A future slice could add a compiled example; this one does not have one, and does not claim it.
+- **The English requirement is asserted on the source side, not by a language detector.** `PackagePurityTests` pins the documentation flags and the metadata text, and the README guard pins the strings a consumer copies; nothing here runs a spellchecker or a language classifier over the prose. "English README" is met by the document being written in English (reviewable) and by the XML documentation being English, which is asserted.
+- **The links are checked by hand, once.** Every relative link in the README resolves to a file that exists in this repository, and the one anchor (`docs/UAT-S01.md#gdi-evidence-as-measurements-r007`) names a heading that exists (`## GDI evidence, as measurements (R007)`). No link checker runs in CI or in the test suite, so a future edit can break a link without failing anything.
+- **The measured numbers in the README are quoted, not re-measured here.** The GDI figures come from the S01 table (`docs/UAT-S01.md#gdi-evidence-as-measurements-r007`), the placement/DPI behaviour from `docs/UAT-S03.md`, the balloon behaviour from `docs/UAT-S04.md` and the teardown/recovery behaviour from `docs/UAT-S05.md`; T04 moved them in front of a consumer and attributed them, and did not repeat the measurements.
+- **The guard covers the copied facts, not the prose.** A rewrite that keeps the install line, the namespace, the five headings, the section order and the seven type names still passes, even if every sentence around them became false. What the guard buys is that the *things a consumer types* cannot drift silently; the accuracy of the surrounding claims is carried by the evidence paths beside them and by review. The README's own example code is still not compiled (see above).
+
+### Reproducing this section
+
+```
+bash docs/uat-logs/S07/t04-readme-verification.sh    # ~2.5 min: 9 command(s), the two live runs, the probe -> t04-readme-verification.txt
+bash docs/uat-logs/S07/t04-readme-guard-controls.sh  # ~15 s: the guard, then five single-fact mutations on restored copies -> t04-readme-guard-controls.txt
+```
+
+The producer repairs the shell environment first, for the same measured reason as the T01-T03 scripts (an agent shell can arrive without the Windows known-folder variables and make the SDK fail inside NuGet's restore-graph evaluation). It needs a live desktop session for the two sample runs and the probe; without one the sample reports the refused registration and the probe reports `observed-present: no`, which is why those two lines are quoted here rather than summarised.
 
 ---
 
@@ -270,4 +373,4 @@ Recorded here because the milestone's acceptance leans on it; the raw logs are `
 - **S06 click-delivery instrument limit (F1), re-measured in the consumer application.** A shell click injected at the icon was never observed to arrive in the sample (`docs/UAT-S06.md`), and T03 reproduces the same non-delivery from a consumer process (section 8 of `docs/uat-logs/S07/t03-consumer-proof.txt`). Both the library and its consumer therefore reach the menu through the documented `OnTrayClick` hook in every automated run; a real end-user click is still unmeasured, which is why no run claims one.
 - **Foreground-sensitive popup tests.** At the T01 measurement the full suite reported 398 passed / 4 failed, all four being the popup tests that `docs/UAT-S06.md` documents as environment-dependent (`popupOwner=0x0`, `foreground=0x0()`, `setForegroundWindow=False`). At the T03 revision the same suite reported **402 passed / 0 failed** on the same machine (`docs/uat-logs/S07/t03-plan-verify.txt`), so the four are confirmed as an environment property — they pass when the desktop conditions they need are present — and no code change addresses them here. The class remains environment-dependent rather than fixed.
 - **Metadata change vs. published package.** Nothing in this repository can retract a version once published; the inspection script is the guard in front of that, not a substitute for a release process.
-- **README staleness.** The README's `## Status` section still says NuGet packaging is not delivered; that restructure is S07/T04's task, and T02 added only the packaging line to "Build and test".
+- **README staleness, partly guarded by T04.** The README's `## Status` section used to say NuGet packaging was not delivered, and the list under it contradicted its own heading (items it labelled "planned, not implemented" were implemented, each with its own UAT record). T04 removed that section entirely rather than re-wording it: the README now leads with install, usage, shutdown, the interaction model, the measured traps and the deliberate exclusions, and the repository-facing material sits below a horizontal rule. Five of the facts a consumer copies are now guarded (`PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt`); the prose around them is not, and a sentence can still go stale without failing anything.
