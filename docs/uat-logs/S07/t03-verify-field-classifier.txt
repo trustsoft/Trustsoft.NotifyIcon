@@ -1,0 +1,30 @@
+## (a) persisted Verify field for M001/S07/T03
+verify text (1 line(s)):
+  | dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release && for tfm in net8.0-windows net9.0-windows net10.0-windows; do dotnet build samples/consumer-proof -c Release -f $tfm; done && dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+  discoverySource: task-plan-unsafe
+  commands the gate would run (0):
+  per-candidate validation:
+    UNSAFE dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release && for tfm in net8.0-windows net9.0-windows net10.0-windows; do dotnet build samples/consumer-proof -c Release -f $tfm; done && dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+           reason: contains shell control syntax such as `||` fallbacks, redirects, semicolons, backticks, or command substitution
+
+## (b) proposed replacement, newline-separated
+verify text (5 line(s)):
+  | dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+  | dotnet build samples/consumer-proof -c Release -f net8.0-windows
+  | dotnet build samples/consumer-proof -c Release -f net9.0-windows
+  | dotnet build samples/consumer-proof -c Release -f net10.0-windows
+  | dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+  discoverySource: task-plan
+  commands the gate would run (5):
+    - dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+    - dotnet build samples/consumer-proof -c Release -f net8.0-windows
+    - dotnet build samples/consumer-proof -c Release -f net9.0-windows
+    - dotnet build samples/consumer-proof -c Release -f net10.0-windows
+    - dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+  per-candidate validation:
+    SAFE   dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+    SAFE   dotnet build samples/consumer-proof -c Release -f net8.0-windows
+    SAFE   dotnet build samples/consumer-proof -c Release -f net9.0-windows
+    SAFE   dotnet build samples/consumer-proof -c Release -f net10.0-windows
+    SAFE   dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+

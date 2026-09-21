@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The consumer proof: the application a package user actually has.
+
+    It references the *packed* library through one PackageReference resolved from the local folder
+    feed that `dotnet pack` writes to (artifacts/), and nothing else. It is deliberately absent from
+    Trustsoft.NotifyIcon.sln and blocks the repository's root Directory.Build.props with its own
+    empty one, so it inherits neither a project reference nor any build setting of the repository
+    that produced the package - otherwise this would be a second in-repo project, not a consumer.
+
+    Why it must stay out of the package: nothing here may ever be mistaken for a shipped artifact.
+    IsPackable=false says so to the SDK, the absence from the solution keeps it invisible to
+    `dotnet pack Trustsoft.NotifyIcon.sln`, and scripts/verify-package.sh fails the pack inspection if
+    any entry of a nupkg matches "consumer-proof".
+
+    Everything in the PropertyGroup below is written the way a consumer writes it; none of it is
+    inherited, because the empty Directory.Build.props beside this file stops the MSBuild walk at
+    this directory.
+  -->
+  <PropertyGroup>
+    <!-- One build and one live run per framework: R012 is a claim about three frameworks, so no
+         framework stands in for another here. -->
+    <TargetFrameworks>net8.0-windows;net9.0-windows;net10.0-windows</TargetFrameworks>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>ConsumerProof</AssemblyName>
+    <RootNamespace>ConsumerProof</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      The package is private to this machine (it is a local folder feed, not a published package), so
+      there is no vulnerability database to audit it against and NuGet would raise NU1900 for the
+      unreachable audit source on every restore. A consumer whose feed is a folder does the same.
+    -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The one and only reference: R010's "installable and usable from a consumer project without
+      additional setup" is this line. The version is pinned, because a floating version would make
+      the proof say "some version of the package works" instead of naming the one it installed.
+    -->
+    <PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0" />
+  </ItemGroup>
+
+  <!--
+    No ProjectReference, no other PackageReference, no reference to the sample, the tests or the
+    probe: if any of those were needed, the package would not be installable on its own and this
+    project would not be evidence of anything.
+  -->
+
+</Project>

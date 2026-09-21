@@ -1,0 +1,37 @@
+# S07/T01 raw evidence: negative controls for the packaging guards
+date: 2026-09-21T14:17:51+03:00
+machine: unknown / MINGW64_NT-10.0-26200
+framework: 10.0.401
+
+A guard that has never been seen to fail is not a guard. Each control below breaks exactly one
+invariant, records the failure the test reports, and then restores the file it touched; cmp
+proves the restore at the end and the same guards run green afterwards.
+
+Method note: each dotnet test run is captured into a variable and filtered afterwards. Piping a
+running build straight into head truncates it, and a truncated build leaves
+src/Trustsoft.NotifyIcon/obj/project.assets.json unreadable - the next --no-restore run then fails
+with NETSDK1060 instead of running the test. That was measured, not assumed.
+
+## control 1 - a forbidden PackageReference (H.NotifyIcon) in the sample
+## control 1 - forbidden PackageReference
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --filter "FullyQualifiedName~No_project_declares_a_package_reference"
+   R011: 1 package-reference violation(s) found among 5 reference(s) in 5 file(s):
+ - samples/Trustsoft.NotifyIcon.Sample/Trustsoft.NotifyIcon.Sample.csproj declares 'H.NotifyIcon', which R011/D001 forbids by name (WinForms, System.Drawing, a WinRT contracts package, or another tray implementation)
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 13 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+## control 2 - the library loses its <Version>
+## control 2 - library <Version> removed
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --filter "FullyQualifiedName~Library_csproj_declares_the_package_metadata"
+
+## control 3 - the sample loses its IsPackable=false
+## control 3 - sample IsPackable=false removed
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --filter "FullyQualifiedName~Non_shipping_projects"
+
+## restore verification
+  sample csproj restored byte-for-byte
+  library csproj restored byte-for-byte
+
+## the same guards, with every invariant in place
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --filter "FullyQualifiedName~PackagePurityTests"
+
+## summary: three controls each produced a named failure; the restored tree runs the same guards green.

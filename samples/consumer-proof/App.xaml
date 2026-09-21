@@ -1,0 +1,21 @@
+<Application x:Class="ConsumerProof.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!--
+      The application definition of the consumer proof, and there is deliberately almost nothing in
+      it: the whole claim is that a windowless WPF application shows a tray icon after installing one
+      package.
+
+      No StartupUri - the process owns no window at all, so WPF must not open one and must not shut
+      the application down when a window closes. OnExplicitShutdown plus the Exit/SessionEnding
+      handlers in App.xaml.cs are what end the run, exactly as the README's "what a windowless
+      application must do about shutdown" section describes.
+
+      No resources and no tni: namespace either: the icon, its image, its menu and its handlers are
+      built in C# here, which is the code-first shape the README documents as the first example. The
+      declarative path from a consumer's own assembly is a separate document and a separate proof
+      (the library's TrayIconXamlContractTests parse the namespace, and docs/UAT-S06.md measures the
+      declarative run in the in-repo sample); duplicating it here would not strengthen either claim.
+    -->
+</Application>

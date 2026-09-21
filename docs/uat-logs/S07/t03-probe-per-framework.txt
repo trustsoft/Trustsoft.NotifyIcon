@@ -1,0 +1,151 @@
+# S07/T03 raw evidence: one probed live run per target framework
+date: 2026-09-21T15:07:28+03:00
+machine: MinibookX
+
+## net8.0-windows
+$ dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
+[probe] probe-live start 2026-09-21 15:07:29; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe
+[probe] observe: 20s; kill-after: no; click-after: no; left-click-after: no; balloon-after: no; menu-after: no; sample args: 
+[probe] launched pid=292
+sample| [consumer] ConsumerProof start 2026-09-21 15:07:30; machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0
+sample| [consumer] package assembly: C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+sample| [consumer] package identity: Trustsoft.NotifyIcon assemblyVersion=1.0.0.0 informationalVersion=1.0.0+e4f9f84ba78453e6a81ae8d5953b6805841a087c
+sample| [consumer] this build targets: .NETCoreApp,Version=v8.0 (base directory C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net8.0-windows\)
+sample| [consumer] public surface: 7 exported type(s): Trustsoft.NotifyIcon.BalloonTipIcon, Trustsoft.NotifyIcon.BalloonTipOptions, Trustsoft.NotifyIcon.TrayErrorEventArgs, Trustsoft.NotifyIcon.TrayIcon, Trustsoft.NotifyIcon.TrayIconClickEventArgs, Trustsoft.NotifyIcon.TrayIconException, Trustsoft.NotifyIcon.TrayMenuActivation
+sample| [consumer] PASS the package surfaces exactly the 7 documented public types and no others, checked from this consumer assembly rather than from the library's test project.
+sample| [consumer] package assembly references: PresentationCore, PresentationFramework, System.Collections, System.Diagnostics.TraceSource, System.Runtime, System.Runtime.InteropServices, System.Threading, System.Xaml, WindowsBase
+sample| [consumer] PASS the package's assembly references no WinForms, no System.Drawing and no other tray implementation.
+sample| [consumer] tray icon registered from code; tooltip and a 2-item menu assigned.
+sample| [consumer] interaction model: a right click opens the assigned menu, the four click types are routed events, the menu is this application's own instance, and a balloon is a method call rather than a property.
+sample| [consumer] no window is shown - check the notification area, not the taskbar.
+sample| [consumer] run plan: 20s, self-open menu off, balloon shown once mid-run.
+[probe] t=1s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=2s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=3s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=4s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=5s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=6s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=7s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=8s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=9s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=10s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+sample| [consumer] balloon show request #1 through ShowBalloonTip(title, text, BalloonTipIcon.Info).
+[probe] t=11s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=12s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=13s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=14s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=15s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=16s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=17s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=18s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=19s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=20s pid=292 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] identity: hwnd=0x100015C uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: True; exit-code: (running)
+[probe] the sample is still running at the end of the observation; killing it so the teardown verdict is about a dead process
+[probe] taskkill /f /pid 292 -> exit 0; SUCCESS: The process with PID 292 has been terminated.
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x100015C uID=1)
+probe exit=0
+
+## net9.0-windows
+$ dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net9.0-windows/ConsumerProof.exe 20
+[probe] probe-live start 2026-09-21 15:07:51; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/consumer-proof/bin/Release/net9.0-windows/ConsumerProof.exe
+[probe] observe: 20s; kill-after: no; click-after: no; left-click-after: no; balloon-after: no; menu-after: no; sample args: 
+[probe] launched pid=17964
+sample| [consumer] ConsumerProof start 2026-09-21 15:07:51; machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0
+sample| [consumer] package assembly: C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+sample| [consumer] package identity: Trustsoft.NotifyIcon assemblyVersion=1.0.0.0 informationalVersion=1.0.0+e4f9f84ba78453e6a81ae8d5953b6805841a087c
+sample| [consumer] this build targets: .NETCoreApp,Version=v9.0 (base directory C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net9.0-windows\)
+sample| [consumer] public surface: 7 exported type(s): Trustsoft.NotifyIcon.BalloonTipIcon, Trustsoft.NotifyIcon.BalloonTipOptions, Trustsoft.NotifyIcon.TrayErrorEventArgs, Trustsoft.NotifyIcon.TrayIcon, Trustsoft.NotifyIcon.TrayIconClickEventArgs, Trustsoft.NotifyIcon.TrayIconException, Trustsoft.NotifyIcon.TrayMenuActivation
+sample| [consumer] PASS the package surfaces exactly the 7 documented public types and no others, checked from this consumer assembly rather than from the library's test project.
+sample| [consumer] package assembly references: PresentationCore, PresentationFramework, System.Collections, System.Diagnostics.TraceSource, System.Runtime, System.Runtime.InteropServices, System.Threading, System.Xaml, WindowsBase
+sample| [consumer] PASS the package's assembly references no WinForms, no System.Drawing and no other tray implementation.
+sample| [consumer] tray icon registered from code; tooltip and a 2-item menu assigned.
+sample| [consumer] interaction model: a right click opens the assigned menu, the four click types are routed events, the menu is this application's own instance, and a balloon is a method call rather than a property.
+sample| [consumer] no window is shown - check the notification area, not the taskbar.
+sample| [consumer] run plan: 20s, self-open menu off, balloon shown once mid-run.
+[probe] t=1s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=2s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=3s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=4s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=5s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=6s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=7s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=8s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=9s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=10s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+sample| [consumer] balloon show request #1 through ShowBalloonTip(title, text, BalloonTipIcon.Info).
+[probe] t=11s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=12s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=13s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=14s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=15s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=16s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=17s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=18s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=19s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=20s pid=17964 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] identity: hwnd=0x1A80182 uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: True; exit-code: (running)
+[probe] the sample is still running at the end of the observation; killing it so the teardown verdict is about a dead process
+[probe] taskkill /f /pid 17964 -> exit 0; SUCCESS: The process with PID 17964 has been terminated.
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x1A80182 uID=1)
+probe exit=0
+
+## net10.0-windows
+$ dotnet run --project scripts/probe-live -c Release --no-build -- samples/consumer-proof/bin/Release/net10.0-windows/ConsumerProof.exe 20
+[probe] probe-live start 2026-09-21 15:08:13; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/consumer-proof/bin/Release/net10.0-windows/ConsumerProof.exe
+[probe] observe: 20s; kill-after: no; click-after: no; left-click-after: no; balloon-after: no; menu-after: no; sample args: 
+[probe] launched pid=10632
+sample| [consumer] ConsumerProof start 2026-09-21 15:08:13; machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0
+sample| [consumer] package assembly: C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
+sample| [consumer] package identity: Trustsoft.NotifyIcon assemblyVersion=1.0.0.0 informationalVersion=1.0.0+e4f9f84ba78453e6a81ae8d5953b6805841a087c
+sample| [consumer] this build targets: .NETCoreApp,Version=v10.0 (base directory C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\consumer-proof\bin\Release\net10.0-windows\)
+sample| [consumer] public surface: 7 exported type(s): Trustsoft.NotifyIcon.BalloonTipIcon, Trustsoft.NotifyIcon.BalloonTipOptions, Trustsoft.NotifyIcon.TrayErrorEventArgs, Trustsoft.NotifyIcon.TrayIcon, Trustsoft.NotifyIcon.TrayIconClickEventArgs, Trustsoft.NotifyIcon.TrayIconException, Trustsoft.NotifyIcon.TrayMenuActivation
+sample| [consumer] PASS the package surfaces exactly the 7 documented public types and no others, checked from this consumer assembly rather than from the library's test project.
+sample| [consumer] package assembly references: PresentationCore, PresentationFramework, System.Collections, System.Diagnostics.TraceSource, System.Runtime, System.Runtime.InteropServices, System.Threading, System.Xaml, WindowsBase
+sample| [consumer] PASS the package's assembly references no WinForms, no System.Drawing and no other tray implementation.
+sample| [consumer] tray icon registered from code; tooltip and a 2-item menu assigned.
+sample| [consumer] interaction model: a right click opens the assigned menu, the four click types are routed events, the menu is this application's own instance, and a balloon is a method call rather than a property.
+sample| [consumer] no window is shown - check the notification area, not the taskbar.
+sample| [consumer] run plan: 20s, self-open menu off, balloon shown once mid-run.
+[probe] t=1s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=2s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=3s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=4s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=5s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=6s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=7s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=8s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=9s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=10s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+sample| [consumer] balloon show request #1 through ShowBalloonTip(title, text, BalloonTipIcon.Info).
+[probe] t=11s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=12s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=13s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=14s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=15s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=16s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=17s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=18s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=19s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=20s pid=10632 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] identity: hwnd=0x102015C uID=1 title="Trustsoft.NotifyIcon.TrayMessageWindow" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: True; exit-code: (running)
+[probe] the sample is still running at the end of the observation; killing it so the teardown verdict is about a dead process
+[probe] taskkill /f /pid 10632 -> exit 0; SUCCESS: The process with PID 10632 has been terminated.
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x102015C uID=1)
+probe exit=0
+
+## verdict
+  All three frameworks ran with the icon observed present for the whole observation
+  window and with the probe's own teardown verdict after the process died.

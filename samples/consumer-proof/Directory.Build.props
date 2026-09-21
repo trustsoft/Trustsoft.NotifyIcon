@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Deliberately empty, and its presence is the mechanism.
+
+    MSBuild resolves Directory.Build.props by walking up from the project directory and stopping at
+    the first one it finds. Without this file, samples/consumer-proof/ConsumerProof.csproj would
+    inherit the repository root's Directory.Build.props - Nullable, LangVersion, ImplicitUsings,
+    GenerateDocumentationFile, TreatWarningsAsErrors, NoWarn - and the consumer proof would silently
+    be a project built with this repository's settings, which is precisely what it must not be: the
+    claim it exists to test is "install the package into a project that has nothing of this
+    repository and it works".
+
+    This file therefore declares nothing and imports nothing. It is the boundary, not a settings
+    carrier. The few settings the project does need (nullable reference types, implicit usings) are
+    written out in ConsumerProof.csproj where a consumer would write them, so nothing about this
+    project's build is inherited from the library's repository.
+  -->
+
+</Project>
