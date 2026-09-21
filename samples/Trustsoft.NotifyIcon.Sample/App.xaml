@@ -45,13 +45,32 @@
         </DrawingImage>
 
         <!--
-          The menu, with each of its three kinds of attribute expressed in markup: an item's Click and
-          the popup's own Opened/Closed. The first item writes a line when chosen, so the item-click
-          path is observable on the same console as the open and dismiss lines.
+          T06: the menu's own DataContext, as an application-level resource object. It is the source a
+          bound item resolves against, and it has to be set by the consumer of this library: a menu
+          declared here has no logical parent, and the library points the menu's PlacementTarget at its
+          own 1x1 anchor window rather than at the icon, so the icon's DataContext never reaches the
+          menu. The library never writes a menu's DataContext either - see SampleMenuData, the
+          headless pin in TrayIconMenuDataContextTests, and docs/UAT-S06.md, "Menu data context and
+          bindings (T06)".
+
+          Declared before the menu because StaticResource resolves in document order.
         -->
-        <ContextMenu x:Key="TrayMenu" Opened="OnMenuOpened" Closed="OnMenuClosed">
+        <local:SampleMenuData x:Key="TrayMenuData" Label="declared menu data context" />
+
+        <!--
+          The menu, with each kind of attribute expressed in markup: an item's Click, the popup's own
+          Opened/Closed, and a header bound against the menu's own DataContext. The first item writes a
+          line when chosen, so the item-click path is observable on the same console as the open and
+          dismiss lines; the second item renders whatever {Binding Label} resolves to, which the
+          "menu data context:" line reports on every open - a binding that resolves to nothing prints
+          as an empty header rather than passing silently.
+        -->
+        <ContextMenu x:Key="TrayMenu"
+                     DataContext="{StaticResource TrayMenuData}"
+                     Opened="OnMenuOpened"
+                     Closed="OnMenuClosed">
             <MenuItem Header="Sample menu item" Click="OnDeclaredMenuItemClick" />
-            <MenuItem Header="Second item" />
+            <MenuItem Header="{Binding Label}" />
         </ContextMenu>
 
         <!--

@@ -20,12 +20,14 @@
 | The library's exported surface is unchanged by this slice | **PASS** | `PackagePurityTests` green (6/6 at this revision); the namespace attributes add no type. Full suite **394 passed / 0 failed** at the closing measurement (the `391` this row carried earlier was an interim reading of an intermediate working tree, superseded by S05's own exit measurement and independently re-derived in the T05 section below) |
 | The full suite is green on all three target frameworks, with the S05 baseline accounted for | **PASS** | T05: build **0 warnings, 0 errors** on net8.0/net9.0/net10.0-windows; suite **394 passed / 0 failed / 0 skipped** in 52 s; all 21 test names added since the S04 baseline enumerated by name. See "Cross-framework regression and the evidence pack (T05)" |
 | The code-first path still works end to end now that a second construction path exists | **PASS** with one `NOT OBSERVED` | T05: four live runs - register, menu opened at the icon on the library's own open path, shell-accepted balloon, clean dispose (exit code 0, icon gone). The click-driven route into the icon is `NOT OBSERVED` (F1 reproduces in code-first mode too); see the T05 section |
+| Bindings in the menu resolve against the component's `DataContext` | **SETTLED - measured, and the acceptance line clarified** | T06: they do not, and the library never promised they would. It never writes a menu's `DataContext`, and a resource-declared menu has no logical parent for the icon's to flow through; the **consumer** sets the menu's own `DataContext` and the bound item resolves against that object graph. Headless `TrayIconMenuDataContextTests` (3/3 green) and live `menu data context: menu.DataContext=SampleMenuData (set by the consumer) -> item[1].Header='declared menu data context'` in both run modes. See "Menu data context and bindings (T06)" |
 
 ## What this slice does not claim
 
 - **No click reached a declarative icon.** The one failure in this session is the instrument, not the library: see finding F1. What is proven instead is the route the slice plan names as the fallback: the *declared* menu's `Opened`/`Closed` attributes deliver live (Check 3), and the declared balloon handlers were reached by the shell's own balloon callbacks. The markup compiler's validation of every attribute (a build-time fact) stands alongside that.
 - **The declarative icon was not clicked by the shell, so the declared click attributes were never delivered.** They are bound at parse time with the same mechanism as the menu's `Opened`/`Closed` - `TrayIconXamlContractTests.Markup_event_attributes_bind_and_fire_for_bubble_and_preview` proves that mechanism headlessly - but a live shell click on this tray stays out of reach (F1).
 - **No unit test of resource-scope event wiring.** `XamlReader` binds handler names against the root object only, so a dictionary-rooted element with an event attribute cannot be parsed at all - pinned as a boundary in `TrayIconXamlContractTests`. Resource-scope wiring is BAML's job, validated by the sample build and delivered by the live run (Check 3).
+- **No claim that the library pushes a data context into a menu.** It does not do that, and the S06 acceptance line's last clause is clarified below rather than left to be read as such a promise: the library writes `PlacementTarget` and the placement offsets on the menu and nothing else, so a menu's bindings resolve against the menu's own `DataContext`, which the consumer sets. Measured in "Menu data context and bindings (T06)".
 
 ---
 
@@ -180,6 +182,10 @@ sample| [sample] raw callback hwnd=0x100198 msg=0x0401 event=0x0402 iconId=1 wPa
 | `The_consumer_namespace_is_declared_and_markup_resolves_through_it` | the assembly declares `XmlnsDefinition`/`XmlnsPrefix` for `http://schemas.trustsoft.com/notifyicon` (prefix `tni`) **and** a real parse through that URI succeeds |
 | `A_parsed_parentless_instance_disposes_cleanly` | a parse-created parentless instance disposes cleanly, and disposal is idempotent |
 
+T06 adds a second headless file, `TrayIconMenuDataContextTests.cs` (3 tests, real popups over
+`FakeShellApi`): where a menu's bindings resolve from, and that the library neither writes nor clears
+a menu's `DataContext`. See the T06 section at the end of this record.
+
 | Measurement | Result |
 |---|---|
 | `dotnet build Trustsoft.NotifyIcon.sln -c Release` | succeeded, **0 warnings, 0 errors**, all three target frameworks |
@@ -214,6 +220,9 @@ agent or harden the `OpenMenu` helper with a bounded single retry on the
 | T05 Check 5 control (the identical shape with no click injected at all) | `docs/uat-logs/S06/t05-code-first-e2e-control-noclick.txt` |
 | T05 Check 5 repeat (the left click attempted a second time) | `docs/uat-logs/S06/t05-code-first-e2e-repeat.txt` |
 | T05 Check 6 (right click attempted at the icon, code-first) | `docs/uat-logs/S06/t05-code-first-click-attempt.txt` |
+| T06 Check 2 (declarative run; the declared menu's own `DataContext` and its bound item) | `docs/uat-logs/S06/t06-declarative-menu-data-context.txt` |
+| T06 Check 3 (the same mechanism in code-first mode) | `docs/uat-logs/S06/t06-code-first-menu-data-context.txt` |
+| T06 suite (full run after the T06 changes) | `docs/uat-logs/S06/t06-suite-full.txt` |
 
 These logs are tracked on purpose even though the repository's `.gitignore` excludes `*.log`; they were added with `git add -f`. Do not remove them as stray logs.
 
@@ -457,7 +466,7 @@ needs the S03 instrument, and nothing in this task's contract claims it.
 3. **Resource-scope event attributes are limited to handlers the root object exposes.** A dictionary-rooted element carrying an event attribute cannot be parsed by `XamlReader` at all (pinned as a boundary); BAML is what makes it work, and the handler must be a member of the `ApplicationDefinition`'s class (`App` here).
 4. **A declared element of the library's own type cannot use protected hooks.** The sample's no-click self-open path needs `OnTrayClick`, which only a subclass reaches, so the sample declares `local:SampleTrayIcon`. A consumer who declares `tni:TrayIcon` gets the library's public surface only - which is the intended shape, but it means the sample's instrumentation is not itself a consumer-copyable pattern for that one hook.
 5. **The local namespace form must not carry `;assembly=`,** and the consumer URI form must be used across assemblies - the `MC3074` trap recorded in Check 3.
-6. **Menu data context and bindings on the declarative path are not covered by this slice.** `T06` exists for exactly that (`01-06-PLAN.md`), and the S06 acceptance line about bindings in the menu resolving against the component's `DataContext` is that task's to settle with evidence.
+6. **Menu data context and bindings on the declarative path are not covered by this slice.** `T06` exists for exactly that (`01-06-PLAN.md`), and the S06 acceptance line about bindings in the menu resolving against the component's `DataContext` is that task's to settle with evidence. **Settled by T06** - see "Menu data context and bindings (T06)" below: the library never writes a menu's `DataContext`, so the consumer sets the menu's own, and the acceptance line now carries that clarification.
 
 **Instrument follow-ups.**
 
@@ -473,8 +482,163 @@ needs the S03 instrument, and nothing in this task's contract claims it.
 
 ---
 
+## Menu data context and bindings (T06)
+
+**The claim under test.** The S06 acceptance line (`01-CONTEXT.md`, "Acceptance Criteria") ends with
+"bindings in the menu resolve against the component's `DataContext`". Nothing in S06's own plan, tests
+or checks covered it, and it stood in tension with the menu contract the library documents and
+`TrayIconMenuContractTests` pins - the menu "is the caller's instance", "nothing in this library
+inspects, re-parents or mutates the menu's items", and the assigned menu arrives by reference identity.
+T06 settles the tension with a measurement, and the acceptance line now carries the clarification
+instead of the promise.
+
+**Measured outcome.** The library **never writes a menu's `DataContext`** - it is not one of the values
+`OpenMenu` sets (which are `PlacementTarget`, `Placement`, `HorizontalOffset` and `VerticalOffset`) and
+nothing clears it in teardown (`TearDownMenu` clears `PlacementTarget` only). The **`TrayIcon`'s own
+`DataContext` does not reach the menu**: a `ContextMenu` declared in a resource dictionary has no
+logical parent, the library's `ContextMenu` property is its own dependency property rather than
+`FrameworkElement.ContextMenu` (so assigning a menu inserts nothing into the icon's logical tree), and
+what the library sets as the menu's `PlacementTarget` is its own 1x1 anchor window, whose element tree
+carries no data context either. A menu's bindings therefore resolve against the **menu's own
+`DataContext`**, and setting it is the consumer's job - `DataContext="{StaticResource ...}"` in markup,
+`menu.DataContext = ...` in C# - which is the division of responsibility `TrayIcon.ContextMenu`'s
+remarks already document.
+
+### T06 Check 1 - the headless pin
+
+`tests/Trustsoft.NotifyIcon.Tests/TrayIconMenuDataContextTests.cs`, `[StaFact]`, three tests, real
+popups opened through the library's own path over `FakeShellApi` (registration, `GetRect` and the
+cursor read all go through the scripted seam, so nothing in this file reaches the real notification
+area):
+
+| Test | What it pins |
+|---|---|
+| `The_icons_data_context_does_not_reach_a_menu_declared_in_a_resource_dictionary` | the measurement: with the menu parsed from a `ResourceDictionary` and the icon's `DataContext` set, the open leaves `menu.DataContext` null, the bound item's inherited `DataContext` null and its bound `Header` unresolvable |
+| `A_consumer_set_data_context_on_the_menu_is_what_its_bound_items_resolve_against` | the supported mechanism: the consumer's own graph is what the bound item resolves against (same instance, no clone), the icon's `DataContext` does not win over it, and neither the open nor the teardown overwrites or clears it |
+| `Assigning_the_menu_re_parents_nothing_and_takes_no_data_context_from_the_icon` | the mechanism's precondition, with no popup at all: the menu keeps no logical parent, never joins the icon's logical tree, keeps its own items - and the assignment applied nothing (no host window, no shell call) |
+
+**Command.**
+
+```
+dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore \
+    --filter "FullyQualifiedName~TrayIconMenuDataContextTests|FullyQualifiedName~TrayIconMenuContractTests|FullyQualifiedName~PackagePurityTests"
+```
+
+**Raw evidence** (`gsd_exec` `85bcbbc2-9f5a-4fe3-b71e-3eb32ef121d6`):
+
+```
+Passed!  - Failed:     0, Passed:    14, Skipped:     0, Total:    14, Duration: 9 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+```
+
+3 new + the 5 `TrayIconMenuContractTests` + the 6 `PackagePurityTests`: the menu contract this task was
+told not to change, and the surface pins (seven documented public types, no balloon dependency
+property), are green in the same run as the new file. The new file alone: **3 passed / 0 failed**
+(`gsd_exec` `b3915fad-53af-48ca-84a6-1733ec71d923`).
+
+### T06 Check 2 - the live declarative run
+
+**Command** (the task plan's verify line; a 45 s observation window so the sample reaches its own
+dispose, per the T04 follow-up above).
+
+```
+dotnet run --project scripts/probe-live -c Release --no-build -- \
+    samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 45 \
+    --sample-arg --xaml --sample-arg --run-seconds --sample-arg 40 \
+    --sample-arg --open-menu-after --sample-arg 12
+```
+
+**Raw evidence** (`docs/uat-logs/S06/t06-declarative-menu-data-context.txt`; `gsd_exec`
+`91171a3e-d7b3-4b12-9d59-810ec6c4f4a5`):
+
+```
+sample| [sample] declaration mode: XAML - the icon, its menu and its image are declared in Application.Resources and wired by markup; nothing in this file assigns a property or subscribes to an event on the icon.
+sample| [sample] tray icon registered from markup (Visible="True" and the image come from Application.Resources; no rotation runs, because nothing in C# may replace a declared value).
+sample| [sample] context menu taken from markup with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] --open-menu-after: requesting the menu now, with no click injected.
+sample| [sample] menu opened: popup=0x38A05B6 class=HwndWrapper[Trustsoft.NotifyIcon.Sample;;429f9d78-7cca-4b79-8ec9-b9371ba1ebfb] rect=1446,1045 369x83 dpi=144 scale=1.5 owner=0x13D02FA cursor=966,1000 bottomLeftDip=964,752
+sample| [sample] menu data context: menu.DataContext=SampleMenuData (set by the consumer) -> item[1].Header='declared menu data context'
+sample| [sample] --open-menu-after: closing the menu the sample opened (consumer-driven close, not an outside click).
+sample| [sample] menu dismissed.
+sample| [sample] totals: raw callback lines=0, ..., clicks=0, ..., menu opens=1, menu dismissals=1.
+[probe] sample-exited at t=41s with exit code 0
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x2AA00E2 uID=1)
+```
+
+**What it says.** The declaration in `App.xaml` now carries the menu's own data context
+(`DataContext="{StaticResource TrayMenuData}"`, resolved from the markup-declared
+`local:SampleMenuData` resource) and one item bound against it (`Header="{Binding Label}"`); the
+`menu data context:` line is printed from the live object graph as the menu opens, so the resolved
+text is a reading rather than an inference. Registration, placement at the icon
+(`bottomLeftDip=964,752` is the icon's own bottom-left corner in DIP), the declared `Opened`/`Closed`
+attributes, one icon in the notification area and a clean dispose (exit code 0, icon gone) all still
+hold with a binding in the menu. A binding that had not resolved would print
+`item[1].Header=<null>` on this line instead - which is why the line reports the item's act.
+
+**One measured difference from the earlier checks, recorded rather than smoothed over.** The popup is
+now `369x83` where S06's Check 3 and Check 4 recorded `296x83`: the second item now renders the
+resolved bound text instead of the static "Second item", and a WPF popup's width is driven by its
+widest item. The placement anchor - the number the slice's placement claim actually rests on - is
+unchanged (`bottomLeftDip=964,752`, left edge `1446`). Nothing about the library moved.
+
+### T06 Check 3 - code-first cross-check of the same mechanism
+
+**Command** - T06 Check 2 with `--sample-arg --xaml` removed.
+
+**Raw evidence** (`docs/uat-logs/S06/t06-code-first-menu-data-context.txt`; `gsd_exec`
+`b9eb1b3a-0d6f-4209-b91a-181fd95c1f72`):
+
+```
+sample| [sample] declaration mode: code-first - the icon is constructed here and every property and event is wired in C#.
+sample| [sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] menu opened: popup=0x38B05B6 ... rect=1446,1045 377x83 dpi=144 scale=1.5 owner=0x270694 cursor=966,1000 bottomLeftDip=964,752
+sample| [sample] menu data context: menu.DataContext=SampleMenuData (set by the consumer) -> item[1].Header='code-first menu data context'
+sample| [sample] menu dismissed.
+[probe] sample-exited at t=41s with exit code 0
+[probe] icons-in-notification-area: 1
+[probe] icon-after-exit: gone (...)
+```
+
+**What it says.** The two modes reach the same state through the same mechanism, expressed in the two
+languages: the declarative menu sets its data context with `DataContext="{StaticResource TrayMenuData}"`
+and binds with `Header="{Binding Label}"`; the code-first menu sets `menu.DataContext` and calls
+`SetBinding(MenuItem.HeaderProperty, new Binding(nameof(SampleMenuData.Label)))`. Both print the same
+line shape with their own resolved value, so the mode is attributable from the line itself. The widths
+differ (369 against 377) because the two resolved labels differ in length; the anchor
+(`bottomLeftDip=964,752`) is identical, which is what this cross-check is for.
+
+### Suite and surface after T06
+
+| # | Command | Result | Evidence |
+|---|---|---|---|
+| 1 | `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore` | exit **0**, **0 warnings, 0 errors** - library on all three TFMs, plus sample and tests | `gsd_exec` `e9d208ce-e11c-442d-a50f-efb2c04e8c97` |
+| 2 | `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` | exit **0**, **397 passed / 0 failed / 0 skipped** (56 s) | `gsd_exec` `992c0b92-8d61-453b-8795-d64f427838f8`; `docs/uat-logs/S06/t06-suite-full.txt` |
+| 3 | `PackagePurityTests` | green (6/6 in the filtered run cited in T06 Check 1) - the seven documented public types and the absence of a balloon dependency property are untouched, and T06 changed no library code at all: its changes are the sample, the new test file, and these docs | `gsd_exec` `85bcbbc2-9f5a-4fe3-b71e-3eb32ef121d6` |
+
+394 (S05's exit measurement, independently re-derived by T05) + 3 = 397, and the three added names are
+exactly T06's new file, so the baseline accounting closes again.
+
+**Harness note, re-confirmed in this task.** The plan's build line is
+`dotnet build Trustsoft.NotifyIcon.sln -c Release`. Inside the `gsd_exec` sandbox the *restore* half of
+that command still fails with NuGet's `Value cannot be null. (Parameter 'path1')` for the sample and
+test projects even with the `APPDATA`-family variables injected (the library project restores fine);
+the evidence above therefore uses `--no-restore` against the assets a normal developer shell already
+restored, which changes nothing about what is compiled. This is the harness fact the re-verification
+section above records, not a repository fact.
+
+### What T06 does and does not prove
+
+| Evidence | Proves | Does not prove |
+|---|---|---|
+| `TrayIconMenuDataContextTests` (3 tests) | where a menu's bindings resolve from, that the icon's `DataContext` never reaches the menu, that the library neither writes nor clears a menu's `DataContext` on open or teardown, and that assigning a menu re-parents nothing | resource-scope markup wiring (BAML's job, proven by the sample build and the live run); anything about a real shell |
+| T06 Check 2 | a menu declared in `Application.Resources`, with its data context from markup and a bound item, resolves and prints the resolved text live, on the library's own open path, with the declared event attributes still delivering | click delivery (F1); that a consumer's own assembly reaches the same shapes - that is the sample's `local:` namespace difference recorded in Check 3 |
+| T06 Check 3 | the code-first menu uses the same mechanism, so the two modes have not diverged | that the two resolved values are equal - they differ by design, and the line names the mode |
+
+---
+
 ## Hand-off to S07
 
 - The declarative run command is `-- --xaml`, and it now also takes `--open-menu-after <seconds>`, which opens the *declared* menu with no shell click. The README documents the mode and the namespace URI (`http://schemas.trustsoft.com/notifyicon`, prefix `tni`) is declared in `AssemblyInfo.cs` and should be confirmed alongside the package metadata. The README's snippet is the consumer shape (a consumer's markup lives in another assembly, so it uses that URI); the sample itself cannot, because the element it declares is a type from its own project - and because the local-namespace form must not carry `;assembly=`, which is the `MC3074` trap recorded in Check 3.
+- **A menu's data context is the consumer's to set (T06).** The README's XAML snippet should say so next to the `ContextMenu` it shows: a declared menu has no logical parent and the library never writes the menu's `DataContext`, so bindings in the menu resolve against the menu's own data context (`DataContext="{StaticResource ...}"`, or `menu.DataContext = ...` in C#). The declarative and code-first sample menus now both do exactly that and print the resolved text as they open.
 - The packaging proof must not include `scripts/probe-live`: it is deliberately absent from `Trustsoft.NotifyIcon.sln` and takes no project reference to the library, so it cannot enter the shipped package or be mistaken for a supported artifact.
 - A live click-delivery check for the declarative path is still missing (F1); if S07 wants one, it needs an instrument that can open the Windows 11 overflow flyout, not this one. Nothing in the shipped surface depends on it: the click attributes bind and fire (headless proof) and the same open path is proven live through the declared menu.

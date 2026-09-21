@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -691,13 +692,21 @@ public partial class App : Application
     {
         var menu = new ContextMenu();
         var firstItem = new MenuItem { Header = "Sample menu item" };
-        var secondItem = new MenuItem { Header = "Second item" };
+        var secondItem = new MenuItem();
 
         firstItem.Click += (_, _) =>
         {
             Console.WriteLine("[sample] menu item clicked: header=Sample menu item");
             Console.Out.Flush();
         };
+
+        // T06: the same mechanism the declarative mode writes in markup, expressed in C# - the
+        // consumer sets the menu's own DataContext, and the item binds against it. The two modes must
+        // not diverge, and neither may rely on the icon's DataContext reaching the menu: the library
+        // never writes a menu's DataContext, and a menu declared in a resource dictionary has no
+        // logical parent for one to flow through (pinned by TrayIconMenuDataContextTests).
+        menu.DataContext = new SampleMenuData { Label = CodeFirstMenuDataLabel };
+        secondItem.SetBinding(MenuItem.HeaderProperty, new Binding(nameof(SampleMenuData.Label)));
 
         menu.Items.Add(firstItem);
         menu.Items.Add(secondItem);
@@ -707,6 +716,19 @@ public partial class App : Application
 
         return menu;
     }
+
+    /// <summary>
+    /// The label the code-first menu's own <c>DataContext</c> carries, so its bound item resolves to
+    /// text that names the mode it came from.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out here rather than taken from the declared resource, because the code-first mode's
+    /// whole point is that nothing in it comes from markup: a code-first run that reached into
+    /// <c>Application.Resources</c> for its data would be measuring the wrong path. The declarative
+    /// mode takes the same label out of <c>App.xaml</c>, and the two labels differing by mode is what
+    /// makes the live "menu data context:" line attributable at a glance.
+    /// </remarks>
+    private const string CodeFirstMenuDataLabel = "code-first menu data context";
 
     /// <summary>
     /// Measures and reports the popup that just opened.
@@ -764,7 +786,55 @@ public partial class App : Application
         }
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"[sample] menu opened: {measurement}"));
+        Console.WriteLine($"[sample] menu data context: {DescribeMenuDataContext(sender as ContextMenu)}");
         Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Describes where the opening menu's bindings resolve from, and what its bound item resolved to.
+    /// </summary>
+    /// <param name="menu">The menu that just opened, or <see langword="null"/>.</param>
+    /// <returns>One line naming the menu's own data context and every item whose header is bound.</returns>
+    /// <remarks>
+    /// <para>
+    /// T06's observability surface, and deliberately about the <em>menu's</em> data context rather
+    /// than the icon's: a menu declared in <c>Application.Resources</c> has no logical parent and the
+    /// library points its <c>PlacementTarget</c> at its own anchor window rather than at the icon, so
+    /// the icon's <c>DataContext</c> never reaches the menu - the consumer sets the menu's own. The
+    /// value is read from the live object graph as the menu opens, so a binding that did not resolve
+    /// appears here as <c>&lt;null&gt;</c> instead of being inferred from a screenshot, and the two
+    /// modes' lines are directly comparable because the same shape is printed in both.
+    /// </para>
+    /// <para>
+    /// The bound items are found by their binding expression rather than by index, so the line stays a
+    /// measurement if an item is added, removed or reordered in either mode.
+    /// </para>
+    /// </remarks>
+    private static string DescribeMenuDataContext(ContextMenu? menu)
+    {
+        if (menu is null)
+        {
+            return "menu=none (the opened event carried no menu)";
+        }
+
+        object? dataContext = menu.DataContext;
+        string source = dataContext is null ? "none" : dataContext.GetType().Name;
+        List<string> boundItems = [];
+
+        for (int index = 0; index < menu.Items.Count; index++)
+        {
+            if (menu.Items[index] is MenuItem item
+                && BindingOperations.GetBindingExpression(item, MenuItem.HeaderProperty) is not null)
+            {
+                string header = item.Header as string is string text ? $"'{text}'" : "<null>";
+
+                boundItems.Add(string.Create(CultureInfo.InvariantCulture, $"item[{index}].Header={header}"));
+            }
+        }
+
+        string resolved = boundItems.Count == 0 ? "no bound item" : string.Join(", ", boundItems);
+
+        return string.Create(CultureInfo.InvariantCulture, $"menu.DataContext={source} (set by the consumer) -> {resolved}");
     }
 
     /// <summary>
@@ -2125,4 +2195,34 @@ public sealed class SampleTrayIcon : TrayIcon
     /// </remarks>
     public void RequestMenuOpen(Point screenAnchor) =>
         OnTrayClick(new TrayIconClickEventArgs(MouseButton.Right, 1, screenAnchor, TrayIcon.TrayRightClickEvent));
+}
+
+/// <summary>
+/// The object the sample's menu data context points at, so a menu item bound with
+/// <c>{Binding Label}</c> has something to resolve against in both run modes.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>It exists because of where the S06 acceptance line's bindings actually resolve from.</b> A
+/// <see cref="ContextMenu"/> declared in <c>Application.Resources</c> has no logical parent, and the
+/// library sets the menu's <c>PlacementTarget</c> to its own anchor window rather than to the icon,
+/// so the icon's <c>DataContext</c> never reaches the menu and the library never writes the menu's
+/// <c>DataContext</c> either. The consumer therefore sets the menu's own data context -
+/// <c>DataContext="{StaticResource TrayMenuData}"</c> in the declarative mode, and
+/// <c>menu.DataContext = new SampleMenuData { ... }</c> in the code-first one - which is the division
+/// of responsibility <see cref="TrayIcon.ContextMenu"/>'s remarks document. Both halves are pinned
+/// headlessly by <c>TrayIconMenuDataContextTests</c> and measured live in <c>docs/UAT-S06.md</c>
+/// ("Menu data context and bindings (T06)").
+/// </para>
+/// <para>
+/// <b>Public and top-level because XAML cannot reference anything else:</b> the declarative mode
+/// declares an instance of this type in <c>App.xaml</c>, and the parser has to resolve the element
+/// name to a type. It is an ordinary CLR object with no dependency property, which is the point - a
+/// menu's data context is the caller's own object graph, with nothing of the library in it.
+/// </para>
+/// </remarks>
+public sealed class SampleMenuData
+{
+    /// <summary>Gets or sets the text a menu item bound with <c>{Binding Label}</c> resolves to.</summary>
+    public string Label { get; set; } = string.Empty;
 }
