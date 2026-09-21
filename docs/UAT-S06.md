@@ -213,6 +213,70 @@ These logs are tracked on purpose even though the repository's `.gitignore` excl
 
 **Probe capabilities added for this slice** (`scripts/probe-live`): `--click-after <seconds>`, which right-clicks the shell-reported icon rectangle, and an `icons-in-notification-area` count reported with the resolved identity. The click capability is the half that does not work against this tray (F1); the count is what makes Check 2 a measurement.
 
+## Re-verification by the auto-mode unit (T04)
+
+Every live check in this record was re-run on the same machine (`MINIBOOKX`, `Microsoft Windows NT 10.0.26200.0`, single 1920x1200 monitor at 150 %) and on the revision that contains the work this record describes (`milestone/M001`, `2f0620c`, whose history includes the `f55c1be` declaration fix). Nothing under `src/`, `samples/`, `tests/` or `scripts/` was edited between the two passes; only `docs/` grew. This section is the reproducibility evidence: the same claims, re-measured.
+
+**Prerequisite for running any of it inside the auto-mode sandbox (measured, recorded because it costs an hour to rediscover).** The `gsd_exec` sandbox hands its shell a stripped environment - `APPDATA`, `LOCALAPPDATA`, `PROGRAMFILES`, `ProgramFiles(x86)` and `ProgramData` are absent and `TEMP` is the MSYS path `/tmp`. NuGet's `XPlatMachineWideSetting` constructor then fails with `Value cannot be null. (Parameter 'path1')` from `NuGetEnvironment.CalculateFolderPath`, before a single project is evaluated; `dotnet build`, `dotnet restore`, `dotnet test` and even the assets-file read inside the build all fail this way. Injecting the variables fixes it, and does not change what is built:
+
+```
+env APPDATA='C:\Users\Maxim\AppData\Roaming' LOCALAPPDATA='C:\Users\Maxim\AppData\Local' \
+    PROGRAMFILES='C:\Program Files' 'ProgramFiles(x86)=C:\Program Files (x86)' ProgramData='C:\ProgramData' \
+    TEMP='C:\Users\Maxim\AppData\Local\Temp' TMP='C:\Users\Maxim\AppData\Local\Temp' \
+    <the command as written above>
+```
+
+This is a harness fact, not a repository fact. A normal developer shell needs nothing of it.
+
+| Re-checked claim | Re-verification log | Result on the second pass |
+|---|---|---|
+| Check 1 shape - declarative run with a real click injected at the icon's own rectangle | `docs/uat-logs/S06/reverify-check1-declarative-click-attempt.txt` | `[probe] click injected: right click at (1470,1164)`, then `clicks=0, ... raw callback lines=0`. **F1 reproduces**, so the NOT OBSERVED row above still stands on this session too. One icon, 23 readings, `sample-exited at t=23s with exit code 0`, `icon-after-exit: gone` |
+| Check 2 shape - the deferral cross-check, code-first, declared resources inert | `docs/uat-logs/S06/reverify-check2-deferral-cross-check.txt` | `[probe] icons-in-notification-area: 1` - a consumer that never looks the declaration up still ends with exactly one icon; `sample-exited ... exit code 0`; `gone` |
+| Check 3, exactly as the task plan's verify command writes it (30 s observation window) | `docs/uat-logs/S06/reverify-check3-declarative-menu-and-balloon.txt` | registered from markup, then `menu opened: ... rect=1446,1045 296x83 dpi=144 scale=1.5` over the icon at `rect=(1446,1128,1494,1200)`; shell callbacks `event=0x0402` and `0x0404`; `icons-in-notification-area: 1`. The window ends before the sample's own 40 s shutdown, so this shape is killed by the probe (`sample-alive-at-end: True`) and **cannot carry the clean-dispose claim** |
+| Check 3 shape with this record's 45 s window | `docs/uat-logs/S06/reverify-check3b-declarative-graceful-dispose.txt` | same rectangle, same two markup-declared handler lines (`menu opened:` / `menu dismissed.`), `menu opens=1, menu dismissals=1`, 40 consecutive `icon=present` readings, GDI flat at 13 then 25, `sample-exited at t=41s with exit code 0`, `icon-after-exit: gone` |
+| Check 4 shape - the same run in code-first mode | `docs/uat-logs/S06/reverify-check4-code-first-cross-check.txt` | `menu opened: ... rect=1446,1045 296x83 dpi=144 scale=1.5` - the identical rectangle; GDI `13 -> 15 -> 17 -> 29` (a +12 popup step, against the declarative `13 -> 25`); one icon; exit code 0; `gone` |
+| `dotnet build Trustsoft.NotifyIcon.sln -c Release -t:Rebuild` | console (quoted below) | succeeded, **0 warnings, 0 errors**: the library on all three TFMs, plus sample and tests |
+| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release` | `docs/uat-logs/S06/reverify-suite-full.txt` | **394 passed, 0 failed, 0 skipped** (52 s), first attempt - the foreground-loss flakiness described in the environment note above did not appear in this pass |
+
+The build console, whole and unfiltered:
+
+```
+  Trustsoft.NotifyIcon -> ...\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> ...\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> ...\src\Trustsoft.NotifyIcon\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon.Sample -> ...\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
+  Trustsoft.NotifyIcon.Tests -> ...\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+```
+
+The declarative run, in this pass (Check 3b, 45 s window):
+
+```
+sample| [sample] declaration mode: XAML - the icon, its menu and its image are declared in Application.Resources and wired by markup; nothing in this file assigns a property or subscribes to an event on the icon.
+sample| [sample] tray icon registered from markup (Visible="True" and the image come from Application.Resources; no rotation runs, because nothing in C# may replace a declared value).
+sample| [sample] context menu taken from markup with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] menu opened: popup=0x1C700E2 class=HwndWrapper[Trustsoft.NotifyIcon.Sample;;...] rect=1446,1045 296x83 dpi=144 scale=1.5 owner=0x2F605B6 cursor=1055,1147 bottomLeftDip=964,752
+sample| [sample] menu dismissed.
+sample| [sample] raw callback hwnd=0x14B01A8 msg=0x0401 event=0x0402 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010402
+sample| [sample] tray icon disposed - it must have left the notification area.
+sample| [sample] totals: raw callback lines=2, ..., balloon show requests=1 (self=1), ..., menu opens=1, menu dismissals=1.
+[probe] icons-in-notification-area: 1 (...)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: False; exit-code: 0
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x14B01A8 uID=1)
+```
+
+**Two measured differences between the passes, recorded rather than smoothed over.**
+
+1. The shell raised `NIN_BALLOONTIMEOUT` (`0x0404`) **twice** in the second declarative pass (once in the first) and twice in this pass's code-first cross-check. That count is the shell's; the accepted `NIN_BALLOONSHOW` (`0x0402`) is one per requested balloon in every pass. Nothing in the library counts or de-duplicates the timeout callback, so the variance is not a library behaviour and is stated as measured.
+2. The task plan's verify command pairs a **30 s observation window with a 40 s sample run**, so the probe hard-kills the sample (`taskkill /f ... -> exit 0`) instead of observing its own shutdown. Both halves are therefore recorded here: the 30 s shape proves registration, markup delivery and the accepted balloon, and the 45 s shape carries the clean-dispose claim. A later edit to that verify line should use `45` as the observation window.
+
+The re-verification logs use the `.txt` suffix because the repository's `.gitignore` excludes `*.log` (which is why the four original logs needed `git add -f`); `.txt` needs no force-add. They are evidence, not stray output.
+
+---
+
 ## Hand-off to S07
 
 - The declarative run command is `-- --xaml`, and it now also takes `--open-menu-after <seconds>`, which opens the *declared* menu with no shell click. The README documents the mode and the namespace URI (`http://schemas.trustsoft.com/notifyicon`, prefix `tni`) is declared in `AssemblyInfo.cs` and should be confirmed alongside the package metadata. The README's snippet is the consumer shape (a consumer's markup lives in another assembly, so it uses that URI); the sample itself cannot, because the element it declares is a type from its own project - and because the local-namespace form must not carry `;assembly=`, which is the `MC3074` trap recorded in Check 3.
