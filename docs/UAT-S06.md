@@ -17,7 +17,9 @@
 | A click injected at the icon reaches the icon | **NOT OBSERVED** | Check 1: the injected click never arrived. Recorded below with the measurement (F1) rather than claimed |
 | The declared resources cost a code-first run nothing (BAML deferral) | **PASS** | Check 2: a code-first run of the same executable ends with exactly one icon in the notification area |
 | The declarative path leaves the icon healthy end to end | **PASS** | Check 1: 22 consecutive `icon=present` readings, a flat GDI count, and `icon-after-exit: gone` after a clean dispose |
-| The library's exported surface is unchanged by this slice | **PASS** | `PackagePurityTests` green; the namespace attributes add no type. Full suite 391 passed / 0 failed |
+| The library's exported surface is unchanged by this slice | **PASS** | `PackagePurityTests` green (6/6 at this revision); the namespace attributes add no type. Full suite **394 passed / 0 failed** at the closing measurement (the `391` this row carried earlier was an interim reading of an intermediate working tree, superseded by S05's own exit measurement and independently re-derived in the T05 section below) |
+| The full suite is green on all three target frameworks, with the S05 baseline accounted for | **PASS** | T05: build **0 warnings, 0 errors** on net8.0/net9.0/net10.0-windows; suite **394 passed / 0 failed / 0 skipped** in 52 s; all 21 test names added since the S04 baseline enumerated by name. See "Cross-framework regression and the evidence pack (T05)" |
+| The code-first path still works end to end now that a second construction path exists | **PASS** with one `NOT OBSERVED` | T05: four live runs - register, menu opened at the icon on the library's own open path, shell-accepted balloon, clean dispose (exit code 0, icon gone). The click-driven route into the icon is `NOT OBSERVED` (F1 reproduces in code-first mode too); see the T05 section |
 
 ## What this slice does not claim
 
@@ -181,7 +183,7 @@ sample| [sample] raw callback hwnd=0x100198 msg=0x0401 event=0x0402 iconId=1 wPa
 | Measurement | Result |
 |---|---|
 | `dotnet build Trustsoft.NotifyIcon.sln -c Release` | succeeded, **0 warnings, 0 errors**, all three target frameworks |
-| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release` | **391 passed, 0 failed, 0 skipped** (S05 ended at 384; 7 XAML contract tests added) |
+| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release` | **394 passed, 0 failed, 0 skipped** (S05 ended at **394**, its own exit measurement; the `391`/`384` pairing this row carried earlier was an interim reading and is corrected in the T05 section below. 7 XAML contract tests are S06's own) |
 | `PackagePurityTests` | green, untouched - the namespace attributes added no exported type, and there is still no balloon dependency property (D031) |
 | Library changes in this slice | `Properties/AssemblyInfo.cs` only (two metadata attributes). The library code itself is untouched, as the slice research predicted |
 | Sample changes in this slice | `App.xaml` (the declaration, now of `local:SampleTrayIcon`), `App.xaml.cs` (the `--xaml` branch, the self-open hook's availability condition, and the console lines), plus `SampleTrayIcon` promoted to a public top-level type in `App.xaml.cs` |
@@ -208,10 +210,14 @@ agent or harden the `OpenMenu` helper with a bounded single retry on the
 | Check 2 (deferral cross-check, code-first) | `docs/uat-logs/S06/check2-deferral-cross-check.log` |
 | Check 3 (declarative run; declared menu self-opens, declared attributes deliver) | `docs/uat-logs/S06/check3-declarative-menu-and-balloon.log` |
 | Check 4 (the same run shape in code-first mode, for the menu rectangle and the GDI step) | `docs/uat-logs/S06/check4-code-first-cross-check.log` |
+| T05 Check 5 (code-first end to end, with a real left click attempted at the icon) | `docs/uat-logs/S06/t05-code-first-e2e.txt` |
+| T05 Check 5 control (the identical shape with no click injected at all) | `docs/uat-logs/S06/t05-code-first-e2e-control-noclick.txt` |
+| T05 Check 5 repeat (the left click attempted a second time) | `docs/uat-logs/S06/t05-code-first-e2e-repeat.txt` |
+| T05 Check 6 (right click attempted at the icon, code-first) | `docs/uat-logs/S06/t05-code-first-click-attempt.txt` |
 
 These logs are tracked on purpose even though the repository's `.gitignore` excludes `*.log`; they were added with `git add -f`. Do not remove them as stray logs.
 
-**Probe capabilities added for this slice** (`scripts/probe-live`): `--click-after <seconds>`, which right-clicks the shell-reported icon rectangle, and an `icons-in-notification-area` count reported with the resolved identity. The click capability is the half that does not work against this tray (F1); the count is what makes Check 2 a measurement.
+**Probe capabilities added for this slice** (`scripts/probe-live`): `--click-after <seconds>`, which right-clicks the shell-reported icon rectangle, and an `icons-in-notification-area` count reported with the resolved identity. The click capability is the half that does not work against this tray (F1); the count is what makes Check 2 a measurement. T05 added the left-click spelling the balloon route needs, `--left-click-after <seconds>`: it uses the same position oracle, the same pointer nudge and the same synthesised input, with the button changed to the one the sample's balloon demonstration is wired to. It fails identically (Checks 5 and 6), and having both spellings is what shows the refusal is the tray surface rather than one button.
 
 ## Re-verification by the auto-mode unit (T04)
 
@@ -274,6 +280,196 @@ sample| [sample] totals: raw callback lines=2, ..., balloon show requests=1 (sel
 2. The task plan's verify command pairs a **30 s observation window with a 40 s sample run**, so the probe hard-kills the sample (`taskkill /f ... -> exit 0`) instead of observing its own shutdown. Both halves are therefore recorded here: the 30 s shape proves registration, markup delivery and the accepted balloon, and the 45 s shape carries the clean-dispose claim. A later edit to that verify line should use `45` as the observation window.
 
 The re-verification logs use the `.txt` suffix because the repository's `.gitignore` excludes `*.log` (which is why the four original logs needed `git add -f`); `.txt` needs no force-add. They are evidence, not stray output.
+
+---
+
+## Cross-framework regression and the evidence pack (T05)
+
+**Revision tested:** `milestone/M001` at `3049495` (HEAD of the worktree). The only working-tree change
+since that commit is `scripts/probe-live/Program.cs`, which gained a left-click capability this task
+needed for one check below; nothing under `src/`, `samples/` or `tests/` was edited by T05, so every
+number in this section is measured on the revision the rest of this record describes. Machine and
+environment as recorded at the top of this document.
+
+T05's job is the opposite of S05's: S06 changed the sample and one metadata file, so what has to be
+shown is that the library's contract and the *existing* construction path came through untouched
+while a second path was added. Three independent measurements, then the accounting.
+
+### 1. Build and full suite, all three target frameworks
+
+| # | Command | Result | Evidence |
+|---|---|---|---|
+| 1 | `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore` | exit **0**, **0 warnings, 0 errors** - `Trustsoft.NotifyIcon.dll` for net8.0-windows, net9.0-windows and net10.0-windows, plus the sample and the test assembly | `gsd_exec` `0c95dd64-076f-4025-b742-5b31c96f1ba6` |
+| 2 | `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` | exit **0**, **394 passed / 0 failed / 0 skipped**, 52 s | `gsd_exec` `2b41316f-ab0e-4ad2-b4c2-8ca935a57aa7` |
+| 3 | `dotnet test ... --filter "FullyQualifiedName~PackagePurityTests"` | exit **0**, **6 passed / 0 failed**, 31 ms | `gsd_exec` `1e189468-780c-47c6-88af-9c1299b0f2a6` |
+| 4 | `dotnet test ... --filter "FullyQualifiedName~TrayIconMenuActivationTests|FullyQualifiedName~TrayIconMenuContractTests"` | exit **0**, **21 passed / 0 failed**, 26 s (real WPF popups, in-process) | `gsd_exec` `256a9872-142f-455e-9abb-5f62751d26ab` |
+| 5 | the task plan's verify line verbatim, as one invocation: `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore && dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` | exit **0** - build **0 warnings, 0 errors**, then **394 passed / 0 failed / 0 skipped** | `gsd_exec` `59149d79-0191-4867-9b09-a841b77ca261` |
+| 6 | `dotnet build scripts/probe-live -c Release` (the instrument T05 extended; not part of the solution, so it cannot reach the shipped package) | exit **0**, **0 warnings, 0 errors** | `gsd_exec` `9dbe3d03-aa71-4409-aa98-86b85053b6f4` |
+
+The suite was run **alone** for rows 2 and 4, per the rule the environment note above records;
+neither pass hit the foreground-loss class. The three-TFM claim is not taken from the build console
+alone: `Solution_build_outputs_exist_for_all_three_tfms` (row 3's class) fails loudly unless all three
+Release output directories exist, so row 2's green run is itself the three-TFM evidence.
+
+### 2. The baseline accounting, by name
+
+The task plan names "the 384 passed and 0 failed baseline recorded at the end of S05". That number is
+an **interim reading of an intermediate working tree**, and `docs/UAT-S05.md` deliberately retracts it:
+its "Two honest notes about that table" section says an earlier revision "carried an interim `384`
+reading" and replaces it with a by-name table. S05's own exit measurement is therefore:
+
+| Point | Tests | Source |
+|---|---|---|
+| S05 entering baseline (S04 complete, `15694bd`) | **373 passed / 0 failed** | `docs/UAT-S05.md`; `docs/UAT-S04.md` |
+| S05 exit measurement (the slice's closing row) | **394 passed / 0 failed / 0 skipped** | `docs/UAT-S05.md`, "Full suite and build" |
+| Delta | **+21 test names**, every one listed in that section's table | |
+| T05 re-measurement, same revision | **394 passed / 0 failed / 0 skipped**, 52 s | row 2 above |
+| T05's own contribution to the delta | **0 test names** - T05 adds no test | this section |
+
+T05 re-derived the delta independently rather than trusting the table: extracting every attributed
+test method name from `tests/**/*.cs` at `15694bd` and at HEAD and diffing the two name sets yields
+**240 names at the baseline and 261 at HEAD - 21 added, 0 removed**. Per class, the four classes that
+changed are `TrayIconRecoveryTests` 0 -> 11, `SliceContractTests` 6 -> 8,
+`TrayIconMenuActivationTests` 15 -> 16 and `TrayIconXamlContractTests` 0 -> 7 (11 + 2 + 1 + 7 = 21),
+and every other class is identical to the baseline. Of the 21, **7 are S06's own file** and 14 are
+S05's, so S06 grows the suite by 7 and leaves the other 387 names where they were. 373 + 21 = 394,
+which is the same total the test runner reports, so the accounting closes.
+
+One method detail, recorded because it costs time to rediscover: this repository attributes tests with
+`[Fact]`, `[StaFact]`, `[StaTheory]`, `[Theory]` **and a project-defined `[DispatcherFact]`**
+(`TrayIconRecoveryTests` uses it for all 11 of its tests). An extractor that matches only xUnit's own
+attribute names silently reports zero tests for that class and under-counts the delta by 11 - the
+first pass of this accounting did exactly that. The correct pattern is "any attribute whose name ends
+in `Fact` or `Theory`".
+
+### 3. The exported surface is unchanged, and the library code with it
+
+| Claim | Evidence at this revision |
+|---|---|
+| Exactly the seven documented public types (D034) | `PackagePurityTests.Public_surface_is_only_the_documented_types` and `TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type` both green (row 3, 6/6). The assembly-level `XmlnsDefinition`/`XmlnsPrefix` attributes add no exported type - an attribute is metadata, not a type |
+| No balloon dependency property (D031) | the only public dependency properties on `TrayIcon` are `IconSourceProperty`, `ToolTipTextProperty`, `VisibleProperty`, `MenuActivationProperty` and the shadowed `ContextMenuProperty`; a balloon stays a method call, and `BalloonTipIcon`/`BalloonTipOptions` are the S04 enums, unchanged |
+| No new public type for the menu (D002/D010/D015) | the shadowed `ContextMenuProperty` is asserted to be owned by `TrayIcon`, non-read-only, `null` by default, and resolvable through `DependencyPropertyDescriptor` - the same pin S03 wrote |
+| No dependency drift | `Library_csproj_has_no_package_reference`, `Loaded_library_references_only_framework_assemblies` and `Library_targets_three_windows_tfms` green; no assembly reference other than the platform's own |
+| The library's own code is untouched by this slice | `git diff --stat 4ccd931..HEAD -- src` reports two files, `Properties/AssemblyInfo.cs` (+22) and `TrayIcon.cs` (-18); the `TrayIcon.cs` change is **S05's** recovery work (`git log --oneline -- src/Trustsoft.NotifyIcon/TrayIcon.cs` ends at S05's `46af54f`/`895d6ad`), and S06's own commits touch `src/` exactly once: `e25498b` adds the 22 metadata lines to `AssemblyInfo.cs` |
+
+So the slice's own contribution to the shipped assembly is two assembly-level attributes. That is the
+tightest form the S06 claim can take, and it is asserted rather than reviewed: a widened type, a new
+public property or a new package reference all fail row 3's green set.
+
+### 4. The code-first path, re-run end to end (Check 5)
+
+Four live runs against the real notification area, all on the sample built from this revision. The
+first is the end-to-end run the task plan asks for (register, a real click attempted at the icon, the
+menu opened on the library's own open path, a balloon, clean disposal); the other three exist to
+attribute two observations that a single run cannot.
+
+| Run | Command shape | Log |
+|---|---|---|
+| Check 5 | `probe-live <sample.exe> 50 --left-click-after 10 --menu-after 16 --balloon-after 26 --sample-arg --run-seconds --sample-arg 40` | `docs/uat-logs/S06/t05-code-first-e2e.txt` |
+| Check 5 control | the same shape with the click argument removed | `docs/uat-logs/S06/t05-code-first-e2e-control-noclick.txt` |
+| Check 5 repeat | the Check 5 shape repeated | `docs/uat-logs/S06/t05-code-first-e2e-repeat.txt` |
+| Check 6 | `probe-live <sample.exe> 30 --click-after 12 --sample-arg --run-seconds --sample-arg 18` | `docs/uat-logs/S06/t05-code-first-click-attempt.txt` |
+
+**Check 5, the run itself** (`t05-code-first-e2e.txt`). Code-first mode registered one icon and said
+so before anything else (`tray icon registered, rotating 3 frames every 1s`, `context menu assigned
+with 2 item(s)`). At t=10 the probe injected a real **left** click at the icon's own shell-reported
+rectangle, `(1470,1164)`. At t=16 the sample requested the menu through the library's own open path:
+
+```
+sample| [sample] menu opened: popup=0x25800E2 class=HwndWrapper[Trustsoft.NotifyIcon.Sample;;97e0a478-...] rect=1446,1045 296x83 dpi=144 scale=1.5 owner=0x0 cursor=1915,1199 bottomLeftDip=964,752
+sample| [sample] menu dismissed.
+sample| [sample] raw callback hwnd=0x1E00198 msg=0x0401 event=0x0402 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010402
+sample| [sample] raw callback hwnd=0x1E00198 msg=0x0401 event=0x0405 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010405
+sample| [sample] balloon preview clicked: event=PreviewBalloonTipClicked phase=tunnel - the main phase must follow unless a handler sets Handled.
+sample| [sample] balloon clicked: event=BalloonTipClicked phase=bubble - the shell accepted a click on the balloon.
+sample| [sample] tray icon disposed - it must have left the notification area.
+sample| [sample] totals: raw callback lines=2, ..., clicks=0, ..., balloon show requests=1 (self=1), balloon clicked deliveries=1, balloon preview deliveries=1, menu opens=1, menu dismissals=1.
+[probe] icons-in-notification-area: 1
+[probe] sample-exited at t=42s with exit code 0
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x1E00198 uID=1)
+```
+
+Read against the two cross-checks: the popup rectangle is the **identical** `1446,1045 296x83
+dpi=144 scale=1.5` that Checks 3 and 4 recorded, over the icon at `rect=(1446,1128,1494,1200)`; the
+GDI series is `13 -> 15 -> 17` (the code-first rotation) then `29` at the open - the same **+12**
+popup step Check 4 measured - and `26` on the reading after disposal; there are 39 consecutive
+`icon=present` readings, one icon in the notification area in the run's own final count, and `gone`
+after the process disposed and exited with code 0. So register, menu-at-the-icon, an accepted balloon
+(`NIN_BALLOONSHOW`), and clean disposal all hold in code-first mode on this revision: the declarative
+path did not break the one that was already working.
+
+**The click-driven half is `NOT OBSERVED`, and it is the instrument that fails, not the library.**
+Check 5's left click and Check 6's right click were both synthesised at the icon's own shell-reported
+rectangle, and both produced `clicks=0` and `raw callback lines=0` in the sample - F1, now reproduced
+in code-first mode as well as declaratively. The two buttons fail identically at the same position,
+which places the failure at the tray surface (Windows 11's overflow flyout owns the icon) rather than
+at the library's decode. A **click-driven balloon** therefore stays `NOT OBSERVED`, exactly as the
+earlier F1 record says; what is proven instead is that the shell's balloon callbacks reach a
+code-first icon (Check 5) and that the click attributes bind and fire headlessly
+(`TrayIconXamlContractTests`, and S02's live record of `clicks=1..3` with the injector that no longer
+exists - see the follow-ups).
+
+**`NIN_BALLOONUSERCLICK` (`0x0405`) is a shell behaviour, not the injected click.** Check 5 shows the
+balloon-click pair firing live, which the declarative Check 3 explicitly recorded as absent. It is
+tempting to credit the left click; the control run rules that out. The control - Check 5's shape with
+**no click injected at all** - produced the same `0x0402` then `0x0405` sequence and the same
+`balloon clicked deliveries=1`, so the delivery does not depend on the injection. Check 5 repeat, with
+the click injected again, produced `0x0402` then `0x0404` twice (`NIN_BALLOONTIMEOUT`) and **no**
+`0x0405`. Three runs, three different callback line-ups for the same requested balloon; the accepted
+`NIN_BALLOONSHOW` is the one constant. That variance is the shell's, and it is recorded as measured
+rather than attributed - the same class of variance the re-verification section already records for
+the timeout callback.
+
+**`owner=0x0`: an environment difference, not a regression.** Check 5 and its control both report the
+popup's native owner as `0x0`, where the earlier session's identical code-first shape reported the
+library's anchor window (`owner=0x2450870`, `owner=0x9802FA`). The library's own documentation names
+the mechanism: `TrayMenuAnchorWindow.MakeForeground` is "what makes the popup acquire this window as
+its owner", and "the same window, the same placement target and the same offsets with the foreground
+call omitted produced an ownerless popup". A refused `SetForegroundWindow` - what a background process
+gets while another window holds the foreground - is therefore exactly this reading. The contract is
+pinned headlessly and green in this same session: `TrayIconMenuActivationTests` and
+`TrayIconMenuContractTests` open real popups and assert `GetWindow(popup, GW_OWNER) == anchor`
+(21 passed / 0 failed, row 4). The live diagnostic cannot settle it either way, because the library's
+Verbose line that names `foreground=` and `anchor=` is filtered by the trace source's own
+`SourceLevels.Warning` switch, which is why `library trace lines=0` appears in every live log here -
+both for this new line and for S05's recovery line. What this does **not** show is whether an
+ownerless popup is still dismissable by an outside click (S03's T03 record says it is not); that
+needs the S03 instrument, and nothing in this task's contract claims it.
+
+### 5. What each piece of evidence proves, and what it does not
+
+| Evidence | Proves | Does not prove |
+|---|---|---|
+| Build (row 1) | all three TFMs compile from this revision with the declarative resources in the sample, which is the markup compiler's validation of every handler name and signature | any runtime behaviour |
+| Full suite (row 2) | 394 tests pass, including the surface pins, the recovery matrix, the S03 popup placement tests and S06's own contracts | nothing about a real shell or a real window; and it is foreground-sensitive when the machine is busy (the environment note above) |
+| `TrayIconXamlContractTests` (7 tests) | the declarative property surface resolves from markup, the shadowed `TrayIcon.ContextMenuProperty` is what markup writes, the menu arrives by reference identity, `x:Shared` defaults to shared, markup event attributes bind and fire when the parsed root is a `TrayIcon` subclass, the consumer namespace resolves, a parsed parentless instance disposes cleanly, and the resource-dictionary boundary throws `XamlParseException` | resource-scope event wiring - `XamlReader` binds handler names against the root object only, so that half is **not unit-testable** and is not claimed to be |
+| The sample's compiled markup + Check 3 | resource-scope event wiring: the markup compiler validated every attribute at build time, and the declared menu's `Opened`/`Closed` attributes delivered live through the library's own open path | click delivery (F1); anything about a consumer's own assembly, which is what the `tni:` URI in the README is for |
+| Check 1 / Check 2 | the declaration registers a working icon, and the declared resources are inert for a code-first run (one icon, by the shell's own count) | that the declarative and code-first paths place the menu differently - Check 3/4 show they do not |
+| Check 5 and its control (this section) | the code-first path still registers, opens its menu at the icon, accepts a balloon and disposes cleanly on this revision; the shell's balloon callbacks reach it | a click-driven balloon or menu (F1); any attribution of `0x0405` to the injected click - the control refutes that |
+| Check 6 (this section) | a real right click at the icon's own rectangle still does not reach a code-first icon | anything about a click that does arrive |
+
+### 6. Follow-ups recorded rather than closed silently
+
+**What the declarative path cannot express today.**
+
+1. **A declaration nobody looks up registers nothing, silently.** BAML defers instantiation, so an unused declaration is not an error anywhere; that is why this record's checklist requires the `tray icon registered` line before any row is read. There is no diagnostic that reports "a declared icon was never looked up", and none is proposed here.
+2. **`x:Shared="False"` must never be used** on the icon: every lookup would mint a second icon. Pinned by `One_resource_key_yields_one_instance`, which asserts the default behaviour - the failure mode is a consumer edit, not a library state.
+3. **Resource-scope event attributes are limited to handlers the root object exposes.** A dictionary-rooted element carrying an event attribute cannot be parsed by `XamlReader` at all (pinned as a boundary); BAML is what makes it work, and the handler must be a member of the `ApplicationDefinition`'s class (`App` here).
+4. **A declared element of the library's own type cannot use protected hooks.** The sample's no-click self-open path needs `OnTrayClick`, which only a subclass reaches, so the sample declares `local:SampleTrayIcon`. A consumer who declares `tni:TrayIcon` gets the library's public surface only - which is the intended shape, but it means the sample's instrumentation is not itself a consumer-copyable pattern for that one hook.
+5. **The local namespace form must not carry `;assembly=`,** and the consumer URI form must be used across assemblies - the `MC3074` trap recorded in Check 3.
+6. **Menu data context and bindings on the declarative path are not covered by this slice.** `T06` exists for exactly that (`01-06-PLAN.md`), and the S06 acceptance line about bindings in the menu resolving against the component's `DataContext` is that task's to settle with evidence.
+
+**Instrument follow-ups.**
+
+1. **There is no working tray-click instrument in this worktree.** `--click-after` (right click) and the new `--left-click-after` (left click, added by T05) both synthesise real input at the icon's own shell-reported rectangle and neither reaches the tray (F1, reproduced on both buttons). S02/S03 did deliver clicks (`clicks=1..3` recorded in `docs/UAT-S02.md`) with `.gsd/probe-clicks`, a UI-Automation instrument that expanded the `Show Hidden Icons` chevron first; it lived under `.gsd/` (untracked) and is gone from this worktree. A live click-driven check needs that instrument rebuilt - toggle the flyout through UI Automation, then click the element the flyout exposes - not another `mouse_event` at a rectangle the flyout owns.
+2. **The library's Verbose diagnostics are invisible live.** `NotifyIconTrace` constructs its `TraceSource` at `SourceLevels.Warning`, so the `TrayIcon menu opened: ... foreground=... anchor=...` line never reaches the sample's attached listener (`library trace lines=0` in every log here). The live instrument therefore cannot explain an ownerless popup, and S05's recovery Verbose line has the same status. Making it readable is a library-side decision about the default switch level (or an API for it), not a sample edit.
+3. **The T04 verify line should use a 45 s observation window, not 30 s** - the plan pairs `30` with `--run-seconds 40`, which makes the probe kill the sample and forfeits the clean-dispose claim (recorded in the re-verification section).
+
+**S07 hand-off (in addition to the section below).**
+
+1. **README and packaging:** the declarative run mode, the `tni` URI, and the claim that the declarative path works in a real application now all have evidence behind them (Checks 1, 3, 5); the packaging proof must exclude `scripts/probe-live` and confirm the namespace URI in the package metadata.
+2. **CI:** run the suite on a quiet agent or accept the foreground-sensitive `TrayIconMenuActivationTests` class (the environment note above and S03's F5). Two consecutive solo runs in T05 were green at 394/0, so the class is real but not constant.
+3. **Suite baseline for later slices:** **394 passed / 0 failed / 0 skipped** at this revision, with 0 tests added by T05. Use that number, not the interim 384.
 
 ---
 

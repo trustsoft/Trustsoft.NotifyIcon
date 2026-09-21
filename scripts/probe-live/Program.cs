@@ -31,8 +31,12 @@ namespace Trustsoft.NotifyIcon.ProbeLive;
 /// <para>
 /// <b>Usage.</b>
 /// <code>
-/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--click-after &lt;seconds&gt;] [--balloon-after &lt;seconds&gt;] [--menu-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
+/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--click-after &lt;seconds&gt;] [--left-click-after &lt;seconds&gt;] [--balloon-after &lt;seconds&gt;] [--menu-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
 /// </code>
+/// <c>--click-after</c> is a right click (the menu route); <c>--left-click-after</c> is a left click,
+/// which is the route the sample's own balloon demonstration is wired to, so a click-driven balloon
+/// is attempted as the physical event a consumer's user would make rather than inferred from the
+/// self-show switch.
 /// Everything after the first two arguments is passed through to the sample, which owns its own
 /// demonstration switches (<c>--run-seconds</c>, <c>--show-balloon-after</c>,
 /// <c>--open-menu-after</c>). <c>--balloon-after</c> and <c>--menu-after</c> are the probe's own
@@ -53,7 +57,8 @@ internal static class Program
     /// <summary>The accepted command line, printed on every usage error.</summary>
     private const string Usage =
         "usage: probe-live <sampleExe> <observeSeconds> [--kill-after <seconds>] [--click-after <seconds>] "
-        + "[--balloon-after <seconds>] [--menu-after <seconds>] [--keep-sample-alive] [--sample-arg <arg>]...";
+        + "[--left-click-after <seconds>] [--balloon-after <seconds>] [--menu-after <seconds>] "
+        + "[--keep-sample-alive] [--sample-arg <arg>]...";
 
     /// <summary>The window title <c>TrayMessageWindow</c> gives the host it creates.</summary>
     /// <remarks>
@@ -92,6 +97,7 @@ internal static class Program
         string sampleExe = args[0];
         TimeSpan? killAfter = null;
         TimeSpan? clickAfter = null;
+        TimeSpan? leftClickAfter = null;
         TimeSpan? balloonAfter = null;
         TimeSpan? menuAfter = null;
         bool keepSampleAlive = false;
@@ -116,6 +122,19 @@ internal static class Program
                 // TrayIcon. This is also the stronger proof of the two - it goes through the shell's
                 // callback and the library's decode, which the self-open path deliberately bypasses.
                 clickAfter = TimeSpan.FromSeconds(clickSeconds);
+                i++;
+                continue;
+            }
+
+            if (args[i] == "--left-click-after" && i + 1 < args.Length
+                && double.TryParse(args[i + 1], CultureInfo.InvariantCulture, out double leftClickSeconds))
+            {
+                // The balloon route: the sample shows its balloon from the left-click handler, so this
+                // is the one click that can produce a click-driven balloon. It uses the same position
+                // oracle and the same synthesised input as the right click, so a difference between the
+                // two outcomes is a difference in how the shell routes the button, not in the
+                // instrument.
+                leftClickAfter = TimeSpan.FromSeconds(leftClickSeconds);
                 i++;
                 continue;
             }
@@ -183,7 +202,7 @@ internal static class Program
 
         Console.WriteLine($"[probe] probe-live start {DateTime.Now:yyyy-MM-dd HH:mm:ss}; os={Environment.OSVersion.VersionString}; machine={Environment.MachineName}");
         Console.WriteLine($"[probe] sample exe: {sampleExe}");
-        Console.WriteLine($"[probe] observe: {observeSeconds}s; kill-after: {(killAfter is null ? "no" : $"{killAfter.Value.TotalSeconds:0}s")}; click-after: {(clickAfter is null ? "no" : $"{clickAfter.Value.TotalSeconds:0}s")}; balloon-after: {(balloonAfter is null ? "no" : $"{balloonAfter.Value.TotalSeconds:0}s")}; menu-after: {(menuAfter is null ? "no" : $"{menuAfter.Value.TotalSeconds:0}s")}; sample args: {string.Join(' ', sampleArgs)}");
+        Console.WriteLine($"[probe] observe: {observeSeconds}s; kill-after: {(killAfter is null ? "no" : $"{killAfter.Value.TotalSeconds:0}s")}; click-after: {(clickAfter is null ? "no" : $"{clickAfter.Value.TotalSeconds:0}s")}; left-click-after: {(leftClickAfter is null ? "no" : $"{leftClickAfter.Value.TotalSeconds:0}s")}; balloon-after: {(balloonAfter is null ? "no" : $"{balloonAfter.Value.TotalSeconds:0}s")}; menu-after: {(menuAfter is null ? "no" : $"{menuAfter.Value.TotalSeconds:0}s")}; sample args: {string.Join(' ', sampleArgs)}");
 
         using var sample = StartSample(sampleExe, sampleArgs);
 
@@ -197,6 +216,7 @@ internal static class Program
         var stopwatch = Stopwatch.StartNew();
         bool killIssued = false;
         bool clickIssued = false;
+        bool leftClickIssued = false;
 
         while (stopwatch.Elapsed < TimeSpan.FromSeconds(observeSeconds))
         {
@@ -225,7 +245,13 @@ internal static class Program
             if (clickAfter is TimeSpan clickDeadline && !clickIssued && stopwatch.Elapsed >= clickDeadline)
             {
                 clickIssued = true;
-                InjectRightClick(hostWindow, iconId);
+                InjectClick(hostWindow, iconId, leftButton: false);
+            }
+
+            if (leftClickAfter is TimeSpan leftClickDeadline && !leftClickIssued && stopwatch.Elapsed >= leftClickDeadline)
+            {
+                leftClickIssued = true;
+                InjectClick(hostWindow, iconId, leftButton: true);
             }
 
             if (TryGetIconRect(hostWindow, iconId, out NativeRect rect, out int hr))
@@ -339,10 +365,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// Right-clicks the centre of the icon, the way a user would.
+    /// Clicks the centre of the icon, the way a user would.
     /// </summary>
     /// <param name="hostWindow">The window that registered the icon.</param>
     /// <param name="iconId">The icon id.</param>
+    /// <param name="leftButton">
+    /// <see langword="true"/> for a left click (what shows the sample's balloon),
+    /// <see langword="false"/> for a right click (what opens the assigned menu).
+    /// </param>
     /// <remarks>
     /// The position comes from the shell's own answer about where the icon is, so the click lands on
     /// the icon rather than on a remembered coordinate. It is a real input event, so it exercises the
@@ -350,7 +380,7 @@ internal static class Program
     /// wired, and the menu the markup assigned. A failure to click is reported rather than thrown -
     /// this is an instrument, and a probe that dies mid-run loses the series it was collecting.
     /// </remarks>
-    private static void InjectRightClick(IntPtr hostWindow, uint iconId)
+    private static void InjectClick(IntPtr hostWindow, uint iconId, bool leftButton)
     {
         if (!TryGetIconRect(hostWindow, iconId, out NativeRect rect, out int hr))
         {
@@ -377,12 +407,14 @@ internal static class Program
         mouse_event(MouseEventMove, unchecked((uint)-4), 0, 0, UIntPtr.Zero);
         Thread.Sleep(60);
 
-        mouse_event(MouseEventRightDown, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(leftButton ? MouseEventLeftDown : MouseEventRightDown, 0, 0, 0, UIntPtr.Zero);
         Thread.Sleep(40);
-        mouse_event(MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(leftButton ? MouseEventLeftUp : MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
 
         Console.WriteLine(
-            $"[probe] click injected: right click at ({x},{y}) - the icon's own rectangle, so the shell's callback and the menu it opens are the real ones");
+            leftButton
+                ? $"[probe] click injected: left click at ({x},{y}) - the icon's own rectangle, so the shell's callback, the library's decode and the sample's left-click handler are the real ones"
+                : $"[probe] click injected: right click at ({x},{y}) - the icon's own rectangle, so the shell's callback and the menu it opens are the real ones");
     }
 
     /// <summary>
@@ -633,6 +665,12 @@ internal static class Program
 
     /// <summary><c>MOUSEEVENTF_MOVE</c>.</summary>
     private const uint MouseEventMove = 0x0001;
+
+    /// <summary><c>MOUSEEVENTF_LEFTDOWN</c>.</summary>
+    private const uint MouseEventLeftDown = 0x0002;
+
+    /// <summary><c>MOUSEEVENTF_LEFTUP</c>.</summary>
+    private const uint MouseEventLeftUp = 0x0004;
 
     /// <summary><c>MOUSEEVENTF_RIGHTDOWN</c>.</summary>
     private const uint MouseEventRightDown = 0x0008;

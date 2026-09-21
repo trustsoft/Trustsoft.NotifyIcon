@@ -1,0 +1,76 @@
+[probe] probe-live start 2026-09-21 13:40:45; os=Microsoft Windows NT 10.0.26200.0; machine=MINIBOOKX
+[probe] sample exe: samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe
+[probe] observe: 45s; kill-after: no; click-after: no; left-click-after: no; balloon-after: 26s; menu-after: 16s; sample args: --open-menu-after 16 --show-balloon-after 26 --run-seconds 40
+[probe] launched pid=12156
+sample| [sample] process DPI awareness: GetProcessDpiAwareness=0x00000000 value=2 (DPI_AWARENESS_PER_MONITOR_AWARE); threadContextAwareness=2 (DPI_AWARENESS_PER_MONITOR_AWARE) isPerMonitorV2=True.
+sample| [sample] display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical, primaryPhysical=1920x1200
+sample| [sample] monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5 hr=0x00000000
+sample| [sample] tray monitor: primary monitor device=\\.\DISPLAY1 dpi=144 scale=1.5 - the notification area lives on the primary monitor's taskbar; the popup's own dpi= reading in the menu-open line is the authoritative per-open value.
+sample| [sample] preview cancellation mode: off - every click reaches its main handler.
+sample| [sample] balloon demonstration: severity=info sound=on realtime=off respectQuietTime=off - a single left click on the icon shows this balloon, and clicking the balloon must print a balloon clicked line; --cancel-preview left suppresses both.
+sample| [sample] library trace listener attached to source 'Trustsoft.NotifyIcon', level Verbose.
+sample| [sample] declaration mode: code-first - the icon is constructed here and every property and event is wired in C#.
+sample| [sample] tray icon registered, rotating 3 frames every 1s.
+sample| [sample] no window is shown - check the notification area, not the taskbar.
+sample| [sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.
+sample| [sample] raw callback trace: hooked 1 HwndSource(s) owned by this thread, watching 0x0400..0x7FFF; the pump counter is armed as the control.
+sample| [sample] will shut down by itself after 40s (graceful close check).
+sample| [sample] menu self-open requested: the assigned menu will open once after 16s and be closed again 6s later (--open-menu-after). No shell click is injected for this.
+sample| [sample] balloon self-show requested: a balloon will be shown once after 26s (--show-balloon-after). No shell click is injected for this.
+[probe] t=1s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=13
+[probe] t=2s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=15
+[probe] t=3s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=4s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=5s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=6s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=7s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=8s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=9s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=10s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=11s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=12s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=13s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=14s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=15s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+[probe] t=16s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=17
+sample| [sample] --open-menu-after: requesting the menu now, with no click injected.
+sample| [sample] menu opened: popup=0x1E10198 class=HwndWrapper[Trustsoft.NotifyIcon.Sample;;47cb91a1-758d-4d05-afd1-d7d335b66fde] rect=1446,1045 296x83 dpi=144 scale=1.5 owner=0x0 cursor=1916,1199 bottomLeftDip=964,752
+[probe] t=17s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=18s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=19s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=20s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=21s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=22s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+sample| [sample] --open-menu-after: closing the menu the sample opened (consumer-driven close, not an outside click).
+sample| [sample] menu dismissed.
+[probe] t=23s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=24s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=25s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=26s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+sample| [sample] --show-balloon-after: showing a balloon now, with no click injected.
+sample| [sample] raw callback hwnd=0x2EF06D8 msg=0x0401 event=0x0402 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010402
+[probe] t=27s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=28s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=29s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=30s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+sample| [sample] raw callback hwnd=0x2EF06D8 msg=0x0401 event=0x0405 iconId=1 wParam=0x0000000000000000 lParam=0x0000000000010405
+sample| [sample] balloon preview clicked: event=PreviewBalloonTipClicked phase=tunnel - the main phase must follow unless a handler sets Handled.
+sample| [sample] balloon clicked: event=BalloonTipClicked phase=bubble - the shell accepted a click on the balloon.
+[probe] t=31s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=32s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=33s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=34s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=35s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=36s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=37s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=38s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=39s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+[probe] t=40s pid=12156 icon=present rect=(1446,1128,1494,1200) gdi=29
+sample| [sample] tray icon disposed - it must have left the notification area.
+sample| [sample] totals: raw callback lines=2, pump-observed private-range messages=0, library trace lines=0, clicks=0, cancelled by a Preview handler=0, balloon show requests=1 (self=1), balloon clicked deliveries=1, balloon preview deliveries=1, menu opens=1, menu dismissals=1.
+[probe] sample-exited at t=41s with exit code 0
+[probe] identity: hwnd=0x2EF06D8 uID=1 title="(no title)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: False; exit-code: 0
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x2EF06D8 uID=1)
