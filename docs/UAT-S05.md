@@ -276,13 +276,15 @@ This section exists so a reader can tell proven from assumed without opening the
 
 ## Reproducing this
 
-Raw, unfiltered logs from the runs cited above:
+Raw, unfiltered logs from the runs cited above are kept with this record, so the excerpts above can be checked against the full output (including the sample's own lines, which are interleaved):
 
 | Run | Log |
 |---|---|
-| Check 1, 2, 3 (Explorer restart) | `/tmp/probe-restart2.log` |
-| Check 4, 5 (hard kill, graceful) | `/tmp/t05.log` |
-| Check 6 (positive control) | `/tmp/t05-control.log` |
-| Check 7 (guard) | `/tmp/probe-negative.log` |
+| Check 1, 2, 3 (Explorer restart) | `docs/uat-logs/S05/check1-3-explorer-restart.log` |
+| Check 4, 5 (hard kill, graceful) | `docs/uat-logs/S05/check4-5-hard-kill-and-graceful.log` |
+| Check 6 (positive control) | `docs/uat-logs/S05/check6-positive-control.log` |
+| Check 7 (guard) | `docs/uat-logs/S05/check7-guard.log` |
+
+The logs were written to `/tmp` while the runs were made and copied here afterwards; the `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
 
 The two commands that make a check reproducible are the probe line above and, for Check 1 only, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so Check 1 is a once-per-session measurement, not a loop.
