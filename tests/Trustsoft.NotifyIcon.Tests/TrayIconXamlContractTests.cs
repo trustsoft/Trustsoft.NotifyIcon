@@ -1,9 +1,12 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Trustsoft.NotifyIcon.Interop;
 using Xunit;
 
 namespace Trustsoft.NotifyIcon.Tests;
@@ -25,14 +28,19 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// the sample project's compiled markup and its live run instead.
 /// </para>
 /// <para>
-/// <b>Zero shell dependency.</b> Every test here keeps <c>Visible</c> false, so the element never
-/// creates its host window and never calls the shell seam: what is under test is markup
-/// resolution, not registration. Nothing in this file needs a notification area.
+/// <b>Zero notification-area dependency.</b> Every parsed instance here keeps <c>Visible</c> false,
+/// so it never creates its host window and never calls the shell: what is under test is markup
+/// resolution, not registration. Nothing in this file needs a notification area. The one test that
+/// counts registrations takes them over the scripted <c>FakeShellApi</c> seam instead, because that
+/// is the only way to measure "the shell sees exactly one icon" without putting an icon into the
+/// notification area of the machine running the suite.
 /// </para>
 /// <para>
 /// <b>Requirements proven here:</b> R008 and R009 (the declarative surface: the same single class
 /// is the XAML component, with the menu and the event wiring expressible in markup) as far as a
-/// parse can prove them, with the delivery half left to the sample build and the live UAT.
+/// parse can prove them, with the delivery half left to the sample build and the live UAT - and, for
+/// R009's merged-<c>ResourceDictionary</c> clause, the declaration itself plus the one-icon
+/// registration count over the scripted seam.
 /// </para>
 /// </remarks>
 public sealed class TrayIconXamlContractTests
@@ -52,6 +60,15 @@ public sealed class TrayIconXamlContractTests
     /// test cannot disagree about it.
     /// </summary>
     private const string ConsumerNamespace = "http://schemas.trustsoft.com/notifyicon";
+
+    /// <summary>The tooltip the merged declaration carries.</summary>
+    private const string MergedToolTipText = "merged declarative";
+
+    /// <summary>
+    /// The label the merged declaration's bound menu item resolves to: the string the consumer's own
+    /// data context object carries, compared against the item's resolved header.
+    /// </summary>
+    private const string MergedMenuLabel = "merged declaration menu data context";
 
     /// <summary>
     /// The property surface of a declarative declaration resolves from markup, and the declared
@@ -287,6 +304,83 @@ public sealed class TrayIconXamlContractTests
     }
 
     /// <summary>
+    /// R009's second childless declaration location: the same declaration, expressed inside a
+    /// <see cref="ResourceDictionary"/> merged into <see cref="Application.Resources"/>, resolves the
+    /// same surface and still yields exactly one icon.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A second location is a second question.</b> R009 names both places a windowless consumer can
+    /// declare the icon - inline in <c>Application.Resources</c> and in a dictionary merged into it -
+    /// and the merge graph is a different container from the application's own entry table. A merged
+    /// declaration that stopped resolving, or that minted a second instance for a lookup, would leave
+    /// every test above green, which is why the requirement's merged clause is closed here rather than
+    /// as one more variation of them.
+    /// </para>
+    /// <para>
+    /// <b>Two instruments, one test, because neither can measure the whole clause.</b> The parsed
+    /// instance is built by the shipped parameterless constructor and therefore talks to the real
+    /// shell, so a registration count taken on it would put an icon into the notification area of the
+    /// machine running the suite; it stays inert (<c>Visible="False"</c>) and carries the declaration
+    /// assertions. The count is taken on the second instrument - a seam-built instance that a merged
+    /// dictionary owns and that is resolved repeatedly - where "the shell sees exactly one icon" is
+    /// observable as exactly one <c>NIM_ADD</c> and never a second one on a later lookup. The event
+    /// surface is asserted as resolvable metadata rather than by raising, both because a
+    /// <c>ResourceDictionary</c>-rooted element carrying an event attribute cannot be parsed at all
+    /// (<see cref="Markup_event_attributes_in_a_resource_dictionary_are_a_pinned_boundary"/>) and
+    /// because a declaration in a real application is compiled to BAML, where handler names never
+    /// reach this parser.
+    /// </para>
+    /// <para>
+    /// <b>The application is created on demand, once per process.</b> WPF refuses a second
+    /// <see cref="Application"/>, so this test creates the one <see cref="Application.Current"/> the
+    /// declaration needs - and puts the resource graph back the way it found it: both dictionaries are
+    /// removed in a <see langword="finally"/> and both icons are disposed, so a failing assertion here
+    /// cannot leave a merged icon behind for the rest of the suite.
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void Merging_a_declaration_dictionary_into_the_application_resources_yields_one_icon()
+    {
+        Application application = EnsureApplication();
+
+        Assert.True(
+            application.CheckAccess(),
+            "The merged declaration needs the application whose dispatcher this test runs on: Application.Current belongs to another thread.");
+
+        // The declaration half: markup inside a merged dictionary, inert over the real shell.
+        ResourceDictionary declaration = ParseDictionary(MergedDeclarationMarkup());
+        using var declaredIcon = Assert.IsType<TrayIcon>(declaration["TrayIcon"]);
+
+        application.Resources.MergedDictionaries.Add(declaration);
+
+        try
+        {
+            AssertTheMergedDeclarationResolvesTheSameSurface(application, declaration, declaredIcon);
+        }
+        finally
+        {
+            application.Resources.MergedDictionaries.Remove(declaration);
+        }
+
+        // The counting half: the same merged placement, over the scripted seam.
+        var shell = new FakeShellApi();
+        using var mergedIcon = new TrayIcon(shell) { IconSource = IconImage() };
+        var mergedDictionary = new ResourceDictionary { ["TrayIcon"] = mergedIcon };
+
+        application.Resources.MergedDictionaries.Add(mergedDictionary);
+
+        try
+        {
+            AssertTheShellRegistersExactlyOneIconForRepeatedLookups(application, mergedDictionary, mergedIcon, shell);
+        }
+        finally
+        {
+            application.Resources.MergedDictionaries.Remove(mergedDictionary);
+        }
+    }
+
+    /// <summary>
     /// Parses a dictionary, turning the markup into an object graph on this STA thread.
     /// </summary>
     /// <param name="markup">The markup to parse.</param>
@@ -329,6 +423,350 @@ public sealed class TrayIconXamlContractTests
                           ContextMenu="{StaticResource TrayMenu}" />
         </ResourceDictionary>
         """;
+
+    /// <summary>
+    /// The merged-dictionary declaration: the image, the consumer's menu data, the menu and the icon,
+    /// in the order <c>StaticResource</c> can resolve.
+    /// </summary>
+    /// <returns>The markup.</returns>
+    /// <remarks>
+    /// <para>
+    /// Deliberately <em>no</em> event attributes: a <c>ResourceDictionary</c>-rooted element carrying
+    /// one cannot be parsed, which the boundary test above pins. The event surface is asserted as
+    /// resolvable metadata instead.
+    /// </para>
+    /// <para>
+    /// <c>Visible="False"</c> is what keeps the instance inert. The registration count is taken on a
+    /// seam-built instance in a second instrument instead, because a registered markup instance would
+    /// put an icon into the notification area of the machine running the suite.
+    /// </para>
+    /// </remarks>
+    private static string MergedDeclarationMarkup() =>
+        $$"""
+        <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:tni="{{LibraryNamespace}}"
+                            xmlns:local="{{TestNamespace}}">
+            <DrawingImage x:Key="TrayImage">
+                <DrawingImage.Drawing>
+                    <GeometryDrawing Brush="#FF3060A0">
+                        <GeometryDrawing.Geometry>
+                            <EllipseGeometry Center="8,8" RadiusX="8" RadiusY="8" />
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                </DrawingImage.Drawing>
+            </DrawingImage>
+            <local:MenuGraph x:Key="TrayMenuData" Label="{{MergedMenuLabel}}" />
+            <ContextMenu x:Key="TrayMenu" DataContext="{StaticResource TrayMenuData}">
+                <MenuItem Header="{Binding Label}" />
+            </ContextMenu>
+            <tni:TrayIcon x:Key="TrayIcon"
+                          ToolTipText="{{MergedToolTipText}}"
+                          Visible="False"
+                          MenuActivation="None"
+                          IconSource="{StaticResource TrayImage}"
+                          ContextMenu="{StaticResource TrayMenu}" />
+        </ResourceDictionary>
+        """;
+
+    /// <summary>
+    /// The application the merged declaration needs: the one instance WPF allows per process.
+    /// </summary>
+    /// <returns>The current application, or a new one when this test is the first to need it.</returns>
+    /// <remarks>
+    /// Created on demand rather than by a fixture, because WPF throws on a second
+    /// <see cref="Application"/> and no other test in this suite needs a resource graph of its own:
+    /// the XAML contract tests above parse and stop there. An existing instance is reused rather than
+    /// replaced, so a future test that needs the same graph cannot make this one fail for a reason
+    /// that has nothing to do with the declaration.
+    /// </remarks>
+    private static Application EnsureApplication() => Application.Current ?? new Application();
+
+    /// <summary>
+    /// The declaration half of the merged-dictionary contract: one reachable icon, reference identity
+    /// across repeated lookups from both the application and the source dictionary, the five dependency
+    /// properties as markup declared them, the menu by identity with the consumer's own data context,
+    /// and the inert-until-Visible rule.
+    /// </summary>
+    /// <param name="application">The application the declaration is merged into.</param>
+    /// <param name="declaration">The merged dictionary.</param>
+    /// <param name="declaredIcon">The instance that dictionary holds.</param>
+    private static void AssertTheMergedDeclarationResolvesTheSameSurface(
+        Application application,
+        ResourceDictionary declaration,
+        TrayIcon declaredIcon)
+    {
+        // One key, one instance, one icon - counted across the whole merge graph rather than through
+        // one lookup, so a second instance reachable under the same key cannot hide behind it.
+        Assert.Same(declaredIcon, Assert.Single(CollectTrayIcons(application.Resources)));
+
+        // Repeated lookups resolve to that instance, from the application and from the source
+        // dictionary alike: a merge that minted a copy per lookup fails here.
+        Assert.Same(declaredIcon, application.Resources["TrayIcon"]);
+        Assert.Same(declaredIcon, application.Resources["TrayIcon"]);
+        Assert.Same(declaredIcon, declaration["TrayIcon"]);
+
+        // Inert until Visible: merging the declaration registers nothing.
+        Assert.False(declaredIcon.Visible);
+        Assert.False(declaredIcon.IsRegistered);
+        Assert.Equal(IntPtr.Zero, declaredIcon.HostHandle);
+
+        // The five dependency properties, resolved the way markup resolves them, carrying exactly what
+        // the dictionary declared.
+        AssertDeclaredProperty(declaredIcon, TrayIcon.IconSourceProperty, nameof(TrayIcon.IconSource), declaration["TrayImage"]);
+        AssertDeclaredProperty(declaredIcon, TrayIcon.ToolTipTextProperty, nameof(TrayIcon.ToolTipText), MergedToolTipText);
+        AssertDeclaredProperty(declaredIcon, TrayIcon.VisibleProperty, nameof(TrayIcon.Visible), false);
+        AssertDeclaredProperty(declaredIcon, TrayIcon.MenuActivationProperty, nameof(TrayIcon.MenuActivation), TrayMenuActivation.None);
+        AssertDeclaredProperty(declaredIcon, TrayIcon.ContextMenuProperty, nameof(TrayIcon.ContextMenu), declaration["TrayMenu"]);
+
+        // The two reference-valued properties are the dictionary's own objects, never copies.
+        Assert.Same(declaration["TrayImage"], declaredIcon.IconSource);
+        Assert.Same(declaration["TrayMenu"], declaredIcon.ContextMenu);
+
+        // The library-owned menu, not the inherited FrameworkElement one - carrying the consumer's own
+        // data context object, with the binding declared against it resolved.
+        var menu = Assert.IsType<ContextMenu>(declaration["TrayMenu"]);
+        var boundItem = Assert.IsType<MenuItem>(menu.Items[0]);
+
+        Assert.Null(((FrameworkElement)declaredIcon).ContextMenu);
+        Assert.Same(declaration["TrayMenuData"], menu.DataContext);
+        Assert.Same(declaration["TrayMenuData"], boundItem.DataContext);
+        Assert.Equal(MergedMenuLabel, boundItem.Header);
+
+        // The whole event surface a markup author names, resolvable as metadata.
+        AssertRoutedEventSurfaceIsMarkupResolvable();
+    }
+
+    /// <summary>
+    /// The counting half: a seam-built icon owned by a merged dictionary registers exactly once, and
+    /// repeated lookups of that dictionary return that one instance instead of minting another icon.
+    /// </summary>
+    /// <param name="application">The application the dictionary is merged into.</param>
+    /// <param name="dictionary">The merged dictionary that owns the icon.</param>
+    /// <param name="icon">The seam-built instance.</param>
+    /// <param name="shell">The scripted seam the instance talks to.</param>
+    private static void AssertTheShellRegistersExactlyOneIconForRepeatedLookups(
+        Application application,
+        ResourceDictionary dictionary,
+        TrayIcon icon,
+        FakeShellApi shell)
+    {
+        // Resolving a declaration registers nothing: an inert lookup is not an icon.
+        Assert.Same(icon, application.Resources["TrayIcon"]);
+        Assert.Same(icon, dictionary["TrayIcon"]);
+        Assert.Empty(ShellCallsFor(shell, ShellConstants.NIM_ADD));
+        Assert.False(icon.IsRegistered);
+
+        icon.Visible = true;
+
+        // Exactly one icon: the shell was asked to add one, and only one.
+        ShellCall add = Assert.Single(ShellCallsFor(shell, ShellConstants.NIM_ADD));
+
+        Assert.Equal(ShellConstants.NIM_ADD, add.Message);
+        Assert.True(icon.IsRegistered);
+        Assert.NotEqual(IntPtr.Zero, icon.RegisteredIconHandle);
+
+        // The registration is the documented pair: the add, then the version that makes the tooltip
+        // and the callback message meaningful.
+        Assert.Single(ShellCallsFor(shell, ShellConstants.NIM_SETVERSION));
+
+        // Repeated resolution - the lookup a template or a consumer's own code performs - returns the
+        // same single instance, and looking the declaration up again never adds a second icon.
+        Assert.Same(icon, application.Resources["TrayIcon"]);
+        Assert.Same(icon, dictionary["TrayIcon"]);
+        Assert.Same(icon, application.Resources["TrayIcon"]);
+        Assert.Same(icon, Assert.Single(CollectTrayIcons(application.Resources)));
+        Assert.Single(ShellCallsFor(shell, ShellConstants.NIM_ADD));
+
+        icon.Dispose();
+
+        // Disposal takes that one icon away and adds no second one.
+        Assert.Single(ShellCallsFor(shell, ShellConstants.NIM_DELETE));
+        Assert.Single(ShellCallsFor(shell, ShellConstants.NIM_ADD));
+        Assert.False(icon.IsRegistered);
+    }
+
+    /// <summary>
+    /// Asserts that one dependency property is resolvable for <see cref="TrayIcon"/> the way markup
+    /// resolves it, and that it holds the value the dictionary declared.
+    /// </summary>
+    /// <param name="element">The parsed instance to read.</param>
+    /// <param name="property">The property under test.</param>
+    /// <param name="name">The CLR property name markup spells.</param>
+    /// <param name="expected">The value the declaration carries.</param>
+    private static void AssertDeclaredProperty(DependencyObject element, DependencyProperty property, string name, object? expected)
+    {
+        Assert.Equal(name, property.Name);
+        Assert.Equal(typeof(TrayIcon), property.OwnerType);
+        Assert.False(property.ReadOnly);
+
+        // What a markup author actually looks through: a descriptor resolvable for this property on
+        // this type. A property markup could not resolve this way could not be declared at all.
+        DependencyPropertyDescriptor? descriptor = DependencyPropertyDescriptor.FromProperty(property, typeof(TrayIcon));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(name, descriptor!.Name);
+        Assert.Equal(property, descriptor.DependencyProperty);
+
+        Assert.Equal(expected, descriptor.GetValue(element));
+    }
+
+    /// <summary>
+    /// Asserts that every routed event <see cref="TrayIcon"/> declares is resolvable as the markup
+    /// surface a consumer writes: the field-name convention, the registered name, the owner type, the
+    /// routing strategy a <c>Preview</c> prefix implies, the CLR event wrapper with its handler type
+    /// and accessors, and a routed payload.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A merged declaration cannot carry event attributes, so this is where "the event wiring is
+    /// expressible in markup" is pinned for it - as the metadata a parser, a BAML compiler and a
+    /// <c>RoutedEvent</c> reference all resolve through. A renamed event, a strategy that lost its
+    /// tunnel, or a handler type that stopped being a routed delegate would leave every C# handler
+    /// working.
+    /// </para>
+    /// <para>
+    /// The last assertion is the one-to-one check: every public instance event declared on the type is
+    /// accounted for by a routed event field, so a new event cannot ship without the markup surface
+    /// this test describes.
+    /// </para>
+    /// </remarks>
+    private static void AssertRoutedEventSurfaceIsMarkupResolvable()
+    {
+        FieldInfo[] fields =
+        [
+            .. typeof(TrayIcon)
+                .GetFields(BindingFlags.Public | BindingFlags.Static)
+                .Where(field => field.FieldType == typeof(RoutedEvent)),
+        ];
+
+        Assert.NotEmpty(fields);
+
+        foreach (FieldInfo field in fields)
+        {
+            Assert.EndsWith("Event", field.Name, StringComparison.Ordinal);
+
+            string eventName = field.Name[..^"Event".Length];
+            var routedEvent = Assert.IsType<RoutedEvent>(field.GetValue(null));
+
+            // The name markup writes in an attribute, the element it can be written on, and the
+            // strategy that separates a cancelling Preview half from its main event.
+            Assert.Equal(eventName, routedEvent.Name);
+            Assert.Equal(typeof(TrayIcon), routedEvent.OwnerType);
+            Assert.Equal(
+                eventName.StartsWith("Preview", StringComparison.Ordinal) ? RoutingStrategy.Tunnel : RoutingStrategy.Bubble,
+                routedEvent.RoutingStrategy);
+
+            // The CLR event wrapper an attribute attaches its handler through, with the routed handler
+            // type the payload has to match.
+            EventInfo? wrapper = typeof(TrayIcon).GetEvent(eventName, BindingFlags.Public | BindingFlags.Instance);
+
+            Assert.NotNull(wrapper);
+            Assert.Equal(routedEvent.HandlerType, wrapper!.EventHandlerType);
+            Assert.NotNull(wrapper.AddMethod);
+            Assert.NotNull(wrapper.RemoveMethod);
+            Assert.True(wrapper.AddMethod!.IsPublic);
+            Assert.True(wrapper.RemoveMethod!.IsPublic);
+
+            // The payload a handler receives travels with the event.
+            MethodInfo? invoke = routedEvent.HandlerType.GetMethod("Invoke");
+
+            Assert.NotNull(invoke);
+
+            ParameterInfo[] parameters = invoke!.GetParameters();
+
+            Assert.Equal(2, parameters.Length);
+            Assert.True(typeof(RoutedEventArgs).IsAssignableFrom(parameters[1].ParameterType));
+        }
+
+        string[] routedNames = [.. fields.Select(field => field.Name[..^"Event".Length]).OrderBy(name => name, StringComparer.Ordinal)];
+        string[] declaredNames =
+        [
+            .. typeof(TrayIcon)
+                .GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Select(declared => declared.Name)
+                .OrderBy(name => name, StringComparer.Ordinal),
+        ];
+
+        Assert.Equal(declaredNames, routedNames);
+    }
+
+    /// <summary>
+    /// The <c>Shell_NotifyIcon</c> calls the seam received for one operation code, in call order.
+    /// </summary>
+    /// <param name="shell">The scripted seam.</param>
+    /// <param name="message">The <c>NIM_*</c> operation code to select.</param>
+    /// <returns>The matching calls.</returns>
+    /// <remarks>
+    /// Selected rather than counted, so the assertions read as "exactly one add"
+    /// (<see cref="Assert.Single(System.Collections.IEnumerable)"/>) or "no add at all", and cannot be
+    /// satisfied by a total that also contains the <c>NIM_SETVERSION</c> half of the same registration.
+    /// </remarks>
+    private static IEnumerable<ShellCall> ShellCallsFor(FakeShellApi shell, uint message) =>
+        shell.ShellNotifyIconCalls.Where(call => call.Message == message);
+
+    /// <summary>
+    /// The distinct <see cref="TrayIcon"/> instances a dictionary exposes, following its merged
+    /// dictionaries.
+    /// </summary>
+    /// <param name="dictionary">The dictionary to walk.</param>
+    /// <returns>The distinct instances reachable from it.</returns>
+    /// <remarks>
+    /// A set rather than a count, because the walk visits every merged dictionary and a raw count
+    /// would report a duplicate for an instance its own dictionary and the merge both expose. What the
+    /// assertion needs is "how many icons exist", which is a question about identity.
+    /// </remarks>
+    private static HashSet<TrayIcon> CollectTrayIcons(ResourceDictionary dictionary)
+    {
+        HashSet<TrayIcon> icons = [];
+
+        Walk(dictionary);
+
+        return icons;
+
+        void Walk(ResourceDictionary current)
+        {
+            foreach (object value in current.Values)
+            {
+                if (value is TrayIcon icon)
+                {
+                    icons.Add(icon);
+                }
+            }
+
+            foreach (ResourceDictionary merged in current.MergedDictionaries)
+            {
+                Walk(merged);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A 16x16 opaque <see cref="PixelFormats.Bgra32"/> source for the seam-built instance.
+    /// </summary>
+    /// <returns>The image.</returns>
+    /// <remarks>
+    /// A bitmap rather than a drawing, deliberately: a drawing is rasterized through the compositor and
+    /// needs a running dispatcher (<c>HiconFactoryTests</c> records that boundary), while a bitmap is
+    /// read directly. What this test counts is registrations, so the lightest source the conversion
+    /// accepts is the right one - and a real source is what makes the count a count of icons rather
+    /// than of calls with a null handle.
+    /// </remarks>
+    private static BitmapSource IconImage()
+    {
+        const int size = 16;
+        byte[] pixels = new byte[size * size * 4];
+
+        for (int index = 0; index < pixels.Length; index += 4)
+        {
+            pixels[index] = 0xA0;
+            pixels[index + 1] = 0x60;
+            pixels[index + 2] = 0x20;
+            pixels[index + 3] = 0xFF;
+        }
+
+        return BitmapSource.Create(size, size, 96, 96, PixelFormats.Bgra32, null, pixels, size * 4);
+    }
 }
 
 /// <summary>
