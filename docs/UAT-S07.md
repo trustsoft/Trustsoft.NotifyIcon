@@ -22,7 +22,7 @@
 | A fresh consumer project installs the package from the local feed and shows a working icon on each of the three frameworks (R010, R012) | **PASS** | T03: `docs/uat-logs/S07/t03-consumer-proof.txt` — one build, one surface assertion and one probed live run per framework, each `18/18` presence samples, a `gdi` series that rises only while the menu's popup is created and then never grows again, `sample-exit 0`, `icon-after-exit: gone`. That the package came from `artifacts/` and from nowhere else is proved by two controls: the same restore with a fresh global-packages folder succeeds with the feed present and fails with `NU1101 ... in source(s): artifacts-local-feed` with the feed emptied |
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
 | A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1326,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
-| The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `e87308ab…` identical before and after the run). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
+| The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `5310d269…` identical before and after the run, the log having been regenerated at the current revision when `ff32421` edited the README's prose afterwards; see *Every quoted command, run as written*). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
 | The task plan's whole verify line passes as one invocation on this revision | **PASS** | T05: `docs/uat-logs/S07/t05-plan-verify.txt` — pack exit 0, inspector `VERDICT all 15 assertions hold`, suite **403 passed / 0 failed / 0 skipped** |
 | The shipped public surface is still the seven documented types | **PASS** | T05: `PackagePurityTests` **12/12**, `Public_surface_is_only_the_documented_types` among them — `docs/uat-logs/S07/t05-milestone-claims.txt` section 1 |
 | The package contains nothing from the sample, the tests, the probe or the consumer proof | **PASS** | T05: the inspector's forbidden-entry assertion and its allowed-set assertion, both green on the artifact this run packed — same log, section 2 |
@@ -183,29 +183,31 @@ The stale `## Status` section was **removed, not re-worded**: its accurate mater
 
 ### Every quoted command, run as written
 
-**Raw evidence:** `docs/uat-logs/S07/t04-readme-verification.txt` (198 lines), produced by `bash docs/uat-logs/S07/t04-readme-verification.sh`. The producer executes each command through `bash -c` so the line in the log is the line in the document, prints `README.md`'s sha256 before and after, and exits with the number of failures:
+**Raw evidence:** `docs/uat-logs/S07/t04-readme-verification.txt` (197 lines), produced by `bash docs/uat-logs/S07/t04-readme-verification.sh`. The producer executes each command through `bash -c` so the line in the log is the line in the document, prints `README.md`'s sha256 before and after, and exits with the number of failures:
 
 ```
-README.md:   sha256 e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+README.md:   sha256 5310d269b1296f61ea10d6af7bab605a34de5ac306bede82c95df42addb2a526
 
 command                                                                             exit  duration
 -------------------------------------------------------------------------------------------------
 dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release                124*  12s
   (the README documents this invocation as running until the session ends; the harness stopped
    it at 12s, and its output shows the icon registered before that - 0 leftover processes)
-dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --run-seconds 20   0  24s
+dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --run-seconds 20   0  25s
 dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release -- --xaml --run-seconds 20  0  25s
 dotnet build Trustsoft.NotifyIcon.sln -c Release                                    0   4s
-dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows  0  63s
-dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release         0   4s
+dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows  0  64s
+dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release         0   2s
 bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.*.nupkg               0   2s
-dotnet build samples/Trustsoft.NotifyIcon.Sample -c Release -f net8.0-windows       0   3s
-dotnet run --project scripts/probe-live -c Release -- samples/.../Trustsoft.NotifyIcon.Sample.exe 12 --run-seconds 8  0  12s
+dotnet build samples/Trustsoft.NotifyIcon.Sample -c Release -f net8.0-windows       0   2s
+dotnet run --project scripts/probe-live -c Release -- samples/.../Trustsoft.NotifyIcon.Sample.exe 12 --run-seconds 8  0  13s
 
 SUMMARY  9 command(s), 0 failure(s)
-README.md sha256 before: e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
-README.md sha256 after:  e87308ab2af00b805def26e8fa2cae1c6570fff2215a974de6a08bf2cc366820
+README.md sha256 before: 5310d269b1296f61ea10d6af7bab605a34de5ac306bede82c95df42addb2a526
+README.md sha256 after:  5310d269b1296f61ea10d6af7bab605a34de5ac306bede82c95df42addb2a526
 ```
+
+**The log was regenerated at the corrected revision, and that is the point of the hash pair.** The first run was bound to `e87308ab…`; `ff32421` then added two bullets to *What this package deliberately is not* and one sentence to the repository notes, and since `README.md` is a package entry the header hash — not the run — became the stale part. Re-running the producer at `5310d269…` reproduced the same nine commands, the same nine exits and the same `403` test count, which is what makes the regeneration a check rather than a ritual: had the prose edit broken a quoted command or the guard, the re-run would have shown it. A fresh pack at this revision ships that exact file — `unzip -p artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg README.md` `cmp`s equal to `README.md` at sha256 `5310d269…` — which is what the inspector's README assertion checks by name and what `PackageReadmeFile` resolves to for a consumer.
 
 `*` the only non-zero exit is the documented-watchdog case, and the script fails the run if that command stops for any other reason. Two independent checks came out of the same log: `dotnet test` reported `Passed! - Failed: 0, Passed: 403` — 402 at the T03 revision plus T04's README guard, so the README's build-then-test advice in the repository notes describes a real suite rather than an empty silent pass — and the probed sample run reported `icons-in-notification-area: 1`, `observed-present: yes`, `gdi=13,15,17,17,17,17,17,17` across its eight samples, `sample-exit 0` and `icon-after-exit: gone (hr=0x80004005)` — the same columns every other slice's live evidence uses. The `verify-package.sh` line in the log is the 15-assertion PASS block quoted in the T02 section, re-run against the package this README revision was packed into.
 
@@ -232,7 +234,7 @@ control 2 - the namespace URI is removed everywhere it appears     PASS  guard f
 control 3 - "## Windowless shutdown" is dropped                     PASS  guard fails, names "must carry a '## Windowless shutdown' section"
 control 4 - "## Repository notes" moves above the install line       PASS  guard fails, names "repository-facing content must sit below the consumer content"
 control 5 - "BalloonTipOptions" is no longer named                  PASS  guard fails, names "does not name [BalloonTipOptions]"
-every control                                                      PASS  README restored byte-for-byte (e87308ab…)
+every control                                                      PASS  README restored byte-for-byte (5310d269…)
 
 SUMMARY  0 control failure(s)
 ```
@@ -465,7 +467,9 @@ revision, so its pair no longer reads the way the earlier run's did. The determi
   `docs/uat-logs/S07/t04-readme-verification.txt`), `ffd813f0…` (T01/T02-era — also the smaller build: the
   T01 and T02 logs record that artifact at 325,181 and 325,169 bytes against T05's 328,642) and `dad165f3…`
   (T05's). `README.md` is a package entry, so a README rebuild changes the bytes for a real reason rather
-  than a nondeterministic one;
+  than a nondeterministic one. The T04 log named in that list was regenerated afterwards, when `ff32421`
+  edited the README again: it now records `5310d269…` (the README at the corrected revision) and
+  `f57397ba…` (the pack of that revision), while `e8f551a2…` is the value its earlier run measured;
 - the sentence in `t05-pack-reproducibility.txt` about a "T04-vs-T05 hash difference in
   t05-plan-verify.txt" describes the plan-verify log **as it stood when that log was produced**. The
   plan-verify log was regenerated afterwards on the corrected revision, which is why its own pair now reads
