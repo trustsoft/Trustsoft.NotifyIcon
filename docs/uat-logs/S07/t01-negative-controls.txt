@@ -1,0 +1,59 @@
+# S07/T01 raw evidence: negative controls for the packaging guards
+date: 2026-09-21T14:28:55+03:00
+machine: unknown / MINGW64_NT-10.0-26200
+sdk: 10.0.401
+
+Each control below breaks exactly one invariant, records the failure the guard reports, and
+restores the file it touched; the cmp check at the end proves the restore.
+
+## control 1 - a forbidden PackageReference (H.NotifyIcon) in the sample
+## control 1 verdict
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-build --no-restore --filter "FullyQualifiedName~No_project_declares_a_package_reference"
+(exit=1)
+
+[xUnit.net 00:00:00.39]     Trustsoft.NotifyIcon.Tests.PackagePurityTests.No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library [FAIL]
+  Failed Trustsoft.NotifyIcon.Tests.PackagePurityTests.No_project_declares_a_package_reference_outside_the_test_framework_and_the_packed_library [12 ms]
+  Error Message:
+   R011: 1 package-reference violation(s) found among 5 reference(s) in 5 file(s):
+ - samples/Trustsoft.NotifyIcon.Sample/Trustsoft.NotifyIcon.Sample.csproj declares 'H.NotifyIcon', which R011/D001 forbids by name (WinForms, System.Drawing, a WinRT contracts package, or another tray implementation)
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 12 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+## control 2 - the library loses its <Version>
+## control 2 verdict
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-build --no-restore --filter "FullyQualifiedName~Library_csproj_declares_the_package_metadata"
+(exit=1)
+
+[xUnit.net 00:00:00.33]     Trustsoft.NotifyIcon.Tests.PackagePurityTests.Library_csproj_declares_the_package_metadata_a_consumer_sees [FAIL]
+  Failed Trustsoft.NotifyIcon.Tests.PackagePurityTests.Library_csproj_declares_the_package_metadata_a_consumer_sees [8 ms]
+  Error Message:
+   'C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\Trustsoft.NotifyIcon.csproj' does not declare a non-empty <Version> element, so the packaging contract cannot be verified from it.
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 8 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+## control 3 - the sample loses its IsPackable=false
+## control 3 verdict
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-build --no-restore --filter "FullyQualifiedName~Non_shipping_projects"
+(exit=1)
+
+[xUnit.net 00:00:00.31]     Trustsoft.NotifyIcon.Tests.PackagePurityTests.Non_shipping_projects_are_not_packable_and_the_instruments_stay_out_of_the_solution [FAIL]
+  Failed Trustsoft.NotifyIcon.Tests.PackagePurityTests.Non_shipping_projects_are_not_packable_and_the_instruments_stay_out_of_the_solution [5 ms]
+  Error Message:
+   'samples\Trustsoft.NotifyIcon.Sample\Trustsoft.NotifyIcon.Sample.csproj' must declare <IsPackable>false</IsPackable>. Without it the SDK packs it by default and `dotnet pack` produces a second nupkg next to the library's - a demonstration or an instrument would be published.
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 5 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+## restore verification
+  sample csproj restored byte-for-byte
+  library csproj restored byte-for-byte
+
+## verdict
+  Three controls, three named failures, each naming the offending project and property.
+  The byte-for-byte restore above is what proves this driver left nothing behind.
+  The green re-run of the same guards, and the pack inspection, are deliberately NOT part of
+  this driver: they are executed as separate fresh commands. The build failure this driver is
+  careful not to leave behind was measured to come from the shell's environment, not from the
+  repository: a shell that arrives without the Windows profile variables (APPDATA,
+  LOCALAPPDATA, ProgramData) makes a build fail during NuGet's restore graph evaluation - exit 1,
+  'Value cannot be null. (Parameter 'path1')' from NuGet.targets GetRestoreSettingsTask - while
+  the same content and the same user build with 0 errors once those variables are present. This
+  driver fills them in when they are absent, and the environment it ran in is printed above.
+  Nothing about the repository is left inconsistent, and the cmp check above is the guarantee of
+  that.

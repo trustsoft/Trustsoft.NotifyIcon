@@ -1,0 +1,106 @@
+# S07/T01 raw evidence: the packed package
+date: 2026-09-21T14:28:41+03:00
+machine: MinibookX / MINGW64_NT-10.0-26200
+sdk: 10.0.401
+environment: APPDATA='C:\Users\Maxim\AppData\Roaming' LOCALAPPDATA='C:\Users\Maxim\AppData\Local' TEMP='C:\Users\Maxim\AppData\Local\Temp'
+
+## 1. build and pack
+$ dotnet build Trustsoft.NotifyIcon.sln -c Release
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+(exit=0)
+$ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
+  Successfully created package 'C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\..\..\artifacts\Trustsoft.NotifyIcon.1.0.0.nupkg'.
+(exit=0)
+
+## 2. the package file
+-rw-r--r-- 1 Maxim 197121 325181 Sep 21 14:28 artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+
+## 3. package entries
+$ unzip -l artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+Archive:  artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      487  2026-09-21 11:28   _rels/.rels
+     1685  2026-09-21 11:28   Trustsoft.NotifyIcon.nuspec
+     1087  2026-09-21 11:28   LICENSE
+     9419  2026-09-21 11:28   README.md
+    55808  2026-09-21 11:28   lib/net10.0-windows7.0/Trustsoft.NotifyIcon.dll
+   390014  2026-09-21 11:28   lib/net10.0-windows7.0/Trustsoft.NotifyIcon.xml
+    55296  2026-09-21 11:28   lib/net8.0-windows7.0/Trustsoft.NotifyIcon.dll
+   390014  2026-09-21 11:28   lib/net8.0-windows7.0/Trustsoft.NotifyIcon.xml
+    55808  2026-09-21 11:28   lib/net9.0-windows7.0/Trustsoft.NotifyIcon.dll
+   390014  2026-09-21 11:28   lib/net9.0-windows7.0/Trustsoft.NotifyIcon.xml
+      659  2026-09-21 11:28   [Content_Types].xml
+     1087  2026-09-21 11:28   package/services/metadata/core-properties/nuget.psmdcp
+---------                     -------
+  1351378                     12 files
+
+## 4. nuspec as written
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>Trustsoft.NotifyIcon</id>
+    <version>1.0.0</version>
+    <authors>Trustsoft</authors>
+    <license type="expression">MIT</license>
+    <licenseUrl>https://licenses.nuget.org/MIT</licenseUrl>
+    <readme>README.md</readme>
+    <description>A notification-area (system tray) icon for WPF applications that need no window and no System.Windows.Forms. Registers the icon through the library's own Shell_NotifyIcon P/Invoke declarations, so the shipped assembly carries no package reference beyond the platform: no WinForms, no System.Drawing.Common and no tray-helper package. Targets net8.0-windows, net9.0-windows and net10.0-windows.</description>
+    <tags>wpf tray tray-icon notification-area notifyicon system-tray taskbar no-winforms p-invoke</tags>
+    <repository type="git" commit="2652f4018f2c37959fb07f8090fea098d9d9f7dd" />
+    <dependencies>
+      <group targetFramework="net10.0-windows7.0" />
+      <group targetFramework="net8.0-windows7.0" />
+      <group targetFramework="net9.0-windows7.0" />
+    </dependencies>
+    <frameworkReferences>
+      <group targetFramework="net10.0-windows7.0">
+        <frameworkReference name="Microsoft.WindowsDesktop.App.WPF" />
+      </group>
+      <group targetFramework="net8.0-windows7.0">
+        <frameworkReference name="Microsoft.WindowsDesktop.App.WPF" />
+      </group>
+      <group targetFramework="net9.0-windows7.0">
+        <frameworkReference name="Microsoft.WindowsDesktop.App.WPF" />
+      </group>
+    </frameworkReferences>
+  </metadata>
+</package>
+## 5. the invariants, read out of the nuspec
+  id                          : <id>Trustsoft.NotifyIcon</id>
+  version                     : <version>1.0.0</version>
+  authors                     : <authors>Trustsoft</authors>
+  license                     : <license type="expression">
+  readme                      : <readme>README.md</readme>
+  tags                        : <tags>wpf tray tray-icon notification-area notifyicon system-tray taskbar no-winforms p-invoke</tags>
+  repository element          : <repository type="git" commit="2652f4018f2c37959fb07f8090fea098d9d9f7dd" />
+  <dependency> entries        : 0 (must be 0)
+  frameworkReferences named   : <frameworkReference name="Microsoft.WindowsDesktop.App.WPF" 
+
+## 6. per-entry checks
+  PASS  packed: README.md
+  PASS  packed: LICENSE
+  PASS  packed: lib/net8.0-windows7.0/Trustsoft.NotifyIcon.dll
+  PASS  packed: lib/net8.0-windows7.0/Trustsoft.NotifyIcon.xml
+  PASS  packed: lib/net9.0-windows7.0/Trustsoft.NotifyIcon.dll
+  PASS  packed: lib/net9.0-windows7.0/Trustsoft.NotifyIcon.xml
+  PASS  packed: lib/net10.0-windows7.0/Trustsoft.NotifyIcon.dll
+  PASS  packed: lib/net10.0-windows7.0/Trustsoft.NotifyIcon.xml
+  PASS  not packed: Sample
+  PASS  not packed: Tests
+  PASS  not packed: testhost
+  PASS  not packed: probe-live
+  PASS  the nuspec declares no package dependency group entry
+
+## 7. packaging guards
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-build --filter "FullyQualifiedName~PackagePurityTests"
+Passed!  - Failed:     0, Passed:    11, Skipped:     0, Total:    11, Duration: 83 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+
+## 8. note on the environment shim (above, in the script)
+  The shim is what makes this file runnable in an agent shell that starts without the Windows
+  profile variables. It only fills in variables that are absent, and every check below reads the
+  package the pack step produced, not the environment.
+
+## verdict: all package invariants hold

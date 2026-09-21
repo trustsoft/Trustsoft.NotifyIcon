@@ -10,10 +10,76 @@
   </PropertyGroup>
 
   <!--
+    Package metadata (R010). These values live in the library project rather than in
+    Directory.Build.props because this is the only project in the repository that is ever packed:
+    a repository-wide property group for a population of one would only obscure which project the
+    settings belong to, and it would leak "PackageId Trustsoft.NotifyIcon" onto the sample and the
+    tests, which must never be packable at all (see Non-shipping-projects note below).
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <!--
+      The v1 version of the M001 surface. SemVer with breaking changes only in major versions is
+      D010; the specific number, why it is not a prerelease, and what would move it are recorded
+      as D037. `Version` also drives AssemblyVersion/FileVersion/AssemblyInformationalVersion, so
+      there is no second place to bump.
+    -->
+    <Version>1.0.0</Version>
+    <Authors>Trustsoft</Authors>
+    <Description>A notification-area (system tray) icon for WPF applications that need no window and no System.Windows.Forms. Registers the icon through the library's own Shell_NotifyIcon P/Invoke declarations, so the shipped assembly carries no package reference beyond the platform: no WinForms, no System.Drawing.Common and no tray-helper package. Targets net8.0-windows, net9.0-windows and net10.0-windows.</Description>
+    <PackageTags>wpf;tray;tray-icon;notification-area;notifyicon;system-tray;taskbar;no-winforms;p-invoke</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      PackageOutputPath is set here, not repository-wide, for the same reason as the rest of the
+      metadata: exactly one project is packable. The path is written relative to this project file
+      (`src/Trustsoft.NotifyIcon/`), so the nupkg lands in the repository's own `artifacts/`
+      directory, which is gitignored - a packed artifact is never a source file.
+    -->
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\</PackageOutputPath>
+    <!--
+      R011 / "no dependency group beyond WPF" is asserted as "no <dependency> entry in any group",
+      not as "no <dependencies> element" (D038): the SDK emits one EMPTY <group targetFramework=...>
+      per lib folder, and that is not a dependency claim - it is how the nuspec declares which
+      frameworks the package has a lib for, and the SDK's own validation enforces the pairing. Measured: setting
+      SuppressDependenciesWhenPacking=true removes the element and the pack then fails with
+      NU5128 ("add a dependency group for net8.0-windows7.0"), which TreatWarningsAsErrors turns
+      into an error. The empty groups therefore stay, and the guard lives in the test suite
+      (PackagePurityTests) and in scripts/verify-package.sh.
+    -->
+    <!--
+      Deliberately absent: RepositoryUrl and PackageProjectUrl. This repository has no remote and
+      therefore no real URL to point at, and a fabricated link in package metadata is worse than an
+      absent one - it sends a consumer to a page that does not exist and it cannot be corrected
+      after publication. Both are omitted on purpose; PackagePurityTests asserts their absence so
+      that adding one later is a deliberate edit against a URL that actually resolves.
+    -->
+  </PropertyGroup>
+
+  <!--
+    The README and the licence travel inside the nupkg (R010): PackageReadmeFile names README.md,
+    so the file has to be an actual package entry at the package root, and the MIT licence text is
+    shipped alongside the SPDX expression rather than only referenced by it.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+  <!--
     Zero PackageReference entries by design (R011, D001): the library talks to the shell
     through its own P/Invoke declarations. No System.Drawing.Common (removed from the
     shared framework in .NET 8+ and would add a dependency for HICON ownership we already
     handle ourselves) and no Microsoft.Windows.Compatibility.
+  -->
+
+  <!--
+    Non-shipping projects. The sample and the test project declare IsPackable=false in their own
+    project files, and scripts/probe-live carries the same property as defence in depth. The probe
+    cannot reach the package by construction as well as by property: it is absent from
+    Trustsoft.NotifyIcon.sln (so `dotnet pack Trustsoft.NotifyIcon.sln` cannot see it) and it takes
+    no project reference to the library, which is what keeps its presence oracle independent of the
+    code it checks (S06 hand-off). PackagePurityTests pins all of this.
   -->
 
 </Project>
