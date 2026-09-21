@@ -837,24 +837,6 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// property <see langword="false"/>, so the value always describes shell-confirmed state and a
     /// later assignment can retry the registration.
     /// </para>
-    /// </remarks>
-    /// <summary>
-    /// Gets or sets a value indicating whether the icon is shown in the notification area.
-    /// </summary>
-    /// <value><see langword="false"/> by default. Setting the property from a background thread is
-    /// supported and marshals to the UI thread.</value>
-    /// <remarks>
-    /// <para>
-    /// Setting it to <see langword="true"/> registers the icon: the host window is created on
-    /// first use, the icon is converted if <see cref="IconSource"/> is set, and the shell is told
-    /// <c>NIM_ADD</c> and then <c>NIM_SETVERSION(4)</c>. Setting it to <see langword="false"/>
-    /// removes the registration and destroys the retained <c>HICON</c>.
-    /// </para>
-    /// <para>
-    /// A failed registration raises <see cref="TrayIconException"/> <em>and</em> leaves the
-    /// property <see langword="false"/>, so the value always describes shell-confirmed state and a
-    /// later assignment can retry the registration.
-    /// </para>
     /// <para>
     /// <b>The value survives a taskbar restart (R005).</b> A restarted Explorer discards the
     /// notification-area registration - the registration lives in the shell's process, not in this
