@@ -31,7 +31,7 @@ namespace Trustsoft.NotifyIcon.ProbeLive;
 /// <para>
 /// <b>Usage.</b>
 /// <code>
-/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
+/// probe-live &lt;sampleExe&gt; &lt;observeSeconds&gt; [--kill-after &lt;seconds&gt;] [--click-after &lt;seconds&gt;] [--keep-sample-alive] [--sample-arg &lt;arg&gt;]...
 /// </code>
 /// Everything after the first two arguments is passed through to the sample, which owns its own
 /// demonstration switches (<c>--run-seconds</c>, <c>--show-balloon-after</c>,
@@ -83,6 +83,7 @@ internal static class Program
 
         string sampleExe = args[0];
         TimeSpan? killAfter = null;
+        TimeSpan? clickAfter = null;
         bool keepSampleAlive = false;
         var sampleArgs = new List<string>();
 
@@ -94,6 +95,18 @@ internal static class Program
                 // shell must keep answering that the icon is present, which is what proves the
                 // verdict column can say both things rather than being stuck on "gone".
                 keepSampleAlive = true;
+                continue;
+            }
+
+            if (args[i] == "--click-after" && i + 1 < args.Length
+                && double.TryParse(args[i + 1], CultureInfo.InvariantCulture, out double clickSeconds))
+            {
+                // A real right click at the icon, because a declarative run cannot open its own menu:
+                // the self-open hook needs a subclass, and the declared type is the library's own
+                // TrayIcon. This is also the stronger proof of the two - it goes through the shell's
+                // callback and the library's decode, which the self-open path deliberately bypasses.
+                clickAfter = TimeSpan.FromSeconds(clickSeconds);
+                i++;
                 continue;
             }
 
@@ -127,8 +140,10 @@ internal static class Program
         uint iconId = 0;
         bool identityKnown = false;
         bool everPresent = false;
+        int iconCount = -1;
         var stopwatch = Stopwatch.StartNew();
         bool killIssued = false;
+        bool clickIssued = false;
 
         while (stopwatch.Elapsed < TimeSpan.FromSeconds(observeSeconds))
         {
@@ -146,13 +161,19 @@ internal static class Program
                 KillSample(sample.Id);
             }
 
-            if (!identityKnown && !TryResolveIdentity(sample.Id, out hostWindow, out iconId, out string scanDetail))
+            if (!identityKnown && !TryResolveIdentity(sample.Id, out hostWindow, out iconId, out iconCount, out string scanDetail))
             {
                 Console.WriteLine($"[probe] t={stopwatch.Elapsed.TotalSeconds:0}s pid={sample.Id} icon=no-reading ({scanDetail}) gdi={ReadGdi(sample)}");
                 continue;
             }
 
             identityKnown = true;
+
+            if (clickAfter is TimeSpan clickDeadline && !clickIssued && stopwatch.Elapsed >= clickDeadline)
+            {
+                clickIssued = true;
+                InjectRightClick(hostWindow, iconId);
+            }
 
             if (TryGetIconRect(hostWindow, iconId, out NativeRect rect, out int hr))
             {
@@ -166,6 +187,7 @@ internal static class Program
         }
 
         Console.WriteLine($"[probe] identity: hwnd=0x{hostWindow.ToInt64():X} uID={iconId} title=\"{DescribeWindow(hostWindow)}\" ({HostWindowTitleHint} is the expected title)");
+        Console.WriteLine($"[probe] icons-in-notification-area: {iconCount} (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)");
         Console.WriteLine($"[probe] observed-present: {(everPresent ? "yes" : "no")}");
         Console.WriteLine($"[probe] sample-alive-at-end: {!sample.HasExited}; exit-code: {(sample.HasExited ? sample.ExitCode.ToString(CultureInfo.InvariantCulture) : "(running)")}");
 
@@ -196,6 +218,7 @@ internal static class Program
     /// <param name="pid">The sample process id.</param>
     /// <param name="hostWindow">Receives the window that registered the icon.</param>
     /// <param name="iconId">Receives the icon id.</param>
+    /// <param name="iconCount">Receives the number of icons the shell holds for this process.</param>
     /// <param name="detail">Receives a human-readable account of what was scanned.</param>
     /// <returns><see langword="true"/> when an identity was found.</returns>
     /// <remarks>
@@ -204,10 +227,11 @@ internal static class Program
     /// mistaken for the icon being absent, which is the difference between a broken instrument and a
     /// real finding.
     /// </remarks>
-    private static bool TryResolveIdentity(int pid, out IntPtr hostWindow, out uint iconId, out string detail)
+    private static bool TryResolveIdentity(int pid, out IntPtr hostWindow, out uint iconId, out int iconCount, out string detail)
     {
         hostWindow = IntPtr.Zero;
         iconId = 0;
+        iconCount = 0;
 
         IReadOnlyList<IntPtr> windows = TopLevelWindowsOf(pid);
 
@@ -219,6 +243,7 @@ internal static class Program
                 {
                     hostWindow = window;
                     iconId = candidate;
+                    iconCount = CountIcons(windows);
                     detail = $"found on window 0x{window.ToInt64():X}";
                     return true;
                 }
@@ -229,6 +254,82 @@ internal static class Program
             ? "the sample owns no top-level window yet"
             : $"scanned {windows.Count} window(s) x {MaxIconIdScan} icon id(s)";
         return false;
+    }
+
+    /// <summary>
+    /// Counts every icon the shell currently holds for the given windows.
+    /// </summary>
+    /// <param name="windows">The sample's top-level windows.</param>
+    /// <returns>The number of <c>(window, icon id)</c> pairs the shell located.</returns>
+    /// <remarks>
+    /// This is the deferral measurement. <c>App.xaml</c> declares the resources unconditionally, and
+    /// BAML is supposed to defer instantiation until the first lookup - so a code-first run must still
+    /// end up with exactly one icon. If the deferral ever stopped holding, the extra instantiation
+    /// would be a real second registration, and this count is what would show it.
+    /// </remarks>
+    private static int CountIcons(IReadOnlyList<IntPtr> windows)
+    {
+        int count = 0;
+
+        foreach (IntPtr window in windows)
+        {
+            for (uint candidate = 1; candidate <= MaxIconIdScan; candidate++)
+            {
+                if (TryGetIconRect(window, candidate, out _, out _))
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Right-clicks the centre of the icon, the way a user would.
+    /// </summary>
+    /// <param name="hostWindow">The window that registered the icon.</param>
+    /// <param name="iconId">The icon id.</param>
+    /// <remarks>
+    /// The position comes from the shell's own answer about where the icon is, so the click lands on
+    /// the icon rather than on a remembered coordinate. It is a real input event, so it exercises the
+    /// whole declared path: the shell's callback, the library's decode, the routed event the markup
+    /// wired, and the menu the markup assigned. A failure to click is reported rather than thrown -
+    /// this is an instrument, and a probe that dies mid-run loses the series it was collecting.
+    /// </remarks>
+    private static void InjectRightClick(IntPtr hostWindow, uint iconId)
+    {
+        if (!TryGetIconRect(hostWindow, iconId, out NativeRect rect, out int hr))
+        {
+            Console.WriteLine($"[probe] click injected: no - the shell could not locate the icon (hr=0x{hr:X8})");
+            return;
+        }
+
+        int x = (rect.Left + rect.Right) / 2;
+        int y = (rect.Top + rect.Bottom) / 2;
+
+        if (!SetCursorPos(x, y))
+        {
+            Console.WriteLine($"[probe] click injected: no - SetCursorPos({x},{y}) failed");
+            return;
+        }
+
+        // The cursor was placed on the icon, but Win11's tray only treats an icon as live once the
+        // pointer has moved over it: a press with no preceding move produced no callback at all
+        // (measured: the click was injected at the icon's own rectangle and the sample recorded
+        // clicks=0). So the pointer is nudged across the icon and back before the buttons, which is
+        // what a human hand does on the way to the icon.
+        mouse_event(MouseEventMove, 4, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(60);
+        mouse_event(MouseEventMove, unchecked((uint)-4), 0, 0, UIntPtr.Zero);
+        Thread.Sleep(60);
+
+        mouse_event(MouseEventRightDown, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(40);
+        mouse_event(MouseEventRightUp, 0, 0, 0, UIntPtr.Zero);
+
+        Console.WriteLine(
+            $"[probe] click injected: right click at ({x},{y}) - the icon's own rectangle, so the shell's callback and the menu it opens are the real ones");
     }
 
     /// <summary>
@@ -476,6 +577,39 @@ internal static class Program
     /// <param name="parameter">The caller's parameter.</param>
     /// <returns>Whether to continue enumerating.</returns>
     private delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+
+    /// <summary><c>MOUSEEVENTF_MOVE</c>.</summary>
+    private const uint MouseEventMove = 0x0001;
+
+    /// <summary><c>MOUSEEVENTF_RIGHTDOWN</c>.</summary>
+    private const uint MouseEventRightDown = 0x0008;
+
+    /// <summary><c>MOUSEEVENTF_RIGHTUP</c>.</summary>
+    private const uint MouseEventRightUp = 0x0010;
+
+    /// <summary>Moves the cursor to a point in physical screen pixels.</summary>
+    /// <param name="x">The x coordinate.</param>
+    /// <param name="y">The y coordinate.</param>
+    /// <returns>Whether the cursor was moved.</returns>
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCursorPos(int x, int y);
+
+    /// <summary>Synthesises a mouse event at the current cursor position.</summary>
+    /// <param name="flags">The button flags.</param>
+    /// <param name="dx">The x offset; unused for a non-move event.</param>
+    /// <param name="dy">The y offset; unused for a non-move event.</param>
+    /// <param name="data">The wheel or extra-button data; unused for a button event.</param>
+    /// <param name="extraInfo">The caller's extra information; unused.</param>
+    /// <remarks>
+    /// Superseded by <c>SendInput</c> and used deliberately: a hand-declared <c>INPUT</c> union is easy
+    /// to size wrongly on x64 (measured: <c>SendInput</c> returned 0 of 2 events for the declaration
+    /// that was tried first, which is the signature of a rejected record size), and this needs no
+    /// structure at all. The cost is that every event is a separate call, which is fine for the single
+    /// click this instrument makes.
+    /// </remarks>
+    [DllImport("user32.dll", ExactSpelling = true)]
+    private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 
     /// <summary>Retrieves the bounding rectangle of a notification icon.</summary>
     /// <param name="identifier">The icon identity.</param>
