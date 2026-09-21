@@ -381,11 +381,14 @@ public partial class App : Application
         // because the markup carries Visible="True". Nothing is assigned or subscribed below in that
         // mode: markup carries the whole declaration, which is what this mode exists to prove.
         //
-        // The declared type is the library's own TrayIcon, not SampleTrayIcon, because an
-        // ApplicationDefinition cannot resolve a type from its own project (measured: the markup
-        // compiler reports MC3074 for the local type and accepts the referenced library type). The
-        // subclass therefore stays a code-first instrument, and the consequence for --open-menu-after
-        // is reported by that timer rather than hidden.
+        // What the markup declares is SampleTrayIcon, the sample's own subclass, and only because
+        // --open-menu-after has to open the *declared* menu with no shell click - that path needs the
+        // protected OnTrayClick hook, which the library deliberately does not expose publicly. Every
+        // attribute the declaration writes belongs to the library type, so the markup compiled here is
+        // the library's own surface; the plain library type declared in Application.Resources is pinned
+        // headlessly by TrayIconXamlContractTests, and the namespace a consumer writes is proven to
+        // resolve by that same file. See App.xaml for why the local namespace must not be
+        // assembly-qualified.
         TrayIcon? trayIcon = arguments.Declarative ? null : new SampleTrayIcon();
 
         if (trayIcon is not null)
@@ -423,6 +426,12 @@ public partial class App : Application
             {
                 trayIcon = DeclarativeIcon();
                 _trayIcon = trayIcon;
+
+                // The declaration names SampleTrayIcon, so the no-click menu instrument is available in
+                // this mode too. The cast is a guard rather than an assumption: a consumer whose own
+                // App.xaml declares the plain library type gets a TrayIcon here, and the self-open timer
+                // then reports that it cannot reach the hook instead of failing on an invalid cast.
+                _sampleTrayIcon = trayIcon as SampleTrayIcon;
             }
             else
             {
@@ -562,11 +571,13 @@ public partial class App : Application
 
         if (icon is null)
         {
-            // Declarative mode declares the library's TrayIcon, so this hook is not available there:
-            // the self-open path needs the subclass that reaches OnTrayClick. Said plainly rather
-            // than left as the generic "no tray icon exists" line, which would be wrong in this mode -
-            // the icon does exist, the instrument does not.
-            Console.WriteLine("[sample] --open-menu-after: unavailable in declaration mode - the self-open hook needs the code-first subclass, so open the menu with a real right click instead.");
+            // The declaration did not name a type that reaches OnTrayClick (a plain library TrayIcon
+            // does not), so the self-open path is not available. Said plainly rather than left as the
+            // generic "no tray icon exists" line, which would be wrong here - the icon does exist, the
+            // instrument does not.
+            Console.WriteLine("[sample] --open-menu-after: unavailable - the declared instance is not a "
+                + nameof(SampleTrayIcon)
+                + ", so there is no route to the menu-open hook; open the menu with a real right click instead.");
             return;
         }
 

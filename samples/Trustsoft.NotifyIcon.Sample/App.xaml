@@ -1,7 +1,7 @@
 <Application x:Class="Trustsoft.NotifyIcon.Sample.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:tni="http://schemas.trustsoft.com/notifyicon"
+             xmlns:local="clr-namespace:Trustsoft.NotifyIcon.Sample"
              ShutdownMode="OnExplicitShutdown">
     <!--
       No StartupUri on purpose: the premise of this project is an application that owns a tray icon
@@ -60,10 +60,29 @@
           (D031): a balloon stays a method call, so the sample demonstrates one through its balloon
           self-show timer in this mode too.
 
+          The declared element is the sample's own SampleTrayIcon, not the library's TrayIcon, for one
+          reason: the self-open menu switch has to open the *declared* menu with no shell click, and that
+          path needs the protected OnTrayClick hook the subclass exposes. Every attribute used here belongs
+          to the library type and resolves through the same dependency properties and routed events, so
+          the declaration is still the library's markup surface; TrayIconXamlContractTests pins that the
+          library type itself parses for a consumer, and the UAT records the same run in code-first mode.
+
+          The namespace is deliberately NOT assembly-qualified. A clr-namespace with
+          ";assembly=Trustsoft.NotifyIcon.Sample" fails the markup compiler with MC3074 for a type in the
+          ApplicationDefinition's own project, because that assembly does not exist yet while it is being
+          compiled; omitting the qualifier resolves the local type, which is why xmlns:local carries no
+          assembly name.
+
+          A consumer's ApplicationDefinition lives in another assembly, so it writes the library's own
+          namespace instead - http://schemas.trustsoft.com/notifyicon, declared with XmlnsPrefix "tni" in
+          the library's AssemblyInfo.cs and resolved by a real parse in TrayIconXamlContractTests. That is
+          the snippet the README documents; this file cannot use it, because the element it declares is a
+          type from its own project.
+
           x:Shared is deliberately left at its default (true): one key, one instance, one icon.
           x:Shared="False" would mint a new icon on every lookup.
         -->
-        <tni:TrayIcon x:Key="TrayIcon"
+        <local:SampleTrayIcon x:Key="TrayIcon"
                                Visible="True"
                                ToolTipText="Trustsoft.NotifyIcon sample (declared in XAML)"
                                MenuActivation="RightClick"

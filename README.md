@@ -83,9 +83,12 @@ distinct images an application hands over, not to the number of replacements. No
   would have to cover, and the host-window mechanism is the guarantee instead;
 - declarative XAML usage is implemented (S06) — see the bullet above. What is **not** delivered is
   `NotifyIcon`-style markup *convenience*: there are no balloon dependency properties (a balloon stays
-  a method call by decision), and the declarative path uses the library's `TrayIcon` rather than a
-  sample-specific subclass, because an `ApplicationDefinition` cannot resolve a type from its own
-  project (measured: the markup compiler reports `MC3074`);
+  a method call by decision). The sample's own declaration names `SampleTrayIcon`, a subclass, only so
+  that the no-click menu demonstration can reach the protected menu-open hook; a consumer whose markup
+  lives in another assembly declares `tni:TrayIcon` directly, which the markup compiler validates at
+  build time. One trap is worth naming: inside an `ApplicationDefinition`, a *local* type must be
+  declared with an unqualified `clr-namespace` — adding `;assembly=` for the project being compiled
+  fails with `MC3074`;
 - NuGet packaging, licence metadata and the CI release pipeline (S07).
 
 ## Try it
@@ -100,7 +103,10 @@ dotnet run --project samples/Trustsoft.NotifyIcon.Sample -c Release
 Add `-- --run-seconds 20` to let it exit by itself after 20 seconds — useful for watching a graceful
 shutdown remove the icon. Add `-- --xaml` to run the same application from the declaration in
 `App.xaml` instead of the C# construction path; both modes print the same lines, which is what makes
-a diff between two captures meaningful.
+a diff between two captures meaningful. Add `-- --open-menu-after 5` to have the menu open and close
+itself five seconds in without any shell click, in either mode; the declarative path's live proof is
+[`docs/UAT-S06.md`](docs/UAT-S06.md), where that switch is what shows the *declared* menu opening at
+the icon.
 
 Sample behaviour, including what it writes to the console when the shell refuses the registration, is
 described in [`docs/UAT-S01.md`](docs/UAT-S01.md); the balloon demonstration and its switches are
