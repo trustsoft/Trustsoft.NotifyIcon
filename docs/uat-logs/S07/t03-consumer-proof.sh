@@ -10,6 +10,13 @@
 # same instrument columns every other slice uses), and finally attempts a shell click at the icon -
 # the S06/F1 instrument limit, re-measured here from the consumer side rather than assumed.
 #
+# The instrument itself is built by section 6 before the runs that use it. A fresh or re-materialized
+# worktree has no scripts/probe-live/bin (bin is gitignored) and the runs pass --no-build, so an
+# unbuilt instrument makes every probe run fail to start - which the log would otherwise read as "the
+# icon was never present", the most misleading failure this script has. That was measured: this
+# script's first run in a re-materialized worktree reported 0 presence samples on all three
+# frameworks, and the probe's own message said it could not start the executable.
+#
 # The shell environment is repaired first, exactly as the S07/T01 and T02 scripts do: an agent shell
 # can arrive without the Windows known-folder variables, and with that environment the SDK fails
 # during NuGet's restore-graph evaluation with exit 1 and "error : Value cannot be null. (Parameter
@@ -57,6 +64,7 @@ PACK_EXIT=0
 RESTORE_EXIT=0
 PROBE_FAILURES=0
 SURFACE_FAILURES=0
+PROBE_BUILD_EXIT=0
 
 {
   echo "# S07/T03 raw evidence: the consumer proof - the packed library installed into a windowless WPF application"
@@ -146,6 +154,17 @@ SURFACE_FAILURES=0
   echo "   the process exits. The consumer opens its assigned menu with no shell click at"
   echo "   ${SELF_OPEN_AFTER}s (its own subclass, the documented OnTrayClick hook) and asks for one balloon at"
   echo "   ${BALLOON_AFTER}s through ShowBalloonTip."
+  echo "   The instrument is built here rather than assumed, so this log names one binary for all four"
+  echo "   runs below (each of which passes --no-build)."
+  echo '$ dotnet build scripts/probe-live -c Release'
+  dotnet build scripts/probe-live -c Release 2>&1 \
+    | grep -E " error | warning |Build succeeded| -> "
+  PROBE_BUILD_EXIT=${PIPESTATUS[0]}
+  echo "probe-live build exit=$PROBE_BUILD_EXIT"
+  if [ "$PROBE_BUILD_EXIT" != 0 ]; then
+    echo '  the instrument did not build, so no run below could be evidence: FAILURES ABOVE'
+    exit 1
+  fi
   for tfm in "${TFMS[@]}"; do
     exe="samples/consumer-proof/bin/Release/$tfm/ConsumerProof.exe"
     run_log="$SCRATCH/probe-$tfm.txt"
@@ -218,8 +237,8 @@ SURFACE_FAILURES=0
   echo
   echo "## verdict"
   echo "  pack exit=$PACK_EXIT; control A (feed present) exit=$CONTROL_A_EXIT; control B (feed emptied) exit=$CONTROL_B_EXIT;"
-  echo "  restore/build exit=$RESTORE_EXIT; surface assertion failures=$SURFACE_FAILURES; probe runs reporting the icon absent=$PROBE_FAILURES"
-  if [ "$PACK_EXIT" != 0 ] || [ "$RESTORE_EXIT" != 0 ] || [ "$SURFACE_FAILURES" != 0 ] || [ "$PROBE_FAILURES" != 0 ]; then
+  echo "  restore/build exit=$RESTORE_EXIT; surface assertion failures=$SURFACE_FAILURES; probe instrument build exit=$PROBE_BUILD_EXIT; probe runs reporting the icon absent=$PROBE_FAILURES"
+  if [ "$PACK_EXIT" != 0 ] || [ "$RESTORE_EXIT" != 0 ] || [ "$SURFACE_FAILURES" != 0 ] || [ "$PROBE_BUILD_EXIT" != 0 ] || [ "$PROBE_FAILURES" != 0 ]; then
     echo '  FAILURES ABOVE'
     exit 1
   fi

@@ -21,7 +21,7 @@
 | The library's own build declares the metadata and the non-shipping projects cannot be packed | **PASS** | T01: `PackagePurityTests` 11/11, plus three negative controls that break one invariant each and are restored byte-for-byte (`docs/uat-logs/S07/t01-negative-controls.txt`) |
 | A fresh consumer project installs the package from the local feed and shows a working icon on each of the three frameworks (R010, R012) | **PASS** | T03: `docs/uat-logs/S07/t03-consumer-proof.txt` — one build, one surface assertion and one probed live run per framework, each `18/18` presence samples, `gdi 13/25`, `sample-exit 0`, `icon-after-exit: gone`. That the package came from `artifacts/` and from nowhere else is proved by two controls: the same restore with a fresh global-packages folder succeeds with the feed present and fails with `NU1101 ... in source(s): artifacts-local-feed` with the feed emptied |
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
-| A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (`1470,1164`) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
+| A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1518,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
 | The README documents install, code-first use, declarative use and windowless shutdown | *pending* | S07/T04 |
 
 ## What this slice does not claim (so far)
@@ -58,7 +58,7 @@ Three mechanisms, because a project that inherits anything from this repository 
 
 ### The commands and what they printed
 
-**Raw evidence:** `docs/uat-logs/S07/t03-consumer-proof.txt` (401 lines), produced by `bash docs/uat-logs/S07/t03-consumer-proof.sh`.
+**Raw evidence:** `docs/uat-logs/S07/t03-consumer-proof.txt` (407 lines), produced by `bash docs/uat-logs/S07/t03-consumer-proof.sh`.
 
 ```
 dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
@@ -96,13 +96,13 @@ Each row also carried `icons-in-notification-area: 1`, `surface assertion: PASS`
 "Installable from the package" is easy to assert and easy to be wrong about — a warm global-packages folder or an inherited nuget.org source would make a restore succeed for the wrong reason. Both controls therefore start from a **fresh** `NUGET_PACKAGES` folder (section 3 of the log):
 
 ```
-control A: local feed present  -> Restored ... (in 400 ms)              exit 0
+control A: local feed present  -> Restored ... (in 316 ms; this run)    exit 0
 control B: local feed emptied  -> error NU1101: Unable to find package Trustsoft.NotifyIcon.
                                   No packages exist with this id in source(s): artifacts-local-feed
                                                                         exit 1
 ```
 
-Control A says the package was installed from `artifacts/` and from nowhere else; control B says no other source — not a machine-wide folder, not nuget.org, not the project reference every other project in this repository uses — can supply it. The held nupkg is moved back afterwards, and the log shows it back in `artifacts/` before the builds run.
+Control A says the package was installed from `artifacts/` and from nowhere else; control B says no other source — not a machine-wide folder, not nuget.org, not the project reference every other project in this repository uses — can supply it. The restore duration in parentheses is the one that run printed and is not a claim about performance; the log, not this document, is where the exact value lives. The held nupkg is moved back afterwards, and the log shows it back in `artifacts/` before the builds run.
 
 ### The interaction path, and the click that still does not arrive
 
@@ -111,7 +111,7 @@ A consumer cannot pass the sample's `--open-menu-after` switch: that belongs to 
 The stronger path, the physical click, was attempted again here with `--click-after 8` and **no** self-open switch, so anything the consumer logged could only have come from the injected click (section 8):
 
 ```
-[probe] click injected: right click at (1470,1164) - the icon's own rectangle ...
+[probe] click injected: right click at (1518,1164) - the icon's own rectangle ...
 [consumer] totals: clicks=0, preview deliveries=0, menu opens=0, menu dismissals=0, ..., balloon show requests=1
 click columns: injected=1 click(s); delivered to the consumer=0; menu opens=0
 ```
@@ -142,7 +142,9 @@ bash docs/uat-logs/S07/t03-consumer-proof.sh    # ~2 min: pack, restore controls
 bash docs/uat-logs/S07/t03-plan-verify.sh      # ~2 min: the plan's verify command, the purity filter, the full suite, the package inspection -> t03-plan-verify.txt
 ```
 
-The script repairs the shell environment first (an agent shell can arrive without the Windows known-folder variables, and with that environment the SDK fails inside NuGet's restore-graph evaluation with `Value cannot be null. (Parameter 'path1')`), deletes the previous nupkg so the log names the artifact it produced, and prints the raw output of every step. `artifacts/` and every `*.nupkg` are gitignored, so the log and its producer are the durable evidence, not the package file.
+The script repairs the shell environment first (an agent shell can arrive without the Windows known-folder variables, and with that environment the SDK fails inside NuGet's restore-graph evaluation with `Value cannot be null. (Parameter 'path1')`), deletes the previous nupkg so the log names the artifact it produced, builds the probe instrument it is about to run, and prints the raw output of every step. Both producers build the binaries their `--no-build` runs need, because a re-materialized worktree has none (`bin/` and `obj/` are gitignored): measured on this script's first run in such a worktree, where all three probe runs failed to start the instrument and the log read `0` presence samples on every framework — the absence of the instrument masquerading as the absence of the icon, which is why the build now appears in the log verbatim. `artifacts/` and every `*.nupkg` are gitignored, so the log and its producer are the durable evidence, not the package file.
+
+The same re-materialized worktree produced a second, quieter trap in the test command: `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore` exits `0` and prints **nothing at all** while the test project has never been built there, because the test target never runs — a silent zero-count green that reads exactly like a pass. Measured this attempt: two such invocations produced zero bytes of output and exit `0`; the same command reported `Passed! - Failed: 0, Passed: 402` once the test project had been built (`dotnet build tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release`), and `dotnet vstest …Trustsoft.NotifyIcon.Tests.dll --TestCaseFilter:"FullyQualifiedName~PackagePurityTests"` reported `11` passed independently of the SDK's test subcommand. Build before running tests here, and treat an empty `dotnet test` log as “nothing ran”, not as success.
 
 ---
 
@@ -196,7 +198,7 @@ verify-package.sh exit=0
 
 The `<dependency>` line above is the one that carries R011. Under D038 it is asserted as **zero `<dependency>` entries in any target-framework group** rather than as an absent `<dependencies>` element, because the SDK writes one *empty* `<group targetFramework="..."/>` per lib folder (`net8.0-windows7.0`, `net9.0-windows7.0`, `net10.0-windows7.0`) and deleting that element makes the pack fail with `NU5128` — measured in T01, and the reason `SuppressDependenciesWhenPacking` is not set. The framework-reference assertion is what pins "beyond WPF": WPF is the only framework the package requires.
 
-The sha256 quoted in each log identifies the artifact that log inspected, and is not stable across packs: a nupkg carries entry timestamps and the SDK writes the repository's commit into the nuspec's `<repository>` element, so repacking the same sources produces a different hash. The identity assertion, not the hash, is what pins the package to the sources.
+The sha256 quoted in each log identifies the artifact that log inspected, and is not stable across packs: a nupkg carries entry timestamps and the SDK writes the repository's commit into the nuspec's `<repository>` element, so repacking the same sources produces a different hash — and, for the same reason, a slightly different byte size (the T01 log inspected a 325,181-byte artifact, the T03 log the 325,600-byte one the pack printed in section 1 of that log, separate packs of the same sources and the same `informationalVersion`). The identity assertion, not the hash or the size, is what pins the package to the sources.
 
 ### The three negative controls
 

@@ -62,6 +62,17 @@ VERIFY_EXIT=0
       | grep -E " error | warning |Build succeeded|-> "
     echo "build $tfm exit=${PIPESTATUS[0]}"
   done
+  echo
+  echo "  The run below uses --no-build, and a fresh or re-materialized worktree has no"
+  echo "  scripts/probe-live/bin (bin is gitignored): without this build the probe cannot start, and the"
+  echo "  missing instrument reads as an absent icon. Measured - T03's consumer script failed exactly"
+  echo "  that way on its first run in a re-materialized worktree."
+  echo '$ dotnet build scripts/probe-live -c Release'
+  dotnet build scripts/probe-live -c Release 2>&1 \
+    | grep -E " error | warning |Build succeeded| -> "
+  PROBE_BUILD_EXIT=${PIPESTATUS[0]}
+  echo "probe-live build exit=$PROBE_BUILD_EXIT"
+  echo
   dotnet run --project scripts/probe-live -c Release --no-build -- \
     samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe 20
   PLAN_EXIT=$?
@@ -74,6 +85,14 @@ VERIFY_EXIT=0
   echo "  t03-consumer-proof.txt."
   echo
   echo "## 2. the packaging-purity guards, which sweep every project and props file in the repository"
+  echo "   The test runs below pass --no-restore --no-build, so the solution is built first: a fresh"
+  echo "   worktree has no bin/obj, and --no-build without them fails on missing output rather than on"
+  echo "   the code it is meant to judge. Section 4 repeats the same build for the plan's own reporting."
+  echo '$ dotnet build Trustsoft.NotifyIcon.sln -c Release'
+  dotnet build Trustsoft.NotifyIcon.sln -c Release 2>&1 | grep -E " error | warning |Build succeeded"
+  SOLUTION_PREREQ_EXIT=${PIPESTATUS[0]}
+  echo "solution build (prerequisite for the --no-build test runs) exit=$SOLUTION_PREREQ_EXIT"
+  echo
   echo '$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --filter "FullyQualifiedName~PackagePurityTests"'
   dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release --no-restore --no-build \
     --filter "FullyQualifiedName~PackagePurityTests" 2>&1 | tail -3
@@ -98,8 +117,8 @@ VERIFY_EXIT=0
   echo "verify-package.sh exit=$VERIFY_EXIT"
   echo
   echo "## verdict"
-  echo "  pack=$pack_exit; plan verify=$PLAN_EXIT; purity filter=$PURITY_EXIT; full suite=$SUITE_EXIT; inspection=$VERIFY_EXIT"
-  if [ "$pack_exit" != 0 ] || [ "$PLAN_EXIT" != 0 ] || [ "$PURITY_EXIT" != 0 ] || [ "$SUITE_EXIT" != 0 ] || [ "$VERIFY_EXIT" != 0 ]; then
+  echo "  pack=$pack_exit; probe instrument build=$PROBE_BUILD_EXIT; plan verify=$PLAN_EXIT; purity filter=$PURITY_EXIT; full suite=$SUITE_EXIT; inspection=$VERIFY_EXIT"
+  if [ "$pack_exit" != 0 ] || [ "$PROBE_BUILD_EXIT" != 0 ] || [ "$PLAN_EXIT" != 0 ] || [ "$PURITY_EXIT" != 0 ] || [ "$SUITE_EXIT" != 0 ] || [ "$VERIFY_EXIT" != 0 ]; then
     echo '  FAILURES ABOVE'
     exit 1
   fi
