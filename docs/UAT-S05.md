@@ -3,7 +3,7 @@
 **Slice:** M001 / S05 (Continuity and teardown)
 **Requirements:** R005 (explorer-restart recovery), R006 (no stale icon after a process dies without Dispose)
 **Date:** 2026-09-21
-**Revision tested:** Check 1-8: `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied. Check 9: the committed `milestone/M001` tip (`4cd52db`), re-measured in a fresh session
+**Revision tested:** Check 1-8: `milestone/M001` working tree on top of `15694bd` (S04 complete) with the S05 recovery change applied. Check 9: the committed `milestone/M001` tip (`4cd52db`), re-measured in a fresh session. Check 10: the `milestone/M001` tip (`d091f87`) plus the new second instrument `scripts/tray-inventory.ps1`, measured in a fresh session
 **Machine:** MINIBOOKX, `Microsoft Windows NT 10.0.26200.0`, single monitor 1920x1200 physical, display scale 150 % (dpi 144), process is per-monitor-v2 DPI aware
 **Session:** interactive, single user session (`Console`, session 1)
 
@@ -13,13 +13,15 @@
 |---|---|---|
 | R005 - the icon returns by itself after a real Explorer restart, with no application action | **PASS** | Check 1: presence series `present` -> `absent` for 8 s -> `present`, GDI flat at 17 across the whole event. Re-measured on the delivered revision by Check 9 (the task's own acceptance command): `present` -> `absent` for 6 readings over 7 s -> `present`, GDI flat at 17 across the event |
 | R005 - the recovered icon is still fully functional | **PASS** | Check 2 (the shell accepted a balloon from the recovered registration), Check 3 (the menu opened at the recovered icon); both re-measured in Check 9 after a second, independent restart |
-| R006 - a process that dies without Dispose leaves no stale icon | **PASS** | Check 4 (`taskkill /f`, shell no longer holds the icon), Check 5 (counter-case agrees) |
+| R006 - a process that dies without Dispose leaves no stale icon | **PASS** | Check 4 (`taskkill /f`, shell no longer holds the icon), Check 5 (counter-case agrees), Check 10 (fresh `taskkill /f` on the delivered revision: probe verdict `icon-after-exit: gone` **and** two independent observations of the notification area via the shell's own tray UI agreeing) |
 | The teardown verdict is not stuck on one answer | **PASS** | Check 6 (positive control: a live icon is reported `still present`) and Check 7 (guard: a process that never had an icon reports `NOT OBSERVED`, exit code 1) |
+| The teardown verdict does not rest on a single oracle | **PASS** | Check 10: the shell's tray UI, read through UI Automation, exposed `Trustsoft.NotifyIcon sample - the icon changes every second` before the kill and nothing matching it afterwards, while the two oracles agreed on the same 60x60 slot in between; the scanner's own two-way control is in the same check |
 
 ## What this slice does not claim
 
 - **No stale-icon branch was observed for a dead process.** Every run in this session reported `icon-after-exit: gone`. The `still present` text is therefore demonstrated by the positive control in Check 6 (same call, same identity, live process), not by a library-produced stale icon. That is the honest direction of the evidence: the library never produced the failure the check looks for.
 - **One machine, one OS build, one display configuration.** Mixed-DPI and multi-monitor behaviour is S03's evidence, not this slice's.
+- **The independent observation reads the shell's UI tree, not pixels.** `scripts/tray-inventory.ps1` asks UI Automation what the shell's tray windows expose; it does not read the framebuffer. So it proves that the shell no longer *exposes* the icon - which is the shell's decision - but no claim about drawn pixels is made here. It is independent of `Shell_NotifyIconGetRect`, which is the property Check 10 needs.
 - **The Verbose recovery line was not observed from the sample process.** See finding F1. Recovery is proven by the shell's own answer, not by the library's log line.
 
 ---
@@ -28,7 +30,7 @@
 
 `scripts/probe-live` is a small console program (its own project, deliberately not in the solution) that observes a notification-area icon from **outside** the application that owns it. It is the instrument every check below uses.
 
-**How it decides whether the icon is there.** It calls `Shell_NotifyIconGetRect` with a `NOTIFYICONIDENTIFIER` of `(hWnd, uID)`, which the shell answers with the icon's screen rectangle if and only if the shell currently holds that icon. That is a documented OS answer rather than a screenshot of the notification area, which on Windows 11 would mean finding an icon inside the overflow flyout.
+**How it decides whether the icon is there.** It calls `Shell_NotifyIconGetRect` with a `NOTIFYICONIDENTIFIER` of `(hWnd, uID)`, which the shell answers with the icon's screen rectangle if and only if the shell currently holds that icon. That is a documented OS answer, but it is the shell's *app-facing* API: it is the shell's registration table answering, not the notification area as a user sees it. Checks 1-9 rest on it alone, and a single oracle is a weak basis for a claim about what is displayed in the notification area, so Check 10 adds a second instrument that reads the shell's own tray **user interface** instead.
 
 **How it learns the identity.** It enumerates the sample's top-level windows and scans icon ids 1..32, and the first `Shell_NotifyIconGetRect` that succeeds names the icon the shell really holds:
 
@@ -57,6 +59,17 @@ dotnet run --project scripts/probe-live -c Release --no-build -- <sampleExe> <ob
 **The `--no-restore` is not optional in this worktree.** A bare `dotnet build` here fails with `NuGet.targets(782,5): error : Value cannot be null. (Parameter 'path1')` - the repository-hygiene issue `docs/UAT-S04.md` already records (duplicate `NuGet.config`/`nuget.config` pair reachable from the worktree). `dotnet restore` succeeds on its own and the build is clean immediately afterwards, so the check is reproducible but needs the two commands.
 
 **Composing a check.** The sample owns its own demonstration switches (`--run-seconds N`, `--show-balloon-after N`, `--open-menu-after N`), and the probe has native spellings for the post-recovery ones: `--balloon-after <seconds>` forwards as `--show-balloon-after <seconds>` and `--menu-after <seconds>` as `--open-menu-after <seconds>`. Both are validated, so a missing or non-numeric value exits **2** with the usage line rather than degrading into "no demonstration was requested" - a typo must not be able to produce a run that reads like a successful demonstration of nothing. `--click-after <seconds>` injects a real right click at the icon's own rectangle through the shell, and `--sample-arg <arg>` stays available for anything else. The startup line prints the effective triggers and the composed sample arguments, so a capture records what was asked for next to what happened.
+
+**The second instrument, added by Check 10: `scripts/tray-inventory.ps1`.** The probe asks the shell's API; this script asks the shell's rendered UI. It opens the notification area's own *Show Hidden Icons* flyout by invoking that chevron through UI Automation, then enumerates the named elements of every window the shell uses for the tray (`Shell_TrayWnd`, `Shell_SecondaryTrayWnd`, `NotifyIconOverflowWindow`, `TopLevelWindowForOverflowXamlIsland`) and prints them with their rectangles. UI Automation reports the name a tray icon's owning application set - its tooltip - so the sample's tooltip text, `Trustsoft.NotifyIcon sample - the icon changes every second`, is the identifier to look for, exactly as the task asks. Opening the flyout is an operator action on the shell, never on the application under observation: nothing is injected into the sample, and the flyout is closed again with Escape. The mode exists because a hidden icon - which is where a sample's icon lives on this machine - is not in the UI tree at all until the flyout is open.
+
+The two instruments share no code path, no API and no notion of identity: one is answered by the shell's registration table for a `(hWnd, uID)` pair, the other by the shell's toolbar tree. They can therefore disagree, and that is what makes their agreement evidence rather than a restatement.
+
+```
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File scripts/tray-inventory.ps1 \
+    [-OpenOverflow] [-All] [-Needle <text>] [-KeepOverflowOpen] [-ListTrayWindows]
+```
+
+`-Needle` is the substring to search for, `-All` dumps every named element with its rectangle, and the last line is always a `verdict:` line: `PRESENT` with a match count, or `ABSENT` with the number of named elements that were searched - so "found nothing" cannot be confused with "looked at nothing". A failed open prints `overflow: FAILED` and the absence verdict is then read together with it, not instead of it.
 
 **Shell-restart pitfall (recorded because it silently invalidated a first attempt).** In Git Bash, `taskkill /f /im explorer.exe` is mangled by MSYS path conversion into `taskkill -F:/ -im explorer.exe` and fails with `ERROR: Invalid argument/option - 'F:/'`. Use the doubled form:
 
@@ -389,6 +402,147 @@ The task's step 3 asks that "the sample must print no `TrayError` line". **That 
 
 What is true and checkable is the stronger, more useful statement: **the recovery path itself raised no error of any kind.** Zero `TrayError` lines carry `operation=Add` or `operation=SetVersion`, and no error line appears after `t=21s`. The six `Modify` refusals are the sample's own 1 Hz icon rotation hitting a shell that had no registration to modify - the documented expected consequence of rotation during an outage, and independently useful here because they are what proves the `t=22s` comeback was a re-add rather than a lucky modify.
 
+---
+
+## Check 10 - the T05 acceptance run: a real hard kill, seen by the shell's API and by the shell's own tray UI
+
+Checks 4 and 5 were made while the slice was being built, with one oracle. R006 is the one requirement in this slice that is deliberately verification-only, and a single oracle is a weak basis for a claim about what the notification area shows, so this check re-makes the claim on the delivered revision, in a fresh session, with a **second oracle that shares no code path with the first**. It is the acceptance run T05 names.
+
+### 10a - the command, the pid, and the kill
+
+**Command line (verbatim, the task's verify command).**
+
+```
+dotnet run --project scripts/probe-live -c Release --no-build -- \
+    samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 40 \
+    --kill-after 20
+```
+
+The kill is the probe's own line, `taskkill /f /pid 22592 -> exit 0; SUCCESS: The process with PID 22592 has been terminated.`, and `22592` is **the pid the probe printed for the sample it launched** (`[probe] launched pid=22592`) - not a pid looked up by image name, so the kill cannot land on a different process. Operator log with wall-clock timestamps: `docs/uat-logs/S05/t05-live-teardown.ops.txt`; probe capture: `docs/uat-logs/S05/t05-hard-kill.txt`.
+
+### 10b - the presence series before the kill, and the after-exit verdict
+
+The full capture holds **19 consecutive `icon=present` readings** for `pid=22592`, `t=1s` through `t=19s` (GDI `13 -> 15 -> 17` over the first three seconds, then flat). The tail around the kill, verbatim:
+
+```
+[probe] t=17s pid=22592 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=18s pid=22592 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=19s pid=22592 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] taskkill /f /pid 22592 -> exit 0; SUCCESS: The process with PID 22592 has been terminated.
+[probe] t=20s pid=22592 icon=absent hr=0x80004005 gdi=0
+[probe] sample-exited at t=21s with exit code 1
+[probe] identity: hwnd=0x2790652 uID=1 title="(no title)" (Trustsoft.NotifyIcon.TrayMessageWindow is the expected title)
+[probe] icons-in-notification-area: 1 (every window x icon-id pair the shell located; a resource whose deferral failed would show up here as a second count)
+[probe] observed-present: yes
+[probe] sample-alive-at-end: False; exit-code: 1
+[probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x2790652 uID=1)
+probe-exit=0
+```
+
+**`icon-after-exit: gone` on the delivered revision, for a force-killed process.** Exit code **1** is the sample's own death-by-signal code: no `Dispose`, no `ProcessExit` handler, no finalizer, no managed code of any kind ran after `t=19s`. The same `Shell_NotifyIconGetRect` call that answered with a rectangle for `hwnd=0x2790652 uID=1` throughout the run now answers `E_FAIL` (`0x80004005`). The `gdi=0` reading is the dead process's handle being unreadable, which is itself consistent with the process being gone.
+
+**`icons-in-notification-area: 1` is not a post-exit presence count, and must not be read as one.** The probe computes it inside `TryResolveIdentity` at the moment it resolves the identity - i.e. while the icon was alive - and prints it at the end as a deferral check: one `(window, icon-id)` pair was located for this process, so a second registration never stacked. The authoritative after-exit answer is the `icon-after-exit:` line, which is a fresh call made after the process exited. Both appear in the same capture, and they are answers to different questions.
+
+### 10c - the independent notification-area observation
+
+`scripts/tray-inventory.ps1` (documented under *The instrument*) opens the notification area's own overflow flyout through UI Automation and reports what the shell's tray UI exposes. It was run three times around the kill, in the same session, using the sample's tooltip text as the needle. Operator log timestamps are wall clock; the probe started at `12:06:08`, so probe `t=` is the same second minus 8.
+
+```
+[t05 12:06:14] independent tray inventory BEFORE kill -> verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t05 12:06:29] [probe] taskkill /f /pid 22592 -> exit 0; SUCCESS: The process with PID 22592 has been terminated.
+[t05 12:06:32] independent tray inventory IMMEDIATELY after kill -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t05 12:06:42] independent tray inventory SETTLED after kill -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+```
+
+What was actually seen, from `docs/uat-logs/S05/t05-tray-before-kill.txt` (`12:06:14`, the flyout open, the icon alive):
+
+```
+host TopLevelWindowForOverflowXamlIsland : present hwnd=0x1C80552 name='System tray overflow window.'
+  Button 'Trustsoft.NotifyIcon sample - the icon changes every second' rect=1368,1042 60x60
+  named-elements: 4
+named-elements-total: 25
+verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+```
+
+and from `t05-tray-after-kill-immediate.txt` (`12:06:32`, three seconds after the kill):
+
+```
+host TopLevelWindowForOverflowXamlIsland : present hwnd=0x1C80552 name='System tray overflow window.'
+  named-elements: 3
+named-elements-total: 24
+verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+```
+
+The settled scan at `12:06:42` repeats it exactly: same host, overflow `named-elements: 3`, total **24**, `verdict: ABSENT`. The inventory is quoted with its element counts on purpose, so that "the scanner found nothing" is distinguishable from "the scanner looked at nothing": the flyout really opened (the line above it says so), the taskbar still exposed its 21 named elements, and the overflow still held three other icons - one fewer than before, and the missing one is the sample's.
+
+**No ghost icon was observed, at any point after the kill.** The immediate scan is the interesting one, because that is the window in which the shell might have kept drawing a stale slot: it did not. The absence is a change in the shell's answer rather than a constant, because the same scan with the same needle found the icon three seconds earlier and never reported `ABSENT` while the process was alive.
+
+### 10d - the two oracles agreeing on the same slot
+
+There is a place where the two instruments can be compared directly, and it was captured by accident: while the flyout was open (probe `t=6s`, wall clock `12:06:14`), `Shell_NotifyIconGetRect` returned the icon's rectangle **inside the open flyout** rather than at its usual taskbar slot:
+
+```
+[probe] t=5s pid=22592 icon=present rect=(1494,1128,1542,1200) gdi=17
+[probe] t=6s pid=22592 icon=present rect=(1369,1053,1429,1113) gdi=17
+[probe] t=7s pid=22592 icon=present rect=(1369,1043,1429,1103) gdi=17
+[probe] t=8s pid=22592 icon=present rect=(1494,1128,1542,1200) gdi=17
+```
+
+`(1369,1043)-(1429,1103)` is 60x60, and UI Automation puts the sample's button at `rect=1368,1042 60x60` - the same slot, one pixel apart in the two rounded coordinate systems. Two independent mechanisms therefore agree not only on *whether* the icon is there but on *where* it is drawn, which is a stronger check than either one alone could make.
+
+The rectangles also explain themselves, and the reason is worth writing down because a reader will notice it: with the flyout **closed**, `Shell_NotifyIconGetRect` answers `(1494,1128,1542,1200)` - 48x72, the taskbar slot that UI Automation independently reports for the `Show Hidden Icons` chevron - i.e. the shell names the overflow indicator's slot for an icon it is hiding. With the flyout **open**, it answers `(1369,1043,1429,1103)` - 60x60, the flyout's own slot, which is where UI Automation finds the sample's button. The two sizes are the two containers, not two icons.
+
+### 10e - the counter-case in the same session, and what it does and does not show
+
+A second sample instance was then run with `--run-seconds 12` so that it exits through its own normal shutdown path, and observed the same way:
+
+```
+dotnet run --project scripts/probe-live -c Release --no-build -- \
+    samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 20 \
+    --sample-arg --run-seconds --sample-arg 12
+```
+
+```
+[t05 12:06:44] counter-case: probe launched sample pid=17088
+[t05 12:06:49] counter-case: independent tray inventory BEFORE graceful exit -> verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t05 12:07:00] counter-case: independent tray inventory AFTER graceful exit -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t05 12:07:00] counter-case: probe-exit=0 | [probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x3FC066E uID=1)
+```
+
+The sample's own account of the same moment, from `docs/uat-logs/S05/t05-graceful-exit.txt`: `[sample] tray icon disposed - it must have left the notification area.`, then `[probe] sample-exited at t=13s with exit code 0`, and `icon-after-exit: gone` for `hwnd=0x3FC066E uID=1`.
+
+**Both after-exit verdicts are `gone`, and that is stated plainly rather than dressed up.** The killed path and the disposed path give the same answer, by both oracles. The purpose of the counter-case is to show that the comparison was made and that the oracle can distinguish the two states it is being asked about - it says nothing about a difference between them, because there is none to find. What the four runs together establish is that the verdict follows the process ending in both ways, and that the icon is genuinely present in the notification area up to the moment it ends.
+
+### 10f - why no library code is involved, and the evidence that none ships
+
+**The mechanism, as the OS guarantee plus the live proof above.** A `NOTIFYICONDATA` registration is owned by the window named in `hWnd`. Process termination destroys that window, so the shell drops the icon with it: the disappearance is a consequence of the window's death, not of anything the library does at teardown time. The live proof is this check, made twice on the delivered revision - once against a force-killed process (10b) and once against a disposed one (10e) - with the shell's API and the shell's tray UI answering independently and agreeing.
+
+**Consequently there is no fallback, on purpose, and this is checkable rather than asserted** (`docs/uat-logs/S05/t05-library-no-fallback.txt`):
+
+```
+$ grep -rnE 'ProcessExit|~TrayIcon|Finalize|GC.SuppressFinalize' src/Trustsoft.NotifyIcon --include='*.cs' --exclude-dir=obj --exclude-dir=bin
+src/Trustsoft.NotifyIcon/TrayIcon.cs:101:/// the icon with it (R006). That is why there is deliberately no <see cref="System.AppDomain.ProcessExit"/>
+--- matches excluding /// doc-comment lines, i.e. anything executable ---
+(none: no executable reference in the library)
+```
+
+The only mention is the remark that documents the decision: `TrayIcon.cs` states that no `ProcessExit` handler and no finalizer exist because neither can run in the case they would have to cover. A `ProcessExit` handler or finalizer would be dead code in exactly the failure it claimed to handle, since a force-killed process runs no managed code at all.
+
+The seam half of the same contract is a test, not a comment: `SliceContractTests.Teardown_declares_no_finalizer_anywhere_in_the_library` reflects over **every type in the library assembly** and asserts that none declares a `Finalize` method, with the reasoning for asserting over the assembly rather than over `TrayIcon` alone written into its remarks.
+
+### 10g - the second instrument's own two-way control
+
+A scanner that always answered `ABSENT` would produce this check's headline result for free, so the scanner was made to answer both ways in one run, against one live icon (`docs/uat-logs/S05/t05-scanner-discrimination.txt`, 12:07:35):
+
+| Run | Needle | Named elements searched | Verdict |
+|---|---|---|---|
+| A | `no such tray tooltip exists` | 25, with the sample's real tooltip visible in the dump | **ABSENT** |
+| B | `Trustsoft.NotifyIcon` | 25, same flyout, same icon | **PRESENT** - 1 match |
+
+Run A shows the verdict is not "everything matches"; run B, three seconds later on the same live icon, shows it is not "nothing ever matches". Together they show that `ABSENT` in 10c is a real negative and not a stuck scanner. This is the counter-case the task asks for, applied to the instrument itself.
+
+---
+
 ## Verification summary - what the seam tests pin, and what the suite says
 
 This section exists so a reader can tell proven from assumed without opening the test files.
@@ -414,8 +568,9 @@ This section exists so a reader can tell proven from assumed without opening the
 | Measurement | Result |
 |---|---|
 | `dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore` | succeeded, **0 warnings, 0 errors** (all three target frameworks: net8.0-windows, net9.0-windows, net10.0-windows) |
-| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` | **384 passed, 0 failed, 0 skipped** |
-| Baseline at the start of this slice | 373 passed, 0 failed - so exactly **11 tests were added**, all named in the table above |
+| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` (measured at the slice build, before T03 and T04 added theirs) | **384 passed, 0 failed, 0 skipped** |
+| `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build` (Check 10, the T05 acceptance revision) | **394 passed, 0 failed, 0 skipped**, 49 s - the ten added in between are T03's negative controls and T04's live-recovery seam tests |
+| Baseline at the start of this slice | 373 passed, 0 failed - so the slice as a whole added **21 tests** |
 | Public surface | unchanged: recovery is a private method, adds no public type and no exception operation constant, and the surface-pin tests in `PackagePurityTests` stay green without being touched - the seven documented public types from D034 are still seven |
 
 ---
@@ -435,9 +590,19 @@ Raw, unfiltered logs from the runs cited above are kept with this record, so the
 | Check 8a (harness re-verification, the acceptance run) | `docs/uat-logs/S05/t03-plan-verify.txt` |
 | Check 8b (negative controls, including the discarded attempt) | `docs/uat-logs/S05/t03-negative-controls.txt` |
 | Check 8c (probe-triggered balloon/menu, and the positive control) | `docs/uat-logs/S05/t03-alias-triggers.txt` |
+| Check 10b (T05 acceptance run: the hard kill, the presence series, the after-exit verdict) | `docs/uat-logs/S05/t05-hard-kill.txt` |
+| Check 10c (independent tray inventories: before, immediately after, settled after the kill) | `docs/uat-logs/S05/t05-tray-before-kill.txt`, `t05-tray-after-kill-immediate.txt`, `t05-tray-after-kill-settled.txt` |
+| Check 10d (the second live icon, where the two oracles were compared on the same slot) | `docs/uat-logs/S05/t05-tray-before-graceful.txt` |
+| Check 10e (counter-case: graceful exit, both oracles) | `docs/uat-logs/S05/t05-graceful-exit.txt`, `docs/uat-logs/S05/t05-tray-after-graceful.txt` |
+| Check 10f (no-fallback proof: the grep and its result) | `docs/uat-logs/S05/t05-library-no-fallback.txt` |
+| Check 10g (the scanner's own two-way control) | `docs/uat-logs/S05/t05-scanner-discrimination.txt` |
+| Check 10 suite re-run (build plus 394 tests on the T05 revision) | `docs/uat-logs/S05/t05-suite.txt` |
+| Check 10 operator log (every command issued and every scan timestamp) | `docs/uat-logs/S05/t05-live-teardown.ops.txt` |
 
-The logs for Checks 1-8 were written to `/tmp` while the runs were made and copied here afterwards; the Check 9 logs were written straight into `docs/uat-logs/S05/` by the run itself. The `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer and `sample|` / `sample!` for the sample's standard output and error.
+The logs for Checks 1-8 were written to `/tmp` while the runs were made and copied here afterwards; the Check 9 and Check 10 logs were written straight into `docs/uat-logs/S05/` by the runs themselves. The `[sample]` lines in them are the sample's own stdout/stderr, which the probe relays verbatim. Log lines are prefixed `[probe]` for the observer, `sample|` / `sample!` for the sample's standard output and error, and `[t05 ...]` for the Check 10 operator log.
 
-**Note for anyone tidying the repository:** these files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. The Check 1-7 logs predate that rule and were added with `git add -f`; the Check 8 and Check 9 logs carry the `.txt` extension instead so they are committed by the ordinary add rather than by a hand-forced one, because evidence that depends on remembering a special flag is evidence that can be lost by forgetting it.
+**Note for anyone tidying the repository:** these files are tracked on purpose even though the repository's `.gitignore` excludes `*.log`. They are the raw evidence this document cites, so removing them as "stray logs" breaks the record. The Check 1-7 logs predate that rule and were added with `git add -f`; the Check 8, Check 9 and Check 10 logs carry the `.txt` extension instead so they are committed by the ordinary add rather than by a hand-forced one, because evidence that depends on remembering a special flag is evidence that can be lost by forgetting it.
 
 The commands that make a check reproducible are the probe line above plus, for the Explorer-restart checks, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Check 9's operator log records both commands with wall-clock timestamps, so the restart can be timed against the series. Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so the restart checks are once-per-session measurements rather than loops (Check 1 and Check 9 are the two that were made).
+
+Check 10 needs no Explorer restart and is therefore cheap to repeat: two commands per case, the probe line for the case and `powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File scripts/tray-inventory.ps1 -OpenOverflow -All -Needle Trustsoft.NotifyIcon` at the timings recorded in `t05-live-teardown.ops.txt` (before the kill, immediately after it, and once it has settled). The scanner is committed as a tracked script alongside the probe for exactly that reason.

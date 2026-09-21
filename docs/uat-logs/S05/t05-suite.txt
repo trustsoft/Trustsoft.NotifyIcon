@@ -1,0 +1,21 @@
+build+test on the T05 revision: 2026-09-21 12:08:05
+$ dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon.Sample -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
+  Trustsoft.NotifyIcon.Tests -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:02.56
+build exit=0
+
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build
+Test run for C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll (.NETCoreApp,Version=v8.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   394, Skipped:     0, Total:   394, Duration: 49 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+test exit=0

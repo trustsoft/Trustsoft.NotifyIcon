@@ -1,0 +1,10 @@
+what: proof that the library ships no ProcessExit handler and no finalizer for the teardown case
+date: 2026-09-21 12:07:33
+command: grep -rnE 'ProcessExit|~TrayIcon|Finalize|GC.SuppressFinalize' src/Trustsoft.NotifyIcon --include='*.cs' --exclude-dir=obj --exclude-dir=bin
+--- raw matches (doc comments included) ---
+src/Trustsoft.NotifyIcon/TrayIcon.cs:101:/// the icon with it (R006). That is why there is deliberately no <see cref="System.AppDomain.ProcessExit"/>
+--- matches excluding /// doc-comment lines, i.e. anything executable ---
+(none: no executable reference in the library)
+--- ProcessExit anywhere in any project's source (library, sample, tests) ---
+src/Trustsoft.NotifyIcon/TrayIcon.cs:101:/// the icon with it (R006). That is why there is deliberately no <see cref="System.AppDomain.ProcessExit"/>
+tests/Trustsoft.NotifyIcon.Tests/SliceContractTests.cs:345:    /// A finalizer (or an <c>AppDomain.ProcessExit</c> handler) would therefore be dead code in the

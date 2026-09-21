@@ -1,0 +1,96 @@
+tray-inventory: 2026-09-21 12:06:58 needle='Trustsoft.NotifyIcon'
+overflow: opened by invoking the Show Hidden Icons chevron (UI Automation Invoke)
+host Shell_TrayWnd : present hwnd=0x306B6 name=''
+  Pane 'TrafficMonitorTaskbarWindow' rect=1260,1140 236x48
+  Button 'Start' rect=0,1128 83x72
+  Button 'Search' rect=83,1128 66x72
+  Button 'File Explorer pinned' rect=149,1128 66x72
+  Button 'Yandex pinned' rect=215,1128 66x72
+  Button 'Google Chrome pinned' rect=281,1128 66x72
+  Button 'Rider pinned' rect=347,1128 65x72
+  Button 'Visual Studio Code - 1 running window pinned' rect=413,1128 66x72
+  Button 'Visual Studio pinned' rect=479,1128 66x72
+  Button 'Bondly pinned' rect=545,1128 66x72
+  Button 'Notepad3 - 2 running windows pinned' rect=611,1128 66x72
+  Button 'Terminal - 1 running window' rect=677,1128 66x72
+  Button 'Show Hidden Icons Hide' rect=1494,1128 48x72
+  Button 'USB Safely Remove' rect=1542,1128 48x72
+  Button 'Tray Input Indicator English (United States)
+US
+
+To switch input methods, press Windows key + space.' rect=1590,1128 66x72
+  Button 'Network TPLE54B5G
+Internet access
+
+Tailscale
+No internet access' rect=1662,1128 36x72
+  Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+  Button 'Power Battery status: fully charged 100%' rect=1746,1128 42x72
+  Button 'Clock 12:06 PM
+‎21-‎Sep-‎26' rect=1800,1128 96x72
+  Button 'Show Desktop' rect=1902,1128 18x72
+  Pane 'Running applications' rect=83,1128 528x72
+  named-elements: 21
+host Shell_SecondaryTrayWnd : ABSENT
+host NotifyIconOverflowWindow : ABSENT
+host TopLevelWindowForOverflowXamlIsland : present hwnd=0x1C80552 name='System tray overflow window.'
+  Button 'TrafficMonitor
+Upload: 0.00 KB/s
+Download: 0.00 KB/s
+CPU: 18 %
+Memory: 54 %
+CPU Temperature: 36 °C TrafficMonitor
+Upload: 0.00 KB/s
+Download: 0.00 KB/s
+CPU: 19 %
+Memory: 55 %
+CPU Temperature: 47 °C' rect=1398,1042 60x60
+  Button 'Sticky Password is unlocked' rect=1519,1042 60x60
+  Button 'Bluetooth Devices' rect=1579,1042 60x60
+  named-elements: 3
+--- all named elements, sorted ---
+Button 'Bluetooth Devices' rect=1579,1042 60x60
+Button 'Bondly pinned' rect=545,1128 66x72
+Button 'Clock 12:06 PM
+‎21-‎Sep-‎26' rect=1800,1128 96x72
+Button 'File Explorer pinned' rect=149,1128 66x72
+Button 'Google Chrome pinned' rect=281,1128 66x72
+Button 'Network TPLE54B5G
+Internet access
+
+Tailscale
+No internet access' rect=1662,1128 36x72
+Button 'Notepad3 - 2 running windows pinned' rect=611,1128 66x72
+Button 'Power Battery status: fully charged 100%' rect=1746,1128 42x72
+Button 'Rider pinned' rect=347,1128 65x72
+Button 'Search' rect=83,1128 66x72
+Button 'Show Desktop' rect=1902,1128 18x72
+Button 'Show Hidden Icons Hide' rect=1494,1128 48x72
+Button 'Start' rect=0,1128 83x72
+Button 'Sticky Password is unlocked' rect=1519,1042 60x60
+Button 'Terminal - 1 running window' rect=677,1128 66x72
+Button 'TrafficMonitor
+Upload: 0.00 KB/s
+Download: 0.00 KB/s
+CPU: 18 %
+Memory: 54 %
+CPU Temperature: 36 °C TrafficMonitor
+Upload: 0.00 KB/s
+Download: 0.00 KB/s
+CPU: 19 %
+Memory: 55 %
+CPU Temperature: 47 °C' rect=1398,1042 60x60
+Button 'Tray Input Indicator English (United States)
+US
+
+To switch input methods, press Windows key + space.' rect=1590,1128 66x72
+Button 'USB Safely Remove' rect=1542,1128 48x72
+Button 'Visual Studio Code - 1 running window pinned' rect=413,1128 66x72
+Button 'Visual Studio pinned' rect=479,1128 66x72
+Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+Button 'Yandex pinned' rect=215,1128 66x72
+Pane 'Running applications' rect=83,1128 528x72
+Pane 'TrafficMonitorTaskbarWindow' rect=1260,1140 236x48
+named-elements-total: 24
+overflow: closed again with Escape
+verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'

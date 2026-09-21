@@ -1,0 +1,15 @@
+[t05 12:06:07] host=MinibookX user-session=Console(1) probe=scripts/probe-live scanner=scripts/tray-inventory.ps1
+[t05 12:06:07] hard-kill: probe starting (40s observe, kill-after 20s) -> docs/uat-logs/S05/t05-hard-kill.txt
+[t05 12:06:09] hard-kill: probe launched sample pid=22592 (pid taken from the probe's own launch line, never looked up by image name)
+[t05 12:06:14] hard-kill: presence established with 5 present readings before the kill
+[t05 12:06:16] hard-kill: independent tray inventory BEFORE kill -> verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t05 12:06:29] hard-kill: [probe] taskkill /f /pid 22592 -> exit 0; SUCCESS: The process with PID 22592 has been terminated.
+[t05 12:06:32] hard-kill: independent tray inventory IMMEDIATELY after kill -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t05 12:06:42] hard-kill: independent tray inventory SETTLED after kill -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t05 12:06:42] hard-kill: probe-exit=0 | [probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x2790652 uID=1)
+[t05 12:06:42] counter-case: probe starting (20s observe, sample self-exits at 12s) -> docs/uat-logs/S05/t05-graceful-exit.txt
+[t05 12:06:44] counter-case: probe launched sample pid=17088
+[t05 12:06:49] counter-case: independent tray inventory BEFORE graceful exit -> verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t05 12:07:00] counter-case: independent tray inventory AFTER graceful exit -> verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+[t05 12:07:00] counter-case: probe-exit=0 | [probe] icon-after-exit: gone (Shell_NotifyIconGetRect hr=0x80004005 for hwnd=0x3FC066E uID=1)
+[t05 12:07:00] done
