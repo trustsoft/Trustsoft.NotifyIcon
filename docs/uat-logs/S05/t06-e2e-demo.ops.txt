@@ -1,15 +1,35 @@
 [t06] e2e demo driver - one sample process, one session
-[t06] machine=MinibookX date=2026-09-21 12:23:28
+[t06] machine=MinibookX date=2026-09-21 13:03:09
+[t06] driver exit code is asserted, not inherited from any leg: it is 0 only when every ASSERT below is PASS
+[t06] binaries: the probe and the sample were built minutes earlier from the same sources and are not rebuilt here
+[t06] instrument: scripts/tray-inventory.ps1 with the non-finite-extent fix applied (T06)
 [t06] probe: dotnet run --project scripts/probe-live -c Release --no-build -- samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 100 --balloon-after 40 --menu-after 50 --kill-after 70 --sample-arg --run-seconds --sample-arg 200
-[t06] plan: t=16 kill explorer; t=20 start explorer; t=~28 scan tray during recovery; t=40 balloon; t=50 menu; t=70 kill sample
-[t06 12:23:44] t=16 operator: taskkill //f //im explorer.exe
-SUCCESS: The process "explorer.exe" with PID 9648 has been terminated.
-[t06 12:23:45] taskkill exit=0
-[t06 12:23:49] t=20 operator: cmd //c start "" explorer.exe
-[t06 12:23:49] explorer start exit=0
-[t06 12:23:55] t~26 independent tray inventory DURING RECOVERY (needle Trustsoft.NotifyIcon)
-[t06 12:23:58] recovery scan verdict: verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
-[t06 12:24:41] probe finished: probe-exit=0
-[t06 12:24:44] independent tray inventory AFTER KILL
-[t06 12:24:47] after-kill scan verdict: verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
-[t06 12:24:47] done
+[t06] plan: t=16 kill explorer; t=20 start explorer; t~26 scan tray during recovery; t=40 balloon; t=50 menu; t=70 kill sample
+[t06] note: the sample relays its own stdout as 'sample| [sample] ...', which the whole-session assertions match
+[t06] note: every child that outlives the driver (the restarted explorer) is started with its stdio detached, so the driver's own pipes close when it exits
+[t06 13:03:25] t=16 operator: taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 17976 has been terminated.
+[t06 13:03:26] taskkill exit=0
+[t06 13:03:30] t=20 operator: cmd //c start "" explorer.exe
+[t06 13:03:30] explorer start exit=0
+[t06 13:03:36] t~26 independent tray inventory DURING RECOVERY (needle Trustsoft.NotifyIcon)
+[t06 13:03:39] recovery scan verdict: verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[t06 13:04:23] probe finished, probe-exit=0
+[t06 13:04:26] independent tray inventory AFTER KILL
+[t06 13:04:29] after-kill scan verdict: verdict: ABSENT - the notification area exposes no element matching 'Trustsoft.NotifyIcon'
+ASSERT probe-log-non-empty: PASS
+ASSERT probe-exit-0 (the probe exits 0 only when the icon was observed present): PASS
+ASSERT observed-present: PASS
+ASSERT leg1 host-is-window-free: PASS
+ASSERT leg2 icon-absent-while-explorer-was-down: PASS
+ASSERT leg3 icon-back-by-itself-after-the-restart: PASS
+ASSERT leg4 independent-tray-scan-during-recovery-finds-the-icon: PASS
+ASSERT leg5 balloon-NIN_BALLOONSHOW-accepted-after-recovery: PASS
+ASSERT leg5 menu-opened-at-the-icon-after-recovery: PASS
+ASSERT leg5 menu-dismissed: PASS
+ASSERT leg6 force-kill-issued: PASS
+ASSERT leg6 icon-after-exit-gone: PASS
+ASSERT leg6 independent-tray-scan-after-kill-finds-nothing: PASS
+ASSERT exactly-one-registration: PASS
+[t06 13:04:29] assertions failed=0; driver wall clock 80s
+T06-DEMO-VERDICT: PASS

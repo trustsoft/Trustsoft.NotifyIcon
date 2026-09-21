@@ -1,20 +1,37 @@
 == T06 acceptance command, verbatim from the task plan ==
 $ dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore && dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build
-run 2026-09-21 12:31:53 on MinibookX, revision dfe4f24
+run 2026-09-21 12:36:51 on MinibookX
 
-  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
-  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
   Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
-  Trustsoft.NotifyIcon.Sample -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
   Trustsoft.NotifyIcon.Tests -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll
+  Trustsoft.NotifyIcon.Sample -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
 
 Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.56
+Time Elapsed 00:00:10.60
+BUILD EXIT=0
 Test run for C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll (.NETCoreApp,Version=v8.0)
 A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:05.65]     Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.A_monitor_whose_work_area_and_dpi_cannot_be_read_still_places_the_menu_inside_the_icon_rectangle [FAIL]
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.A_monitor_whose_work_area_and_dpi_cannot_be_read_still_places_the_menu_inside_the_icon_rectangle [1 s]
+  Error Message:
+   menuAssigned=True menuIsOpen=False placement=AbsolutePoint offset=(100,215) openMenu=none anchor=none host=0x27804A4 iconRectHresult=0x00000000 cursorFallback=False registered=True getRectCalls=1 popupWindows=[] popupOwner=n/a foreground=0x401D2(Shell_TrayWnd) anchorIsForeground=False
+  Stack Trace:
+     at Trustsoft.NotifyIcon.Tests.TrayIconMenuActivationTests.A_monitor_whose_work_area_and_dpi_cannot_be_read_still_places_the_menu_inside_the_icon_rectangle() in C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\TrayIconMenuActivationTests.cs:line 563
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:24.93]     Trustsoft.NotifyIcon.Tests.TrayIconMenuContractTests.The_menu_state_is_per_instance_and_no_static_field_can_hold_a_menu_or_an_anchor [FAIL]
+  Failed Trustsoft.NotifyIcon.Tests.TrayIconMenuContractTests.The_menu_state_is_per_instance_and_no_static_field_can_hold_a_menu_or_an_anchor [1 s]
+  Error Message:
+   menuOpen=False anchor=none host=0x28304A4 registered=True iconRectHresult=0x00000000 cursorFallback=False getRectCalls=1 popupWindows=[]
+  Stack Trace:
+     at Trustsoft.NotifyIcon.Tests.TrayIconMenuContractTests.The_menu_state_is_per_instance_and_no_static_field_can_hold_a_menu_or_an_anchor() in C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\TrayIconMenuContractTests.cs:line 252
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
 
-Passed!  - Failed:     0, Passed:   394, Skipped:     0, Total:   394, Duration: 51 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
-ACCEPTANCE EXIT=0
+Failed!  - Failed:     2, Passed:   392, Skipped:     0, Total:   394, Duration: 50 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+ACCEPTANCE EXIT=1

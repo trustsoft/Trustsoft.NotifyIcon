@@ -1,0 +1,22 @@
+== T06 acceptance command, verbatim from the task plan ==
+$ dotnet build Trustsoft.NotifyIcon.sln -c Release --no-restore && dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build
+run 2026-09-21 12:39:04 on MinibookX
+note: this run was made alone - no other commands were issued while it ran
+
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net9.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\src\Trustsoft.NotifyIcon\bin\Release\net10.0-windows\Trustsoft.NotifyIcon.dll
+  Trustsoft.NotifyIcon.Sample -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.dll
+  Trustsoft.NotifyIcon.Tests -> C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.87
+BUILD EXIT=0
+Test run for C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll (.NETCoreApp,Version=v8.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:   394, Skipped:     0, Total:   394, Duration: 51 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+ACCEPTANCE EXIT=0

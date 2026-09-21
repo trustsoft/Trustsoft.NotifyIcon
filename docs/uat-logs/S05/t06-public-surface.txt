@@ -1,0 +1,18 @@
+== T06 step 5: the shipped public surface is unchanged by S05 ==
+run 2026-09-21 13:05:24 on MinibookX
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore --no-build --filter "FullyQualifiedName~PackagePurityTests"
+
+Test run for C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll (.NETCoreApp,Version=v8.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     6, Skipped:     0, Total:     6, Duration: 38 ms - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+PUBLIC-SURFACE-FILTER EXIT=0
+--- the tests that ran ---
+Test run for C:\Users\Maxim\YandexDisk\Projects AI\Trustsoft.NotifyIcon\.gsd-worktrees\M001\tests\Trustsoft.NotifyIcon.Tests\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Tests.dll (.NETCoreApp,Version=v8.0)
+The following Tests are available:
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.Library_csproj_has_no_package_reference
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.Loaded_library_references_only_framework_assemblies
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.Public_surface_is_only_the_documented_types
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.Library_targets_three_windows_tfms
+    Trustsoft.NotifyIcon.Tests.PackagePurityTests.Solution_build_outputs_exist_for_all_three_tfms

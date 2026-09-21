@@ -38,6 +38,23 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $CT = [System.Windows.Automation.ControlType]
 
+# A UI Automation node can report a non-finite or out-of-range extent, and a bare [int] cast of one
+# aborts the whole scan before it can print its verdict line. Measured during T06: the overflow
+# host's own 'PopupHost' pane reported an infinite width on one run, and the after-kill scan died at
+# the formatting line with 'Cannot convert value "∞" to type "System.Int32"' - so the run printed
+# no verdict at all, which is the one outcome this script exists to make impossible. Rendering the
+# raw value keeps the element visible in the dump and, more importantly, keeps the verdict line
+# reachable.
+function Format-Extent([double] $Value) {
+    if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value)) {
+        return $Value.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -gt [int]::MaxValue -or $Value -lt [int]::MinValue) {
+        return $Value.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return ([int]$Value).ToString([System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 # Every window the shell uses for the notification area: the primary taskbar, any secondary
 # taskbar (additional monitors), and the two spellings of the overflow host.
 $hosts = @(
@@ -84,13 +101,28 @@ if ($OpenOverflow) {
 [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, System.UIntPtr e);
 '@
             $r = $chevron.Current.BoundingRectangle
+            # The center is only meaningful for a finite rectangle, and Format-Extent's problem is a
+            # crash here too: (int)(inf/2) throws. A non-finite chevron is reported rather than
+            # clicked, so the run still reaches its verdict line.
+            $finite = -not ([double]::IsNaN($r.X) -or [double]::IsInfinity($r.X) `
+                -or [double]::IsNaN($r.Y) -or [double]::IsInfinity($r.Y) `
+                -or [double]::IsNaN($r.Width) -or [double]::IsInfinity($r.Width) `
+                -or [double]::IsNaN($r.Height) -or [double]::IsInfinity($r.Height))
+            if (-not $finite) {
+                Write-Output "overflow: FAILED - the chevron reported a non-finite rectangle (x=$(Format-Extent $r.X) y=$(Format-Extent $r.Y) w=$(Format-Extent $r.Width) h=$(Format-Extent $r.Height))"
+                $chevron = $null
+            }
+            else {
             [void][TrayScan.Mouse]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
             Start-Sleep -Milliseconds 200
             [TrayScan.Mouse]::mouse_event(0x0002, 0, 0, 0, [System.UIntPtr]::Zero)
             [TrayScan.Mouse]::mouse_event(0x0004, 0, 0, 0, [System.UIntPtr]::Zero)
             Write-Output 'overflow: opened by clicking the Show Hidden Icons chevron (mouse)'
+            }
         }
-        Start-Sleep -Milliseconds 1200
+        if ($null -ne $chevron) {
+            Start-Sleep -Milliseconds 1200
+        }
     }
 }
 
@@ -114,7 +146,7 @@ foreach ($cls in $hosts) {
         $count++
         $type = $e.Current.ControlType.ProgrammaticName -replace 'ControlType\.', ''
         $rect = $e.Current.BoundingRectangle
-        $line = "  {0} '{1}' rect={2},{3} {4}x{5}" -f $type, $name, [int]$rect.X, [int]$rect.Y, [int]$rect.Width, [int]$rect.Height
+        $line = "  {0} '{1}' rect={2},{3} {4}x{5}" -f $type, $name, (Format-Extent $rect.X), (Format-Extent $rect.Y), (Format-Extent $rect.Width), (Format-Extent $rect.Height)
         [void]$named.Add($line.Trim())
         if ($All -or ($Needle -ne '' -and $name -like "*$Needle*")) {
             Write-Output $line
