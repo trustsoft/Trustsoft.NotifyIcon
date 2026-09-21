@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -330,6 +331,40 @@ public sealed class SliceContractTests
         Assert.Equal(createdBefore, shell.CreatedIcons);
         Assert.Equal(handleBefore, trayIcon.RegisteredIconHandle);
         Assert.Equal(ShellConstants.NOTIFYICON_VERSION_4, shell.ShellNotifyIconDataSnapshots[callsBefore + 1].uTimeoutOrVersion);
+    }
+
+    /// <summary>
+    /// Teardown rests on the host window, not on managed cleanup: no type in the library declares a
+    /// finalizer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the seam half of R006, and the only half a test host can hold. The registration is
+    /// bound to the hidden top-level host <c>HWND</c>: when the process dies the OS destroys that
+    /// window and the shell drops the icon, so nothing managed has to run for the icon to disappear.
+    /// A finalizer (or an <c>AppDomain.ProcessExit</c> handler) would therefore be dead code in the
+    /// very case the slice claims - a force-killed process runs neither - so its absence is part of
+    /// the contract rather than an omission.
+    /// </para>
+    /// <para>
+    /// Asserted over the whole library assembly and not over <see cref="TrayIcon"/> alone, because a
+    /// helper type that grew a finalizer would be just as unverifiable at teardown time. The live
+    /// counterpart - a force-killed sample leaving no stale icon, observed through the shell's own
+    /// <c>Shell_NotifyIconGetRect</c> answer - is recorded in <c>docs/UAT-S05.md</c>.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Teardown_declares_no_finalizer_anywhere_in_the_library()
+    {
+        Type[] withFinalizer =
+        [
+            .. typeof(TrayIcon).Assembly.GetTypes().Where(
+                type => type.GetMethod(
+                    "Finalize",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is not null),
+        ];
+
+        Assert.Empty(withFinalizer);
     }
 
     /// <summary>Builds a square, single-colour, fully opaque image.</summary>

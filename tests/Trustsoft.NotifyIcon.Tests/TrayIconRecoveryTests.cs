@@ -166,6 +166,54 @@ public sealed class TrayIconRecoveryTests
         Assert.All(
             shell.ShellNotifyIconDataSnapshots,
             data => Assert.Equal((uint)NOTIFYICONDATAW.SizeOf(), data.cbSize));
+
+        NOTIFYICONDATAW version = shell.ShellNotifyIconDataSnapshots[callsBefore + 1];
+
+        // Named separately from the sweep above, because "both" is the contract: the add is the call
+        // that carries the payload and the version call is the one that selects the protocol, and
+        // each has to be a structure the shell can interpret on this Windows version.
+        Assert.Equal((uint)NOTIFYICONDATAW.SizeOf(), add.cbSize);
+        Assert.Equal((uint)NOTIFYICONDATAW.SizeOf(), version.cbSize);
+
+        // The union slot is left alone on the re-add - it holds the structure factory's zero,
+        // exactly as a fresh add leaves it - and it is what selects the protocol on the second call.
+        // Sending a timeout here (or a version on the add) is the kind of mix-up the union invites.
+        Assert.Equal(0u, add.uTimeoutOrVersion);
+        Assert.Equal(ShellConstants.NOTIFYICON_VERSION_4, version.uTimeoutOrVersion);
+    }
+
+    /// <summary>
+    /// An instance that never showed an icon has no host window to recover into, and nothing was
+    /// ever registered on its behalf.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The recovery branch refuses to act while the registration flag is clear, so that a broadcast
+    /// can never create an icon the application never asked for. This test pins the other half of
+    /// that case: an instance that was never made visible has not even created the hidden host
+    /// window, so there is no window for <c>HWND_BROADCAST</c> to arrive at in the first place - and
+    /// no shell call of any kind was made.
+    /// </para>
+    /// <para>
+    /// The reachable form of the guard - a registration that was deliberately removed while the host
+    /// window lives on - is pinned by
+    /// <see cref="Broadcast_after_the_icon_was_removed_is_a_silent_no_op"/>.
+    /// </para>
+    /// </remarks>
+    [DispatcherFact]
+    public void An_instance_that_never_showed_an_icon_has_no_host_to_recover_into()
+    {
+        var shell = new FakeShellApi();
+        using var trayIcon = new TrayIcon(shell) { IconSource = CreateSolid(IconSize, 0x20, 0x60, 0xA0) };
+
+        Assert.False(trayIcon.Visible);
+        Assert.False(trayIcon.IsRegistered);
+        Assert.Equal(IntPtr.Zero, trayIcon.HostHandle);
+
+        // Nothing was registered against the shell: no NotificationArea call, and not even the
+        // TaskbarCreated message id the host would have resolved on construction.
+        Assert.Empty(shell.ShellNotifyIconCalls);
+        Assert.Empty(shell.RegisteredMessages);
     }
 
     /// <summary>
@@ -340,12 +388,15 @@ public sealed class TrayIconRecoveryTests
         var writer = new StringWriter(CultureInfo.InvariantCulture);
         var listener = new TextWriterTraceListener(writer);
         TraceSource source = NotifyIconTrace.Source;
+        Exception? escaping;
 
         try
         {
             source.Listeners.Add(listener);
 
-            SendTaskbarCreated(trayIcon);
+            // Nothing may escape the window procedure: the shell, not the application, invoked it,
+            // so the runtime policy has to hold here even when the call it makes is refused.
+            escaping = Record.Exception(() => SendTaskbarCreated(trayIcon));
 
             source.Flush();
         }
@@ -360,6 +411,9 @@ public sealed class TrayIconRecoveryTests
         // Exactly two attempts at the add: the original and the single retry.
         Assert.Equal(2, attempts.Count);
         Assert.All(attempts, call => Assert.Equal(ShellConstants.NIM_ADD, call.Message));
+
+        // The refusal was reported, not thrown out of the sink and not swallowed silently.
+        Assert.Null(escaping);
 
         TrayErrorEventArgs error = Assert.Single(observed);
 
@@ -434,6 +488,61 @@ public sealed class TrayIconRecoveryTests
         Assert.Equal(handleBefore, trayIcon.RegisteredIconHandle);
         Assert.True(trayIcon.IsRegistered);
         Assert.True(trayIcon.Visible);
+    }
+
+    /// <summary>
+    /// A balloon still reaches the shell after recovery, against the identity the re-add used.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// "Present" is not the same as "working": a recovered registration has to be a normal one for
+    /// the rest of the surface too, so the balloon the consumer asked for before the restart must
+    /// still go out as a <c>NIM_MODIFY</c> carrying <c>NIF_INFO</c> for the recovered
+    /// <c>(hWnd, uID)</c> pair. A different identity would be a request to show a balloon for an
+    /// icon the shell does not hold, and a recovered registration that could not carry a balloon
+    /// would make the restart a silent loss of S04.
+    /// </para>
+    /// <para>
+    /// The live half of this claim - the shell's own <c>NIN_BALLOONSHOW</c> acceptance callback for
+    /// the recovered identity - is recorded in <c>docs/UAT-S05.md</c>, which is where S04 handed the
+    /// recovered-balloon check off to S05. No handle is created or destroyed to show it (R007).
+    /// </para>
+    /// </remarks>
+    [DispatcherFact]
+    public void ShowBalloonTip_still_reaches_the_shell_after_recovery()
+    {
+        var shell = new FakeShellApi();
+        using var trayIcon = new TrayIcon(shell)
+        {
+            IconSource = CreateSolid(IconSize, 0x20, 0x60, 0xA0),
+            ToolTipText = "post-recovery balloon",
+        };
+
+        trayIcon.Visible = true;
+
+        uint iconIdBefore = shell.ShellNotifyIconDataSnapshots[0].uID;
+        IntPtr host = trayIcon.HostHandle;
+
+        SendTaskbarCreated(trayIcon);
+
+        int callsBefore = shell.ShellNotifyIconCalls.Count;
+
+        trayIcon.ShowBalloonTip("Recovered", "The icon is back");
+
+        ShellCall call = Assert.Single(shell.ShellNotifyIconCalls.Skip(callsBefore));
+
+        Assert.Equal(ShellConstants.NIM_MODIFY, call.Message);
+        Assert.Equal(ShellConstants.NIF_INFO, call.Flags);
+
+        NOTIFYICONDATAW data = shell.ShellNotifyIconDataSnapshots[^1];
+
+        Assert.Equal(host, data.hWnd);
+        Assert.Equal(iconIdBefore, data.uID);
+        Assert.Equal("Recovered", data.szInfoTitle);
+        Assert.Equal("The icon is back", data.szInfo);
+
+        Assert.Empty(shell.DestroyedIconHandles);
+        Assert.Equal(iconIdBefore, shell.ShellNotifyIconDataSnapshots[0].uID);
     }
 
     /// <summary>
