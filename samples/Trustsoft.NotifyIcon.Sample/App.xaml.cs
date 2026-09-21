@@ -185,7 +185,7 @@ public partial class App : Application
 
     /// <summary>The one-line usage text printed when an argument is not understood.</summary>
     private const string SampleUsage =
-        "[sample] usage: Trustsoft.NotifyIcon.Sample [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] "
+        "[sample] usage: Trustsoft.NotifyIcon.Sample [--xaml] [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] "
         + "[--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]]";
 
     /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>: the pseudo-handle the manifest asks for.</summary>
@@ -369,45 +369,72 @@ public partial class App : Application
 
         AttachLibraryTraceListener();
 
-        // The sample's own subclass, so the --open-menu-after switch can reach the documented
-        // OnTrayClick hook; see SampleTrayIcon.
-        var trayIcon = new SampleTrayIcon();
-        _sampleTrayIcon = trayIcon;
+        // Printed before anything is created so a capture says which construction path produced every
+        // line that follows. The two modes print the same shapes on purpose: a diff between them is
+        // what shows the declarative path reaches the same states.
+        Console.WriteLine(arguments.Declarative
+            ? "[sample] declaration mode: XAML - the icon, its menu and its image are declared in Application.Resources and wired by markup; nothing in this file assigns a property or subscribes to an event on the icon."
+            : "[sample] declaration mode: code-first - the icon is constructed here and every property and event is wired in C#.");
 
-        // Subscribed before the first registration so a failure during registration is reported
-        // rather than escaping as an unhandled exception from the startup path.
-        trayIcon.TrayError += OnTrayError;
+        // The instance. In declarative mode it comes from Application.Resources, and the lookup is
+        // what instantiates the declaration - which is also when the shell registration happens,
+        // because the markup carries Visible="True". Nothing is assigned or subscribed below in that
+        // mode: markup carries the whole declaration, which is what this mode exists to prove.
+        //
+        // The declared type is the library's own TrayIcon, not SampleTrayIcon, because an
+        // ApplicationDefinition cannot resolve a type from its own project (measured: the markup
+        // compiler reports MC3074 for the local type and accepts the referenced library type). The
+        // subclass therefore stays a code-first instrument, and the consequence for --open-menu-after
+        // is reported by that timer rather than hidden.
+        TrayIcon? trayIcon = arguments.Declarative ? null : new SampleTrayIcon();
 
-        // S02: the four click types the shell reports through the v4 callback, plus the four
-        // Preview counterparts. The same handler serves all four main events because the arguments
-        // carry the button and the click count and the routed event carries its own name, so one
-        // line per click can name the click type without four near-identical methods.
-        trayIcon.TrayLeftClick += OnClick;
-        trayIcon.TrayLeftDoubleClick += OnClick;
-        trayIcon.TrayRightClick += OnClick;
-        trayIcon.TrayMiddleClick += OnClick;
+        if (trayIcon is not null)
+        {
+            _sampleTrayIcon = (SampleTrayIcon)trayIcon;
 
-        trayIcon.PreviewTrayLeftClick += OnPreviewClick;
-        trayIcon.PreviewTrayLeftDoubleClick += OnPreviewClick;
-        trayIcon.PreviewTrayRightClick += OnPreviewClick;
-        trayIcon.PreviewTrayMiddleClick += OnPreviewClick;
+            // Subscribed before the first registration so a failure during registration is reported
+            // rather than escaping as an unhandled exception from the startup path.
+            trayIcon.TrayError += OnTrayError;
 
-        // S04: the balloon click pair. The tunnel line shows the Preview phase arriving; the bubble
-        // line is the event half of this slice's exit condition. Subscribed before the first
-        // registration, with the click events, so even a balloon click during startup is observed.
-        trayIcon.PreviewBalloonTipClicked += OnPreviewBalloonTipClicked;
-        trayIcon.BalloonTipClicked += OnBalloonTipClicked;
+            // S02: the four click types the shell reports through the v4 callback, plus the four
+            // Preview counterparts. The same handler serves all four main events because the arguments
+            // carry the button and the click count and the routed event carries its own name, so one
+            // line per click can name the click type without four near-identical methods.
+            trayIcon.TrayLeftClick += OnClick;
+            trayIcon.TrayLeftDoubleClick += OnClick;
+            trayIcon.TrayRightClick += OnClick;
+            trayIcon.TrayMiddleClick += OnClick;
 
-        _trayIcon = trayIcon;
+            trayIcon.PreviewTrayLeftClick += OnPreviewClick;
+            trayIcon.PreviewTrayLeftDoubleClick += OnPreviewClick;
+            trayIcon.PreviewTrayRightClick += OnPreviewClick;
+            trayIcon.PreviewTrayMiddleClick += OnPreviewClick;
 
-        trayIcon.ToolTipText = "Trustsoft.NotifyIcon sample - the icon changes every second";
+            // S04: the balloon click pair. The tunnel line shows the Preview phase arriving; the bubble
+            // line is the event half of this slice's exit condition. Subscribed before the first
+            // registration, with the click events, so even a balloon click during startup is observed.
+            trayIcon.PreviewBalloonTipClicked += OnPreviewBalloonTipClicked;
+            trayIcon.BalloonTipClicked += OnBalloonTipClicked;
+        }
 
         try
         {
-            // Visible first, then the image: this exercises "an icon with no image yet" followed by
-            // the NIM_MODIFY replacement path that the rotation keeps using.
-            trayIcon.Visible = true;
-            trayIcon.IconSource = Frames[0];
+            if (trayIcon is null)
+            {
+                trayIcon = DeclarativeIcon();
+                _trayIcon = trayIcon;
+            }
+            else
+            {
+                _trayIcon = trayIcon;
+
+                trayIcon.ToolTipText = "Trustsoft.NotifyIcon sample - the icon changes every second";
+
+                // Visible first, then the image: this exercises "an icon with no image yet" followed by
+                // the NIM_MODIFY replacement path that the rotation keeps using.
+                trayIcon.Visible = true;
+                trayIcon.IconSource = Frames[0];
+            }
         }
         catch (TrayIconException ex)
         {
@@ -427,21 +454,31 @@ public partial class App : Application
         }
 
         Console.WriteLine(
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"[sample] tray icon registered, rotating {Frames.Length} frames every {RotationInterval.TotalSeconds:0.#}s."));
+            arguments.Declarative
+                ? "[sample] tray icon registered from markup (Visible=\"True\" and the image come from Application.Resources; no rotation runs, because nothing in C# may replace a declared value)."
+                : string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"[sample] tray icon registered, rotating {Frames.Length} frames every {RotationInterval.TotalSeconds:0.#}s."));
         Console.WriteLine("[sample] no window is shown - check the notification area, not the taskbar.");
 
-        // S03: the menu the icon opens on a right click. Assigned here rather than inside a click
-        // handler, because that is the shape a consumer's resource dictionary produces (a value the
-        // click path reads), and assigned before any click can arrive.
-        _menu = CreateTrayMenu();
-        trayIcon.ContextMenu = _menu;
+        // S03: the menu. Code-first builds it here; declarative takes the one markup assigned, so the
+        // item count printed below becomes a reading about the declaration rather than about this
+        // file. The window can never assign a menu in declarative mode, which is why the count is
+        // printed from whichever source produced it.
+        if (arguments.Declarative)
+        {
+            _menu = trayIcon.ContextMenu;
+        }
+        else
+        {
+            _menu = CreateTrayMenu();
+            trayIcon.ContextMenu = _menu;
+        }
 
         Console.WriteLine(
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"[sample] context menu assigned with {_menu.Items.Count} item(s); a right click on the icon must open it at the icon."));
+                $"[sample] context menu {(arguments.Declarative ? "taken from markup" : "assigned")} with {_menu?.Items.Count ?? 0} item(s); a right click on the icon must open it at the icon."));
 
         // The pump-level control, subscribed in the same run as the hook so the two counts are
         // directly comparable. It counts only; the hook is what prints.
@@ -451,9 +488,19 @@ public partial class App : Application
         // registration, so enumerating the thread's windows any earlier would hook nothing.
         AttachRawCallbackHooks();
 
-        _rotationTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = RotationInterval };
-        _rotationTimer.Tick += OnRotationTick;
-        _rotationTimer.Start();
+        if (arguments.Declarative)
+        {
+            // The rotation would replace the value markup declared, which is precisely the thing this
+            // mode is meant to keep honest, so it is off. It also makes the probe's GDI series for a
+            // declarative run directly comparable to a code-first one with no churn in it.
+            Console.WriteLine("[sample] rotation disabled in declaration mode: the markup's image is what the icon shows.");
+        }
+        else
+        {
+            _rotationTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = RotationInterval };
+            _rotationTimer.Tick += OnRotationTick;
+            _rotationTimer.Start();
+        }
 
         if (arguments.RunSeconds is TimeSpan runSeconds)
         {
@@ -515,14 +562,20 @@ public partial class App : Application
 
         if (icon is null)
         {
-            Console.WriteLine("[sample] --open-menu-after: no tray icon exists - no menu was requested.");
+            // Declarative mode declares the library's TrayIcon, so this hook is not available there:
+            // the self-open path needs the subclass that reaches OnTrayClick. Said plainly rather
+            // than left as the generic "no tray icon exists" line, which would be wrong in this mode -
+            // the icon does exist, the instrument does not.
+            Console.WriteLine("[sample] --open-menu-after: unavailable in declaration mode - the self-open hook needs the code-first subclass, so open the menu with a real right click instead.");
             return;
         }
 
         Console.WriteLine("[sample] --open-menu-after: requesting the menu now, with no click injected.");
         Console.Out.Flush();
 
-        icon.RequestMenuOpen();
+        // The interop stays in the application: the subclass is handed the anchor it should report.
+        GetCursorPos(out POINT cursor);
+        icon.RequestMenuOpen(new Point(cursor.X, cursor.Y));
 
         _menuHoldTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = SelfOpenedMenuHold };
         _menuHoldTimer.Tick += OnMenuHoldElapsedTick;
@@ -558,6 +611,56 @@ public partial class App : Application
 
         Console.WriteLine("[sample] --open-menu-after: closing the menu the sample opened (consumer-driven close, not an outside click).");
         menu.IsOpen = false;
+    }
+
+    /// <summary>The <c>x:Key</c> the declarative declaration is stored under in <c>App.xaml</c>.</summary>
+    /// <remarks>
+    /// Held as a constant rather than an inline string so the lookup and the markup cannot drift apart
+    /// silently: a renamed resource would otherwise turn the declarative mode into a run that reports
+    /// success while showing nothing.
+    /// </remarks>
+    private const string DeclarativeIconKey = "TrayIcon";
+
+    /// <summary>
+    /// Looks the declarative declaration up from the application's resources.
+    /// </summary>
+    /// <returns>The icon the markup declared, already registered because the markup says so.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The key is absent, or it holds something that is not a <see cref="TrayIcon"/>.
+    /// </exception>
+    /// <remarks>
+    /// <b>The lookup is what instantiates the declaration.</b> BAML defers value creation until the
+    /// first lookup, which is why a declaration nobody asks for costs nothing - and why this call is
+    /// the moment the icon appears and registers. Nothing here assigns a property or subscribes to an
+    /// event: in this mode the markup carries the whole declaration, including <c>Visible</c>, the
+    /// tooltip, the menu and every handler attribute.
+    /// </remarks>
+    private static TrayIcon DeclarativeIcon()
+    {
+        if (Application.Current.Resources[DeclarativeIconKey] is not TrayIcon icon)
+        {
+            throw new InvalidOperationException(
+                $"Application.Resources['{DeclarativeIconKey}'] did not yield a {nameof(TrayIcon)}. "
+                + "A declarative run needs App.xaml to declare that key, declared after the menu and image it references.");
+        }
+
+        return icon;
+    }
+
+    /// <summary>
+    /// Handles the declared menu's first item, which the markup names by attribute.
+    /// </summary>
+    /// <param name="sender">The item; unused.</param>
+    /// <param name="e">The event payload; unused.</param>
+    /// <remarks>
+    /// The code-first menu can attach a lambda to this item, but markup cannot: an event attribute has
+    /// to name a method. This is that method, and it prints the same line the lambda prints so the two
+    /// modes stay comparable line for line - which is the whole point of running both.
+    /// </remarks>
+    private void OnDeclaredMenuItemClick(object sender, RoutedEventArgs e)
+    {
+        Console.WriteLine("[sample] menu item clicked: header=Sample menu item");
+        Console.Out.Flush();
     }
 
     /// <summary>
@@ -1165,6 +1268,7 @@ public partial class App : Application
         bool balloonRealtime = false;
         bool balloonRespectQuietTime = false;
         TimeSpan? showBalloonAfter = null;
+        bool declarative = false;
         error = null;
         arguments = default!;
 
@@ -1281,13 +1385,20 @@ public partial class App : Application
                     showBalloonAfter = TimeSpan.FromSeconds(balloonDelaySeconds);
                     break;
 
+                case "--xaml":
+                    // A flag, not a switch with a value: the declaration lives in App.xaml, so there is
+                    // nothing for the caller to pass. Combining it with the wiring switches is legal
+                    // and useful - the balloon and menu demonstrations work in both modes.
+                    declarative = true;
+                    break;
+
                 default:
                     error = $"[sample] unknown argument '{argument}' - this sample does not ignore arguments it does not understand.";
                     return false;
             }
         }
 
-        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter);
+        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter, declarative);
         return true;
     }
 
@@ -1829,6 +1940,12 @@ public partial class App : Application
     /// <param name="BalloonRealtime">Whether the balloon is shown immediately rather than queued (<c>--balloon-realtime</c>).</param>
     /// <param name="BalloonRespectQuietTime">Whether the balloon claims to honour quiet time (<c>--balloon-respect-quiet-time</c>).</param>
     /// <param name="ShowBalloonAfter">The delay after which the sample shows one balloon with no click injected, or <see langword="null"/>.</param>
+    /// <param name="Declarative">
+    /// Whether the icon, its menu and its image come from <c>Application.Resources</c> markup
+    /// (<c>--xaml</c>) instead of being constructed and wired here. In that mode nothing in this file
+    /// assigns a property or subscribes to an event on the icon: markup carries the whole declaration,
+    /// which is the thing this mode exists to prove.
+    /// </param>
     private sealed record SampleArguments(
         TimeSpan? RunSeconds,
         string? CancelledClickType,
@@ -1837,48 +1954,8 @@ public partial class App : Application
         bool BalloonNoSound,
         bool BalloonRealtime,
         bool BalloonRespectQuietTime,
-        TimeSpan? ShowBalloonAfter);
-
-    /// <summary>
-    /// The sample's own <see cref="TrayIcon"/>, with one extra entry point: the documented
-    /// <see cref="TrayIcon.OnTrayClick"/> hook, invoked directly.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>What this is for.</b> <c>--open-menu-after</c> has to open the menu without a shell click:
-    /// the icon may live in a flyout no injector can reach, and a menu that fails to open has to be
-    /// visible in the console rather than inferred from a screen nothing is reading. Deriving from
-    /// <see cref="TrayIcon"/> and calling the protected hook runs the *production* open path - menu
-    /// activation, the assigned menu, the shell's icon rectangle, the monitor's DPI,
-    /// <c>TrayIconPlacement</c>, the anchor window and a real WPF popup. What it bypasses is exactly
-    /// one step: the shell's own callback and its decode, which the sample demonstrates live by
-    /// having real clicks injected into it by <c>probe-clicks</c>.
-    /// </para>
-    /// <para>
-    /// It reaches <c>base</c> by construction: it does not override the method, it invokes the base
-    /// implementation that a subclass is documented to call, so none of the library's policy is
-    /// re-implemented (or can drift) in the sample.
-    /// </para>
-    /// </remarks>
-    private sealed class SampleTrayIcon : TrayIcon
-    {
-        /// <summary>
-        /// Runs the default action of a right click, as if the shell had delivered one.
-        /// </summary>
-        /// <remarks>
-        /// The click payload is a real one - a right button, a single click, the cursor position and
-        /// the right-click routed event - rather than an empty placeholder, because a future change
-        /// that made <see cref="TrayIcon.OnTrayClick"/> read the payload would otherwise be invisible
-        /// to this instrument. The placement path itself is shell-rect driven and deliberately ignores
-        /// the anchor point, which the checklist records rather than assumes.
-        /// </remarks>
-        public void RequestMenuOpen()
-        {
-            GetCursorPos(out POINT cursor);
-
-            OnTrayClick(new TrayIconClickEventArgs(MouseButton.Right, 1, new Point(cursor.X, cursor.Y), TrayIcon.TrayRightClickEvent));
-        }
-    }
+        TimeSpan? ShowBalloonAfter,
+        bool Declarative);
 
     /// <summary>
     /// Prints what this process's DPI awareness actually is, and whether the manifested PerMonitorV2
@@ -1989,4 +2066,52 @@ public partial class App : Application
         2 => "DPI_AWARENESS_PER_MONITOR_AWARE",
         _ => "unknown",
     };
+}
+
+/// <summary>
+/// The sample's own <see cref="TrayIcon"/>, with one extra entry point: the documented
+/// <see cref="TrayIcon.OnTrayClick"/> hook, invoked directly.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>It is a top-level public type because XAML has to be able to name it.</b> A nested or internal
+/// type cannot be referenced from markup, and S06's declarative mode declares this class in
+/// <c>Application.Resources</c> - so the promotion is a requirement of the declarative surface, not
+/// a stylistic preference.
+/// </para>
+/// <para>
+/// <b>What this is for.</b> <c>--open-menu-after</c> has to open the menu without a shell click: the
+/// icon may live in a flyout no injector can reach, and a menu that fails to open has to be visible
+/// in the console rather than inferred from a screen nothing is reading. Deriving from
+/// <see cref="TrayIcon"/> and calling the protected hook runs the *production* open path - menu
+/// activation, the assigned menu, the shell's icon rectangle, the monitor's DPI,
+/// <c>TrayIconPlacement</c>, the anchor window and a real WPF popup. What it bypasses is exactly one
+/// step: the shell's own callback and its decode, which the sample demonstrates live by having real
+/// clicks injected into it.
+/// </para>
+/// <para>
+/// It reaches <c>base</c> by construction: it does not override the method, it invokes the base
+/// implementation that a subclass is documented to call, so none of the library's policy is
+/// re-implemented (or can drift) in the sample.
+/// </para>
+/// </remarks>
+public sealed class SampleTrayIcon : TrayIcon
+{
+    /// <summary>
+    /// Runs the default action of a right click, as if the shell had delivered one.
+    /// </summary>
+    /// <param name="screenAnchor">
+    /// The cursor position to report as the click's anchor, in physical screen pixels. It is passed
+    /// in rather than read here because the interop that reads it belongs to the application, and
+    /// because a caller that supplies it makes the instrument's own input explicit.
+    /// </param>
+    /// <remarks>
+    /// The click payload is a real one - a right button, a single click, a real cursor position and
+    /// the right-click routed event - rather than an empty placeholder, because a future change that
+    /// made <see cref="TrayIcon.OnTrayClick"/> read the payload would otherwise be invisible to this
+    /// instrument. The placement path itself is shell-rect driven and deliberately ignores the anchor
+    /// point, which the checklist records rather than assumes.
+    /// </remarks>
+    public void RequestMenuOpen(Point screenAnchor) =>
+        OnTrayClick(new TrayIconClickEventArgs(MouseButton.Right, 1, screenAnchor, TrayIcon.TrayRightClickEvent));
 }

@@ -1,10 +1,84 @@
 <Application x:Class="Trustsoft.NotifyIcon.Sample.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:tni="clr-namespace:Trustsoft.NotifyIcon;assembly=Trustsoft.NotifyIcon"
              ShutdownMode="OnExplicitShutdown">
     <!--
       No StartupUri on purpose: the premise of this project is an application that owns a tray icon
       and NO window (R001). The application therefore never shuts down by itself - OnExplicitShutdown
       plus the Exit/SessionEnding handlers in App.xaml.cs are what end the process.
     -->
+
+    <!--
+      S06: the declarative declaration, and the reference consumer pattern for R008/R009.
+
+      It is declared unconditionally but inert for code-first runs, because BAML defers value
+      creation until the first lookup (App.xaml.cs only looks the icon up when the declarative switch is
+      given), so a code-first run never instantiates anything here and never ends up with a second
+      icon. That claim is cross-checked live in docs/UAT-S06.md rather than assumed.
+
+      Document order matters: StaticResource resolves against what has already been declared, so the
+      image and the menu come before the icon that references them.
+
+      The handlers named by the event attributes are the App methods the code-first mode subscribes
+      in C#, which is deliberate - the two modes must reach the same behaviour through the same
+      handlers, so the markup compiler validates the same signatures a consumer would write. A
+      misspelled handler or a wrong argument type fails the build here rather than at runtime.
+    -->
+    <Application.Resources>
+        <!--
+          The image is a markup DrawingImage rather than a file on disk: the declaration then needs no
+          binary asset, and S01 already proved a vector source converts (and stays correctly sized
+          under a raised Display Scale).
+        -->
+        <DrawingImage x:Key="TrayImage">
+            <DrawingImage.Drawing>
+                <GeometryDrawing Brush="#FF3060A0">
+                    <GeometryDrawing.Geometry>
+                        <GeometryGroup>
+                            <EllipseGeometry Center="8,8" RadiusX="7" RadiusY="7" />
+                            <RectangleGeometry Rect="7,3 2,10" />
+                        </GeometryGroup>
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+            </DrawingImage.Drawing>
+        </DrawingImage>
+
+        <!--
+          The menu, with each of its three kinds of attribute expressed in markup: an item's Click and
+          the popup's own Opened/Closed. The first item writes a line when chosen, so the item-click
+          path is observable on the same console as the open and dismiss lines.
+        -->
+        <ContextMenu x:Key="TrayMenu" Opened="OnMenuOpened" Closed="OnMenuClosed">
+            <MenuItem Header="Sample menu item" Click="OnDeclaredMenuItemClick" />
+            <MenuItem Header="Second item" />
+        </ContextMenu>
+
+        <!--
+          The icon itself. Visible="True" is what registers it, and the markup carries the tooltip,
+          the menu activation policy, the image and every event. No balloon property exists anywhere
+          (D031): a balloon stays a method call, so the sample demonstrates one through its balloon
+          self-show timer in this mode too.
+
+          x:Shared is deliberately left at its default (true): one key, one instance, one icon.
+          x:Shared="False" would mint a new icon on every lookup.
+        -->
+        <tni:TrayIcon x:Key="TrayIcon"
+                               Visible="True"
+                               ToolTipText="Trustsoft.NotifyIcon sample (declared in XAML)"
+                               MenuActivation="RightClick"
+                               IconSource="{StaticResource TrayImage}"
+                               ContextMenu="{StaticResource TrayMenu}"
+                               TrayError="OnTrayError"
+                               TrayLeftClick="OnClick"
+                               TrayLeftDoubleClick="OnClick"
+                               TrayRightClick="OnClick"
+                               TrayMiddleClick="OnClick"
+                               PreviewTrayLeftClick="OnPreviewClick"
+                               PreviewTrayLeftDoubleClick="OnPreviewClick"
+                               PreviewTrayRightClick="OnPreviewClick"
+                               PreviewTrayMiddleClick="OnPreviewClick"
+                               BalloonTipClicked="OnBalloonTipClicked"
+                               PreviewBalloonTipClicked="OnPreviewBalloonTipClicked" />
+    </Application.Resources>
 </Application>
