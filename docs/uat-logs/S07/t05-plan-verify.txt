@@ -1,12 +1,12 @@
 # S07/T05 raw evidence: the task plan's verify command, as one invocation
-date: 2026-09-21T16:38:36+03:00
+date: 2026-09-21T16:51:14+03:00
 machine: MinibookX / MINGW64_NT-10.0-26200
 sdk: 10.0.401
-revision: 7b59f23 docs: The shipped README was rebuilt around the consumer's path (inst...
+revision: fe4840b docs: Closed the S07 evidence pack in docs/UAT-S07.md: environment, t...
 
 ## 0. the artifact under test, identified before it is judged
 $ sha256sum artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
-dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec *artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+9731972d093730b57a180f10b8e851eb347e0b9c5679d757d2c8d66072bfc7df *artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
 
 ## 1. the plan's verify line, exactly as the task plan writes it
 $ dotnet pack src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj -c Release
@@ -18,7 +18,7 @@ pack exit=0
 
 --- inspection ---
 package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
-        sha256 dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec
+        sha256 9731972d093730b57a180f10b8e851eb347e0b9c5679d757d2c8d66072bfc7df
         expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
   PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
 -- identity (the nuspec)
@@ -54,7 +54,7 @@ test suite exit=0
 
 ## 2. the artifact after the run, identified again
 $ sha256sum artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
-dad165f34b75f5d61214c6c17b0c158a2299fab2958ad943eedd2494ce6f8cec *artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+9731972d093730b57a180f10b8e851eb347e0b9c5679d757d2c8d66072bfc7df *artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
 $ unzip -l artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg | tail -2
 ---------                     -------
   1360823                     12 files

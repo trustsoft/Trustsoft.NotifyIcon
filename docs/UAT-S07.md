@@ -5,7 +5,7 @@
 **Date:** 2026-09-21
 **Revision tested:** the `milestone/M001` worktree with the S07/T01, T02 and T03 work applied; the raw logs below carry the exact timestamps and the pack's own sha256.
 **Machine:** MINIBOOKX, `MINGW64_NT-10.0-26200` (Git Bash), .NET SDK `10.0.401`, single monitor 1920x1200 at 150 % scale.
-**Document status:** **complete.** Assembled per task as the slice ran, then consolidated by T05, which added the environment block, the task plan's verify line as a single invocation, the three milestone-level cross-checks and the R010/R011/R012 verdicts. Every command quoted in this document was run as written; the raw logs and their producers are under `docs/uat-logs/S07/`.
+**Document status:** **complete.** Assembled per task as the slice ran, then consolidated by T05, which added the environment block, the task plan's verify line as a single invocation, the three milestone-level cross-checks and the R010/R011/R012 verdicts. The reopen fix (section 6) replaced this document's earlier, unmeasured exit-code claim with the contract measured on the shipped script. Every command quoted in this document was run as written; the raw logs and their producers are under `docs/uat-logs/S07/`.
 
 ## Verdict so far
 
@@ -23,12 +23,13 @@
 | The consumer sees exactly the documented public surface, checked from its own assembly | **PASS** | T03: `samples/consumer-proof/App.xaml.cs` carries its own copy of the seven documented type names and reports `7 exported type(s)` with a PASS on every framework; it also asserts the package's assembly references carry no WinForms, no System.Drawing and no other tray implementation |
 | A shell click at the icon reaches a consumer application | **FAIL, unchanged from S06/F1** | T03 section 8 of the log: the probe injected a right click into the icon's own rectangle (this run's coordinates: `1518,1164`; they follow the tray slot, so the log is the record of where this run's icon sat) and the consumer reported `clicks=0`, `menu opens=0`. The instrument limit `docs/UAT-S06.md` recorded is therefore not a property of the sample; the consumer proof reaches its menu through the documented `OnTrayClick` hook instead, and says so |
 | The README documents install, code-first use, declarative use, windowless shutdown, the interaction model, the measured declarative traps and the deliberate exclusions | **PASS** | T04: `README.md` restructured consumer-first, with every quoted command run as written — `docs/uat-logs/S07/t04-readme-verification.txt` (9 commands, 0 failures; `README.md` sha256 `e87308ab…` identical before and after the run). The facts a consumer copies are guarded by `PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface`, with a positive control and five negative controls in `docs/uat-logs/S07/t04-readme-guard-controls.txt` |
-| The task plan's whole verify line passes as one invocation on this revision | **PASS** | T05: `docs/uat-logs/S07/t05-plan-verify.txt` — pack exit 0, inspector `VERDICT all 15 assertions hold`, suite **403 passed / 0 failed / 0 skipped** in 58 s |
+| The task plan's whole verify line passes as one invocation on this revision | **PASS** | T05: `docs/uat-logs/S07/t05-plan-verify.txt` — pack exit 0, inspector `VERDICT all 15 assertions hold`, suite **403 passed / 0 failed / 0 skipped** |
 | The shipped public surface is still the seven documented types | **PASS** | T05: `PackagePurityTests` **12/12**, `Public_surface_is_only_the_documented_types` among them — `docs/uat-logs/S07/t05-milestone-claims.txt` section 1 |
 | The package contains nothing from the sample, the tests, the probe or the consumer proof | **PASS** | T05: the inspector's forbidden-entry assertion and its allowed-set assertion, both green on the artifact this run packed — same log, section 2 |
 | The declarative path the README documents is the path the sample runs | **PASS** | T05: identical namespace URI and prefix on both sides, the README's attribute set a subset of the sample's declared set (8 of 17), `TrayIconXamlContractTests` 7/7, and the live `--xaml` run printing `declaration mode: XAML` / `registered from markup` — same log, section 3 |
 | The suite's growth across S07 is accounted for by name, not assumed | **PASS** | T05: **+9 test names, 0 removed** (267 → 276 by method name), 6 in `PackagePurityTests` and 3 in `TrayIconMenuDataContextTests`; 394 (S06's closing count) + 9 = the 403 this run reports — `docs/uat-logs/S07/t05-suite-accounting.txt` |
 | The artifact's sha256 identifies the pack run, and no claim here rests on it | **PASS** | T05: two consecutive packs are byte-identical and content-identical (`dad165f3…`, 328,642 bytes, 12 entries); the older hash in the same log is the artifact T04's pack left at the same fixed path — `docs/uat-logs/S07/t05-pack-reproducibility.txt` |
+| The inspector's exit codes in this document are measured, not asserted | **PASS** | T05: six invocations of the shipped script — `0` on the real package (`VERDICT all 15 assertions hold`), `1` with the path quoted for an absent path, a directory and a non-zip file, and `2` for exactly the two usage-error cases (no argument, `unzip` absent). The driver states each expected code before running and fails on a mismatch, and it asserts the script's own header still says `2 = usage error` — `docs/uat-logs/S07/t05-usage-boundary.txt` |
 
 ## What this slice does not claim (so far)
 
@@ -352,7 +353,7 @@ Control 1 is the R011 failure mode itself: a dependency added by a later metadat
 - They prove the script **exits non-zero and names the offending entry** for a dependency group, a forbidden packaged entry and an identity mismatch. A verifier that has never been seen to fail is not a verifier; this one has been seen to fail three times, on purpose, on copies.
 - They do **not** prove the SDK would still produce a correct package after the mutations — they are not a pack-time test. They test the inspector, and only the inspector.
 - They do **not** cover every assertion: the README/licence presence, the XML-documentation presence and the framework-reference assertion have no dedicated control. The XML-documentation and metadata assertions are covered from the source side by the T01 controls (`docs/uat-logs/S07/t01-negative-controls.txt`, three named guard failures).
-- The script's exit codes are `0` (all assertions hold), `1` (at least one broken), `2` (usage error, including an unreadable or absent package argument). A caller can therefore distinguish "the package is wrong" from "you invoked the inspector wrongly".
+- The script's exit codes, **measured on the shipped script rather than read off it** (`docs/uat-logs/S07/t05-usage-boundary.txt`, produced by `docs/uat-logs/S07/t05-usage-boundary.sh`): `0` when all 15 assertions hold; `1` when a package argument is absent, a directory or not a zip — the offending path is quoted and the usage line is *not* printed; `2` only for a usage error, which means no package argument at all, or `unzip` absent from `PATH`. A caller can therefore distinguish "the package is wrong" (1) from "you invoked the inspector wrongly" (2), and the script's own header states the same contract — the driver asserts that too, so the document and the script cannot drift apart silently again.
 
 ### Reproducing this section
 
@@ -421,9 +422,9 @@ dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release --no-restore
 
 | Command | Exit | Output |
 |---|---|---|
-| pack | **0** | `Successfully created package '…\artifacts\Trustsoft.NotifyIcon.1.0.0.nupkg'`, sha256 `dad165f3…`, 328,642 bytes, 12 entries |
+| pack | **0** | `Successfully created package '…\artifacts\Trustsoft.NotifyIcon.1.0.0.nupkg'`, sha256 `9731972d…`, 328,650 bytes, 12 entries |
 | inspection | **0** | `VERDICT  all 15 assertions hold` — 15 `PASS` lines, no `FAIL` |
-| suite | **0** | `Passed!  - Failed: 0, Passed: 403, Skipped: 0, Total: 403, Duration: 58 s` |
+| suite | **0** | `Passed!  - Failed: 0, Passed: 403, Skipped: 0, Total: 403, Duration: 57 s` (the log regenerated for the reopen fix; the first run of the same line recorded 58 s on the same 403 tests) |
 
 **The 403 is accounted for, not asserted.** The extractor that counts public test methods by name finds
 **267 names at S06's closing revision `3049495` and 276 here: +9 added, 0 removed**, which is exactly
@@ -449,17 +450,26 @@ attribute set, not the namespace spelling, is what the subset check compares.
 
 ### 3. What the artifact's hash does and does not identify
 
-`t05-plan-verify.txt` prints the artifact's sha256 before and after the pack it runs, and the two values
-differ (`e8f551a2…` → `dad165f3…`). That difference is measured rather than explained away:
+`t05-plan-verify.txt` prints the artifact's sha256 before and after the pack it runs. In the run recorded
+here — the regenerated run on the revision this document was corrected against — the two readings are
+**equal** (`9731972d…`, 328,650 bytes, 12 entries, at the fixed path `artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg`):
+the path already held a pack of this same revision, so the repack reproduced it byte for byte. That
+is a consequence of what the path held, not a determinism claim, and this log was regenerated for this
+revision, so its pair no longer reads the way the earlier run's did. The determinism claim is the one
+`t05-pack-reproducibility.txt` measures directly, and it stands on its own:
 
-- two consecutive packs of the unchanged tree are **byte-identical and content-identical** (`dad165f3…`,
+- two consecutive packs of one unchanged tree are **byte-identical and content-identical** (`dad165f3…`,
   328,642 bytes, the same 12 entries with the same per-entry sha256);
-- the earlier value is the artifact **T04's pack left at the same fixed path** (`docs/uat-logs/S07/t04-readme-verification.txt`
-  records `e8f551a2…`), and the T01/T02-era artifact differed again (`ffd813f0…`) — it is also the
-  smaller one (the T01 and T02 logs record that artifact at 325,181 and 325,169 bytes against this
-  run's 328,642), which is consistent with having been packed before T04 rebuilt `README.md`, itself a
-  package entry. Two readings of the same fixed path in the same era differ by 12 bytes, which is the
-  same fact from another angle: the path is repacked as the tree changes.
+- the value at that fixed path is **not** stable across eras, and that log's comparison section lists what
+  earlier logs saw there: `e87308ab…` (the README as T02/T04 shipped it), `e8f551a2…` (T04's own pack,
+  `docs/uat-logs/S07/t04-readme-verification.txt`), `ffd813f0…` (T01/T02-era — also the smaller build: the
+  T01 and T02 logs record that artifact at 325,181 and 325,169 bytes against T05's 328,642) and `dad165f3…`
+  (T05's). `README.md` is a package entry, so a README rebuild changes the bytes for a real reason rather
+  than a nondeterministic one;
+- the sentence in `t05-pack-reproducibility.txt` about a "T04-vs-T05 hash difference in
+  t05-plan-verify.txt" describes the plan-verify log **as it stood when that log was produced**. The
+  plan-verify log was regenerated afterwards on the corrected revision, which is why its own pair now reads
+  equal; the reproducibility log was not re-run, and every value quoted above is the one it measured.
 
 So a nupkg's sha256 identifies the pack run that produced it, not a value to compare across logs. Nothing
 in R010, R011 or R012 depends on byte-equality: the inspector's identity assertion reads the id and the
@@ -536,12 +546,38 @@ These are open, not closed, and each names the document or test that carries the
 6. **Publication is not attempted.** Nothing in this milestone authorises pushing to nuget.org, and D037's
    version policy is the thing that would have to be consulted first.
 
-### 6. Reproducing this section
+### 6. The reopen finding this revision corrects
+
+An earlier revision of this document claimed in three places that `scripts/verify-package.sh` exits 2 —
+"usage error" — when its package argument is absent or unreadable. The shipped script does not do that:
+exit 2 is reachable only when there is no package argument at all or when `unzip` is absent from `PATH`,
+while an absent, directory or non-zip argument exits **1** with the offending path quoted. The claim had
+been written from the script's header rather than read off a run, which is the failure class this slice
+exists to remove — and the slice's own T02 record had already measured the correct contract
+(`.gsd/phases/01-core-tray-icon-for-wpf-without-winforms/S07-T02-SUMMARY.md`), so the document contradicted
+its own evidence.
+
+The correction has three parts, and each is on disk rather than in prose:
+
+- the three occurrences (the T02 section's exit-code paragraph, the Failure Modes row and the
+  Negative Tests row) state the measured contract — exit 0 = all 15 assertions hold, exit 1 = a bad package
+  argument with the path quoted, exit 2 = usage error only;
+- `docs/uat-logs/S07/t05-usage-boundary.sh` was added: it states each expected exit code **before** it runs
+  the shipped script, fails on a mismatch, asserts that exit 2 occurs in exactly the two usage-error cases
+  and in no package-argument case, and asserts that the script's own header still says `2 = usage error`, so
+  document and script cannot drift apart silently again. Its six cases are recorded in
+  `docs/uat-logs/S07/t05-usage-boundary.txt`, which now carries the Negative Tests row's evidence pointer in
+  place of the usage block that covered only the no-argument case;
+- the plan's verify line was re-run afterwards (`t05-plan-verify.txt`, regenerated on this revision), so the
+  evidence in this section belongs to the corrected revision and not to the one that carried the wrong claim.
+
+### 7. Reproducing this section
 
 ```text
 bash docs/uat-logs/S07/t05-plan-verify.sh          # -> t05-plan-verify.txt
 bash docs/uat-logs/S07/t05-milestone-claims.sh     # -> t05-milestone-claims.txt
 bash docs/uat-logs/S07/t05-pack-reproducibility.sh # -> t05-pack-reproducibility.txt
+bash docs/uat-logs/S07/t05-usage-boundary.sh       # -> t05-usage-boundary.txt (six exit-code cases)
 ```
 
 `t05-environment.txt` and `t05-suite-accounting.txt` record the environment commands and the
@@ -556,15 +592,15 @@ and this table says which.
 | Dependency | Failure path | Handling |
 |---|---|---|
 | `dotnet pack` / `dotnet build` / `dotnet test` (4–70 s subprocesses) | non-zero exit on a broken build, a failing test, or a shell missing the Windows known-folder variables (`Value cannot be null. (Parameter 'path1')` — measured twice in this slice, in T03 and in T05's first reproducibility probe) | every script captures the exit code (`pack_exit`, `verify_exit`, `suite_exit`, `declarative_exit`), prints it, and exits 1 with `FAILURES ABOVE`. The environment-repair block at the top of each script is the measured fix for the profile-variable failure |
-| the packaged artifact (a file at a fixed path) | absent, unreadable, or stale | `verify-package.sh` exits **2** with a usage message when its argument is unreadable — distinguishable from exit 1, "an invariant is broken"; a stale file is made visible by printing the hash *before* the pack in section 0 of the plan-verify log |
+| the packaged artifact (a file at a fixed path) | absent, unreadable, or stale | `verify-package.sh` exits **1** and quotes the offending path when its argument is absent, a directory or not a zip — measured, `docs/uat-logs/S07/t05-usage-boundary.txt`; exit **2** is reserved for a usage error (no argument at all, or `unzip` absent), so a bad package path is never confusable with a mistyped invocation; a stale file is made visible by printing the hash *before* the pack in section 0 of the plan-verify log |
 | `unzip` (the inspector's only external tool) | not installed | the script checks for it and exits 2 with a message before running an assertion |
 | a check whose extraction matches nothing | a pipeline reports the producer's exit code, so a run that printed nothing can read as a pass | handled explicitly: the attribute extraction asserts both sides are non-empty before the subset check, and the live declarative run writes to a file and asserts the run's exit code **and** at least three matched lines (`declarative run exit=0 matched lines=3`) |
-| a hung subprocess | no script imposes a timeout | **not handled by the scripts.** The harness (`gsd_exec`, 600 s) bounds it, and a hang leaves no log file rather than a false pass — recorded here instead of pretended. The longest measured command is the 58 s suite |
+| a hung subprocess | no script imposes a timeout | **not handled by the scripts.** The harness (`gsd_exec`, 600 s) bounds it, and a hang leaves no log file rather than a false pass — recorded here instead of pretended. The longest measured command is the ~58 s suite |
 
 ## Load Profile
 
 No runtime load dimension. The unit is one document and four one-shot scripts over a 328 KB artifact:
-the costs are a ~4 s pack, a sub-second inspection, a 58 s suite of 403 tests and an 8 s live sample run,
+the costs are a ~4 s pack, a sub-second inspection, a ~58 s suite of 403 tests and an 8 s live sample run,
 all CPU-bound and linear in artifact size and test count. Nothing is pooled, cached, rate-limited or
 shared — no network, no concurrency, no server, no queue — so there is no resource to protect and no
 breakpoint at 10x; the only saturated thing would be a single core's wall time. The one amplifying factor
@@ -583,7 +619,7 @@ the one instrument of its own that could have passed silently.
 | The nuspec version drifts from the version the project declares | the same script, control 3, which names both values (`9.9.9` vs `1.0.0`) rather than only reporting a mismatch | same file, control 3 |
 | The metadata, the `IsPackable=false` flags, the package-reference purity, the XML documentation or the README pin breaks | three source-side guard controls (one invariant each, restored byte-for-byte with `cmp`) plus five negative controls for the README pin | `docs/uat-logs/S07/t01-negative-controls.txt` and `docs/uat-logs/S07/t04-readme-guard-controls.txt`, produced by the scripts beside them |
 | The instrument itself could pass vacuously (an extractor that finds nothing, a live run whose grep matches nothing) | the hardening T05 added: non-empty extraction on both sides, and a live run whose exit code **and** matched-line count are both asserted | `docs/uat-logs/S07/t05-milestone-claims.txt` |
-| An absent or unreadable package argument | `verify-package.sh` exits 2, distinct from the exit-1 "invariant broken" path | the script's usage block; exit 0 on a real package is recorded in every log above |
+| An absent, directory or non-zip package argument | `verify-package.sh` exits **1** and quotes the offending path — *not* the usage-error exit 2; exit 2 is reached only by the no-argument case and the `unzip`-absent case | `docs/uat-logs/S07/t05-usage-boundary.txt`, produced by `docs/uat-logs/S07/t05-usage-boundary.sh`: `an absent package path=1`, `a directory as the package argument=1`, `a file that exists but is not a zip=1`, `no package argument at all (a usage error)=2`, `unzip absent from PATH (the other usage-error path)=2`. The row replaces an earlier claim that a bad argument exits 2 — the claim the reopen finding caught |
 
 Suite-side negative assertions, all green at 12/12 in `PackagePurityTests`:
 `Library_csproj_has_no_package_reference`, `Loaded_library_references_only_framework_assemblies`,

@@ -1,0 +1,119 @@
+# S07/T05 raw evidence: the exit-code contract of scripts/verify-package.sh
+date: 2026-09-21T16:52:52+03:00
+machine: unknown / MINGW64_NT-10.0-26200
+script: scripts/verify-package.sh
+real package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg sha256=9731972d093730b57a180f10b8e851eb347e0b9c5679d757d2c8d66072bfc7df
+
+Every case below states the exit code the corrected contract predicts, then runs the shipped
+script and records what it actually did. The reopen finding was the opposite order: the UAT
+text said an absent or unreadable package argument exits 2; the script exits 1 and quotes the
+path. The usage message is on stderr, so each case's merged output is printed verbatim.
+
+## no package argument at all (a usage error)
+$ "/usr/bin/bash" scripts/verify-package.sh
+(exit=2; contract says 2)
+  usage: bash scripts/verify-package.sh <package.nupkg> [more.nupkg ...]
+  PASS  exit 2, and the output is what the corrected contract describes
+
+## an absent package path
+$ "/usr/bin/bash" scripts/verify-package.sh artifacts/does-not-exist.nupkg
+(exit=1; contract says 1)
+  package: artifacts/does-not-exist.nupkg
+    FAIL  package file exists and is readable: 'artifacts/does-not-exist.nupkg' does not exist (nothing else can be checked)
+  
+  
+  VERDICT  1 of 1 assertions failed
+  PASS  exit 1, and the output is what the corrected contract describes
+
+## a directory as the package argument
+$ "/usr/bin/bash" scripts/verify-package.sh artifacts
+(exit=1; contract says 1)
+  package: artifacts
+    FAIL  package file exists and is readable: 'artifacts' does not exist (nothing else can be checked)
+  
+  
+  VERDICT  1 of 1 assertions failed
+  PASS  exit 1, and the output is what the corrected contract describes
+
+## a file that exists but is not a zip
+$ "/usr/bin/bash" scripts/verify-package.sh /tmp/tmp.vSvktJpUrC/not-a-zip.nupkg
+(exit=1; contract says 1)
+  package: /tmp/tmp.vSvktJpUrC/not-a-zip.nupkg
+          sha256 306dd75289584f36ed2491b76f151702d5535c722337074d638f62a0a63b572e
+          expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
+    PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
+  -- identity (the nuspec)
+    FAIL  the package carries a root-level .nuspec (none found, so every nuspec assertion below is unverifiable)
+  -- dependency groups (R011)
+    FAIL  no <dependency> entry appears in any target-framework group (unverifiable: the package has no nuspec)
+  -- package content
+    FAIL  the package carries a lib folder for each of the three target frameworks; missing:
+            lib/net10.0-windows7.0
+            lib/net8.0-windows7.0
+            lib/net9.0-windows7.0
+    FAIL  lib/net8.0-windows7.0/ is incomplete; missing entry/entries: lib/net8.0-windows7.0/Trustsoft.NotifyIcon.dll lib/net8.0-windows7.0/Trustsoft.NotifyIcon.xml
+    FAIL  lib/net9.0-windows7.0/ is incomplete; missing entry/entries: lib/net9.0-windows7.0/Trustsoft.NotifyIcon.dll lib/net9.0-windows7.0/Trustsoft.NotifyIcon.xml
+    FAIL  lib/net10.0-windows7.0/ is incomplete; missing entry/entries: lib/net10.0-windows7.0/Trustsoft.NotifyIcon.dll lib/net10.0-windows7.0/Trustsoft.NotifyIcon.xml
+    FAIL  the package carries README.md at its root (missing; PackageReadmeFile would resolve to nothing)
+    FAIL  the nuspec <readme> element names the shipped README (unverifiable: the package has no nuspec)
+    FAIL  the package carries the licence file LICENSE at its root (missing, though the nuspec declares the MIT expression)
+    PASS  no entry belongs to the sample, the tests, the probe or the consumer proof (patterns: Sample Tests testhost probe-live consumer-proof)
+    PASS  every package entry is one the package is allowed to contain (nuspec, README, LICENSE, lib/<tfm>/assembly+xml, package metadata)
+  
+  
+  VERDICT  9 of 12 assertions failed
+  PASS  exit 1, and the output is what the corrected contract describes
+
+## unzip absent from PATH (the other usage-error path)
+$ env PATH="/tmp/tmp.vSvktJpUrC/no-unzip-bin" "/usr/bin/bash" scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+(exit=2; contract says 2)
+  FAIL  unzip is required to inspect a nupkg and is not on PATH
+  PASS  exit 2, and the output is what the corrected contract describes
+
+## the real package (the only passing path)
+$ "/usr/bin/bash" scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+(exit=0; contract says 0)
+  package: artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+          sha256 9731972d093730b57a180f10b8e851eb347e0b9c5679d757d2c8d66072bfc7df
+          expected identity from src/Trustsoft.NotifyIcon/Trustsoft.NotifyIcon.csproj: id='Trustsoft.NotifyIcon' version='1.0.0'
+    PASS  the library project declares the expected identity id='Trustsoft.NotifyIcon' version='1.0.0'
+  -- identity (the nuspec)
+    PASS  the package carries a root-level nuspec: Trustsoft.NotifyIcon.nuspec
+    PASS  the nuspec id is 'Trustsoft.NotifyIcon'
+    PASS  the nuspec version is '1.0.0'
+  -- dependency groups (R011)
+    PASS  no <dependency> entry appears in any of the 3 target-framework group(s) under <dependencies> (the SDK's empty groups, D038)
+    PASS  the only framework reference in the nuspec is Microsoft.WindowsDesktop.App.WPF
+  -- package content
+    PASS  the package carries exactly the three target-framework lib folders: net10.0-windows7.0 net8.0-windows7.0 net9.0-windows7.0
+    PASS  lib/net8.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+    PASS  lib/net9.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+    PASS  lib/net10.0-windows7.0/ carries Trustsoft.NotifyIcon.dll and its XML documentation Trustsoft.NotifyIcon.xml
+    PASS  the package carries README.md at its root
+    PASS  the nuspec <readme> names 'README.md' and that entry is in the package
+    PASS  the package carries the licence file LICENSE at its root
+    PASS  no entry belongs to the sample, the tests, the probe or the consumer proof (patterns: Sample Tests testhost probe-live consumer-proof)
+    PASS  every package entry is one the package is allowed to contain (nuspec, README, LICENSE, lib/<tfm>/assembly+xml, package metadata)
+  
+  
+  VERDICT  all 15 assertions hold
+  PASS  exit 0, and the output is what the corrected contract describes
+
+## every entry point, and the code it returned
+  no package argument at all (a usage error)=2
+  an absent package path=1
+  a directory as the package argument=1
+  a file that exists but is not a zip=1
+  unzip absent from PATH (the other usage-error path)=2
+  the real package (the only passing path)=0
+
+## exit 2 is a usage error and nothing else
+  PASS  exit 2 occurred in exactly the two usage-error cases, and in no package-argument case
+
+## the script's own header states the same contract
+  scripts/verify-package.sh:24  Exit codes: 0 = every invariant holds; 1 = at least one invariant is broken; 2 = usage error.
+  PASS  the header says '2 = usage error', which is what the six cases above measure
+
+## verdict
+  6 cases, 6 expected exit codes matched. Exit 0 = every invariant holds (all 15
+  assertions), exit 1 = a package argument is absent, a directory or not a zip (the offending path is quoted), exit 2 = usage error only (no package argument, or unzip absent).
