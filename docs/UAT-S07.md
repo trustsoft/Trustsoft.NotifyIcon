@@ -5,7 +5,7 @@
 **Date:** 2026-09-21
 **Revision tested:** the `milestone/M001` worktree with the S07/T01, T02 and T03 work applied; the raw logs below carry the exact timestamps and the pack's own sha256.
 **Machine:** MINIBOOKX, `MINGW64_NT-10.0-26200` (Git Bash), .NET SDK `10.0.401`, single monitor 1920x1200 at 150 % scale.
-**Document status:** **complete.** Assembled per task as the slice ran, then consolidated by T05, which added the environment block, the task plan's verify line as a single invocation, the three milestone-level cross-checks and the R010/R011/R012 verdicts. The reopen fix (section 6) replaced this document's earlier, unmeasured exit-code claim with the contract measured on the shipped script. Every command quoted in this document was run as written; the raw logs and their producers are under `docs/uat-logs/S07/`.
+**Document status:** **complete.** Assembled per task as the slice ran, then consolidated by T05, which added the environment block, the task plan's verify line as a single invocation, the three milestone-level cross-checks and the R010/R011/R012 verdicts. The reopen fix (section 6) replaced this document's earlier, unmeasured exit-code claim with the contract measured on the shipped script. Every command quoted in this document was run as written; the raw logs and their producers are under `docs/uat-logs/S07/`. **T05 closeout:** the whole pack was then re-measured independently at revision `55a651f` — the plan's verify line, the inspector's six exit-code cases, the three milestone-level cross-checks with their live `--xaml` run and the consumer proof end-to-end — and every claim held (see the last row of the table below and section 3 for what the artifact's sha256 did under the re-run). No file under `src/`, `samples/`, `tests/` or `scripts/` has changed since `7b59f23`, which is the revision the T05 logs record, so those measurements still describe this source.
 
 ## Verdict so far
 
@@ -30,6 +30,7 @@
 | The suite's growth across S07 is accounted for by name, not assumed | **PASS** | T05: **+9 test names, 0 removed** (267 → 276 by method name), 6 in `PackagePurityTests` and 3 in `TrayIconMenuDataContextTests`; 394 (S06's closing count) + 9 = the 403 this run reports — `docs/uat-logs/S07/t05-suite-accounting.txt` |
 | The artifact's sha256 identifies the pack run, and no claim here rests on it | **PASS** | T05: two consecutive packs are byte-identical and content-identical (`dad165f3…`, 328,642 bytes, 12 entries); the older hash in the same log is the artifact T04's pack left at the same fixed path — `docs/uat-logs/S07/t05-pack-reproducibility.txt` |
 | The inspector's exit codes in this document are measured, not asserted | **PASS** | T05: six invocations of the shipped script — `0` on the real package (`VERDICT all 15 assertions hold`), `1` with the path quoted for an absent path, a directory and a non-zip file, and `2` for exactly the two usage-error cases (no argument, `unzip` absent). The driver states each expected code before running and fails on a mismatch, and it asserts the script's own header still says `2 = usage error` — `docs/uat-logs/S07/t05-usage-boundary.txt` |
+| The pack's claims hold when a second party re-measures them at the closing revision | **PASS** | T05 closeout at `55a651f`: the plan's verify line re-run as one invocation (pack exit 0; inspector `VERDICT all 15 assertions hold`; suite **403 passed / 0 failed / 0 skipped**, 58 s), `PackagePurityTests` **12/12**, `TrayIconXamlContractTests` **7/7**, the three milestone-level cross-checks re-run green including the live `--xaml` run (`declaration mode: XAML`, `registered from markup`, 3 matched lines), the inspector's six exit-code cases at `0`/`1`/`2` exactly as section 6 records, and the consumer proof re-run end-to-end (three frameworks, `18/18` presence samples, `gdi` rising once with the menu popup and then flat, `sample-exit 0`, `icon-after-exit: gone`, surface assertion `PASS`, click attempt `injected=1 / delivered=0`). The artifact's sha256 moved again within this one revision while every package entry stayed byte-identical — section 3 |
 
 ## What this slice does not claim (so far)
 
@@ -474,6 +475,17 @@ revision, so its pair no longer reads the way the earlier run's did. The determi
   t05-plan-verify.txt" describes the plan-verify log **as it stood when that log was produced**. The
   plan-verify log was regenerated afterwards on the corrected revision, which is why its own pair now reads
   equal; the reproducibility log was not re-run, and every value quoted above is the one it measured.
+
+**Re-measured at the closing revision `55a651f`.** The T05 closeout re-ran this section's experiment and
+learned the sharper version of the same lesson. Two consecutive packs with no build in between were again
+byte-identical (`f5c14c4a…`, 329,315 bytes, 12 entries; `README.md` in that artifact hashes to the
+`5310d269…` the T04 log records, which is the README this revision ships). Later packs of the same clean tree
+produced different bytes again (`7aeca7c9…`, then `0ec9358b…` after an explicit `dotnet build -t:Rebuild`)
+— and unzipping that `7aeca7c9…` artifact and the `0ec9358b…` one and hashing every entry shows **all 12
+entries byte-identical**.
+What moves is the zip's stored entry timestamps, which follow the build outputs. So content-identity is the
+property that holds across a rebuild, byte-identity holds only for packs taken with no intervening build,
+and the hash identifies the pack run in every case. Nothing in R010, R011 or R012 rests on either.
 
 So a nupkg's sha256 identifies the pack run that produced it, not a value to compare across logs. Nothing
 in R010, R011 or R012 depends on byte-equality: the inspector's identity assertion reads the id and the
