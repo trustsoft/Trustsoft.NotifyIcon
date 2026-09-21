@@ -228,6 +228,20 @@ Two traps that cost time when they are hit, both recorded with their measurement
   `HICON` is still rasterized at a fixed 16 px, so a display above 100 % scale gets a correctly
   placed menu with a scaled-up icon. This is a named follow-up in the milestone roadmap
   (`docs/UAT-S03.md`), not a silently dropped clause.
+- **No consumer-visible trace log in v1.** The library's diagnostics go through
+  `System.Diagnostics.TraceSource`, but a default-configured application that only references the
+  package receives no library trace lines on net8 (measured: zero lines received,
+  `docs/UAT-S02.md`); in-repo tests hear the trace because they attach listeners in-process. The
+  consumer-reachable failure signal is the `TrayError` routed event, which carries the operation
+  constant and the Win32 error code.
+- **Display-scale and balloon-OS-behaviour evidence in v1 is fixture-first, by recorded decision.**
+  Menu placement is proven by 82 headless fixtures (100/125/150/175/200 %, negative-origin and
+  mixed-DPI monitor pairs) plus one live session at 150 % (`docs/UAT-S03.md`); live observation at
+  the remaining scale settings and on two monitors with different scale factors is **deferred to
+  the follow-up milestone**, not claimed. Likewise, balloon quiet-time suppression and
+  realtime-discard semantics are pinned at the shell seam and accepted live (the shell confirms
+  each configuration), while their OS-side behaviour rests on the documented shell contract until
+  the deferred live pass.
 - **No second shell protocol.** The library registers with `NOTIFYICON_VERSION_4` and no other.
 - **No `RepositoryUrl` or `PackageProjectUrl` in the metadata.** This repository has no remote and no
   project page, and a fabricated link cannot be corrected after publication; the omission is
@@ -283,7 +297,10 @@ unaffected by the second.
 The test suite asserts the struct layout against the Windows SDK header, the exact shell call
 sequence, GDI handle counts across repeated icon replacement, the failure policies, the purity of
 the public surface and the packaging metadata
-(`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`).
+(`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`). Five menu/popup tests in four classes
+are **desktop-foreground-sensitive** and can fail when Windows denies the foreground to the test
+process — [`docs/TEST-ENVIRONMENT.md`](docs/TEST-ENVIRONMENT.md) documents the mechanism, the
+exactly-affected tests and the acceptance decision before you distrust a red run.
 
 ### The headless sample and the live probe
 
