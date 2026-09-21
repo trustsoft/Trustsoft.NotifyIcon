@@ -264,6 +264,74 @@ public sealed class SliceContractTests
         Assert.Empty(result.PopupWindowsAfterOutsideClick);
     }
 
+    /// <summary>
+    /// Explorer-restart recovery re-registers by <c>NIM_ADD</c> plus <c>NIM_SETVERSION</c> with the
+    /// retained handle, and does nothing else at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the S04 and S03 to S05 edge asserted as a contract. Recovery runs inside a window
+    /// procedure the shell invoked, so every clause here is a structural property of the recorded
+    /// call sequence rather than a value a caller could notice late:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// The pair is an add plus a version call, never a <c>NIM_MODIFY</c>-only update - a
+    /// modification cannot create a registration that a restarted shell no longer holds.
+    /// </description></item>
+    /// <item><description>
+    /// The re-add carries no <c>NIF_INFO</c> and no balloon text, so recovery cannot resurrect a
+    /// balloon the consumer showed before the restart (S04's contract check 7).
+    /// </description></item>
+    /// <item><description>
+    /// No icon handle is created or destroyed, so a recovered icon is the same icon - which is what
+    /// keeps the process GDI count flat across a restart (R007) and the click pipeline's identity
+    /// intact.
+    /// </description></item>
+    /// <item><description>
+    /// The protocol version is re-selected on the new registration, because the shell does not
+    /// persist it across an add.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    [StaFact]
+    public void Explorer_restart_recovery_re_adds_and_touches_nothing_else()
+    {
+        var shell = new FakeShellApi();
+        using var trayIcon = new TrayIcon(shell)
+        {
+            IconSource = CreateSolid(),
+            ToolTipText = "recovery contract",
+        };
+
+        trayIcon.Visible = true;
+
+        IntPtr handleBefore = trayIcon.RegisteredIconHandle;
+        int createdBefore = shell.CreatedIcons;
+        int callsBefore = shell.ShellNotifyIconCalls.Count;
+        int seamCallsBefore = shell.Calls.Count;
+
+        Win32.SendMessage(trayIcon.HostHandle, FakeShellApi.DefaultRegisteredMessageId, IntPtr.Zero, IntPtr.Zero);
+
+        IReadOnlyList<ShellCall> recovery = [.. shell.ShellNotifyIconCalls.Skip(callsBefore)];
+        IReadOnlyList<ShellCall> recoveryWindow = [.. shell.Calls.Skip(seamCallsBefore)];
+
+        Assert.Equal(2, recovery.Count);
+        Assert.Equal(ShellConstants.NIM_ADD, recovery[0].Message);
+        Assert.Equal(ShellConstants.NIM_SETVERSION, recovery[1].Message);
+        Assert.DoesNotContain(recovery, call => call.Message == ShellConstants.NIM_MODIFY);
+        Assert.DoesNotContain(recovery, call => (call.Flags & ShellConstants.NIF_INFO) != 0);
+
+        // Scoped to the recovery itself: the initial registration legitimately converts the icon,
+        // so only what happened after the broadcast may show a handle being created or released.
+        Assert.DoesNotContain(recoveryWindow, call => call.Operation == nameof(IShellApi.CreateIconIndirect));
+        Assert.DoesNotContain(recoveryWindow, call => call.Operation == nameof(IShellApi.DestroyIcon));
+
+        Assert.Equal(createdBefore, shell.CreatedIcons);
+        Assert.Equal(handleBefore, trayIcon.RegisteredIconHandle);
+        Assert.Equal(ShellConstants.NOTIFYICON_VERSION_4, shell.ShellNotifyIconDataSnapshots[callsBefore + 1].uTimeoutOrVersion);
+    }
+
     /// <summary>Builds a square, single-colour, fully opaque image.</summary>
     /// <returns>The image.</returns>
     private static BitmapSource CreateSolid()

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>probe-live</AssemblyName>
+    <RootNamespace>Trustsoft.NotifyIcon.ProbeLive</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      Deliberately absent from Trustsoft.NotifyIcon.sln: this is a verification instrument for the
+      live UAT checks (docs/UAT-S05.md), not a shipped artifact, and keeping it out of the solution
+      keeps it out of the packaging slice's proof. It also takes no project reference to the library
+      under test, so its presence oracle cannot inherit a bug from the code it is checking.
+    -->
+  </PropertyGroup>
+
+</Project>

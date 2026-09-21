@@ -623,6 +623,64 @@ public sealed class TrayIconMenuActivationTests
     }
 
     /// <summary>
+    /// An Explorer restart while the menu is open leaves the menu, its anchor and its popup exactly
+    /// where they were.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the S03 to S05 edge. The menu's popup is owned by a process-local anchor window, not
+    /// by anything the shell owns, so a rebuilt notification area is irrelevant to it - but only if
+    /// recovery keeps its hands off. A recovery that re-anchored, dismissed or re-created the popup
+    /// would close a menu the user is looking at, in response to something the user did not do.
+    /// </para>
+    /// <para>
+    /// The recorded call sequence is the decisive clause: recovery's two calls are the whole story,
+    /// and the identity assertions on the menu instance, the anchor handle and the popup window are
+    /// what make "untouched" a measurement rather than a claim.
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void An_explorer_restart_while_the_menu_is_open_leaves_the_menu_and_its_anchor_alone()
+    {
+        FakeShellApi shell = CreateShell();
+        var menu = CreateMenu("Alpha");
+        using TrayIcon trayIcon = CreateRegisteredIcon(shell, CreateScriptedMonitor(), menu, out uint iconId);
+
+        try
+        {
+            OpenMenu(trayIcon, iconId);
+
+            Assert.True(menu.IsOpen, Describe(trayIcon, shell, menu));
+
+            IntPtr anchor = trayIcon.MenuAnchorHandle;
+            IntPtr popup = Assert.Single(TrayMenuScenario.FindPopupWindows());
+            int callsBefore = shell.ShellNotifyIconCalls.Count;
+
+            // The real broadcast, sent the same way the tests send every shell message: a
+            // same-thread SendMessage runs the window procedure - and therefore recovery -
+            // synchronously before this call returns.
+            Win32.SendMessage(trayIcon.HostHandle, FakeShellApi.DefaultRegisteredMessageId, IntPtr.Zero, IntPtr.Zero);
+
+            Assert.Equal(
+                [ShellConstants.NIM_ADD, ShellConstants.NIM_SETVERSION],
+                shell.ShellNotifyIconCalls.Skip(callsBefore).Select(call => call.Message).ToArray());
+
+            Assert.True(menu.IsOpen, Describe(trayIcon, shell, menu));
+            Assert.Same(menu, trayIcon.OpenContextMenu);
+            Assert.Equal(anchor, trayIcon.MenuAnchorHandle);
+            Assert.True(Win32.IsWindow(anchor));
+            Assert.Equal(popup, Assert.Single(TrayMenuScenario.FindPopupWindows()));
+        }
+        finally
+        {
+            CloseMenuAndSettle(menu);
+        }
+
+        Assert.Equal(IntPtr.Zero, trayIcon.MenuAnchorHandle);
+        Assert.Empty(TrayMenuScenario.FindPopupWindows());
+    }
+
+    /// <summary>
     /// Replacing the menu between two clicks takes effect on the next click.
     /// </summary>
     /// <remarks>

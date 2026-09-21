@@ -93,8 +93,15 @@ namespace Trustsoft.NotifyIcon;
 /// before it exits, or an orphaned icon stays in the notification area until the user hovers over
 /// it. <see cref="Dispose"/> removes the registration, destroys the retained handle and destroys
 /// the host window - and it also closes an open <see cref="ContextMenu"/> and destroys the anchor
-/// window that menu was owned by, in that order, so nothing this element owns outlives it. S05
-/// layers the process-exit fallback on top of it.
+/// window that menu was owned by, in that order, so nothing this element owns outlives it.
+/// </para>
+/// <para>
+/// <b>A process that dies without disposing needs nothing from this library.</b> The registration
+/// is bound to the host window, so process termination destroys that window and the shell drops
+/// the icon with it (R006). That is why there is deliberately no <see cref="System.AppDomain.ProcessExit"/>
+/// handler and no finalizer here: neither can run in the case they would have to cover, and a
+/// force-killed process runs no managed code at all. The guarantee is proven live, against a real
+/// notification area, rather than assumed (see <c>docs/UAT-S05.md</c>).
 /// </para>
 /// </remarks>
 public class TrayIcon : FrameworkElement, IDisposable
@@ -831,6 +838,34 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// later assignment can retry the registration.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// Gets or sets a value indicating whether the icon is shown in the notification area.
+    /// </summary>
+    /// <value><see langword="false"/> by default. Setting the property from a background thread is
+    /// supported and marshals to the UI thread.</value>
+    /// <remarks>
+    /// <para>
+    /// Setting it to <see langword="true"/> registers the icon: the host window is created on
+    /// first use, the icon is converted if <see cref="IconSource"/> is set, and the shell is told
+    /// <c>NIM_ADD</c> and then <c>NIM_SETVERSION(4)</c>. Setting it to <see langword="false"/>
+    /// removes the registration and destroys the retained <c>HICON</c>.
+    /// </para>
+    /// <para>
+    /// A failed registration raises <see cref="TrayIconException"/> <em>and</em> leaves the
+    /// property <see langword="false"/>, so the value always describes shell-confirmed state and a
+    /// later assignment can retry the registration.
+    /// </para>
+    /// <para>
+    /// <b>The value survives a taskbar restart (R005).</b> A restarted Explorer discards the
+    /// notification-area registration - the registration lives in the shell's process, not in this
+    /// one - but it does not change what the consumer asked for, so the icon is re-registered with
+    /// the handle that is already retained and this property stays <see langword="true"/>. A
+    /// recovery the shell refuses is reported through <see cref="TrayErrorEvent"/> and never flips
+    /// this property, so the value keeps describing intent rather than a momentary shell state;
+    /// assigning <see langword="false"/> and back to <see langword="true"/> remains the way to
+    /// force a fresh registration.
+    /// </para>
+    /// </remarks>
     public bool Visible
     {
         get => (bool)GetValue(VisibleProperty);
@@ -1488,6 +1523,103 @@ public class TrayIcon : FrameworkElement, IDisposable
     }
 
     /// <summary>
+    /// Re-registers the icon after the shell announced that the taskbar was (re)created, which is
+    /// what makes an icon reappear by itself after Explorer restarts (R005).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a re-add, not a second registration path.</b> The notification-area registration
+    /// lives in the shell's process, so an Explorer restart discards it while everything this
+    /// instance knows is still valid: the requested visibility, the retained <c>HICON</c> and the
+    /// tooltip text. Recovering therefore means issuing the <c>NIM_ADD</c> plus
+    /// <c>NIM_SETVERSION(NOTIFYICON_VERSION_4)</c> pair again - the version must be selected on
+    /// every add and is not persisted by the shell - with the handle that is already owned here.
+    /// </para>
+    /// <para>
+    /// <b><see cref="EnsureRegistered"/> is deliberately not reused.</b> It returns immediately
+    /// when the registration flag is set, it throws on failure (the startup policy, which is the
+    /// wrong channel for a callback that arrives inside a window procedure), and it would convert
+    /// <see cref="IconSource"/> again and overwrite <see cref="_registeredIcon"/>, leaking the handle
+    /// that the next unregistration would have destroyed.
+    /// </para>
+    /// <para>
+    /// <b><see cref="Visible"/> and the registration flag stay <see langword="true"/>.</b> A
+    /// recovery is not a visibility change: the consumer still wants the icon, so a refused
+    /// recovery is reported through <see cref="TrayErrorEvent"/> instead of quietly pretending the
+    /// consumer asked for no icon. The next broadcast tries again, and the consumer can force a
+    /// fresh attempt by toggling <see cref="Visible"/>.
+    /// </para>
+    /// <para>
+    /// <b>Failure follows the runtime policy (D008).</b> Both calls go through
+    /// <see cref="ApplyShellChange"/>, which retries once, traces and then raises
+    /// <see cref="TrayErrorEvent"/> - nothing here throws. A failed re-add leaves the icon absent.
+    /// When the re-add succeeds but the version call fails, the half-registered icon is removed
+    /// again (a recovered icon speaking the legacy protocol would misdecode every click), while the
+    /// retained handle is deliberately <em>not</em> destroyed and the registration flag is left
+    /// alone: a set flag with a live handle is recoverable, whereas clearing it would make the next
+    /// registration build a second handle over the field and leak the first.
+    /// </para>
+    /// <para>
+    /// Nothing else is touched. An open context menu belongs to a process-local anchor window and
+    /// survives an Explorer restart untouched, and no balloon state is re-sent, because a balloon is
+    /// a transient <c>NIM_MODIFY</c> and never part of a registration.
+    /// </para>
+    /// </remarks>
+    private void RecoverAfterTaskbarCreated()
+    {
+        TrayMessageWindow? host = _host;
+
+        if (_disposed || !_registered || host is null)
+        {
+            // The broadcast reaches every top-level window, so an instance that never showed an
+            // icon - or one that has been disposed - must not create one now: the application never
+            // asked for this icon.
+            return;
+        }
+
+        var data = CreateIconData(host);
+
+        data.uFlags = ShellConstants.NIF_MESSAGE | ShellConstants.NIF_TIP | ShellConstants.NIF_SHOWTIP;
+        data.uCallbackMessage = host.CallbackMessageId;
+
+        // szTip is re-sent for the same reason EnsureRegistered sends it: NIF_TIP is only
+        // meaningful with the text filled in, so a re-add that omitted it would produce an icon
+        // whose tooltip silently does nothing until the text happens to change (D012).
+        data.szTip = TruncateToolTipText(ToolTipText);
+
+        if (_registeredIcon != IntPtr.Zero)
+        {
+            data.hIcon = _registeredIcon;
+            data.uFlags |= ShellConstants.NIF_ICON;
+        }
+
+        if (!ApplyShellChange(ShellConstants.NIM_ADD, ref data, TrayIconException.OperationAdd))
+        {
+            // Already retried, traced and raised through TrayError. The icon stays absent and the
+            // next broadcast tries again.
+            return;
+        }
+
+        var versionData = CreateIconData(host);
+        versionData.uTimeoutOrVersion = ShellConstants.NOTIFYICON_VERSION_4;
+
+        if (!ApplyShellChange(ShellConstants.NIM_SETVERSION, ref versionData, TrayIconException.OperationSetVersion))
+        {
+            var rollback = CreateIconData(host);
+            _shell.ShellNotifyIcon(ShellConstants.NIM_DELETE, ref rollback);
+
+            NotifyIconTrace.Verbose(
+                "TrayIcon removed the half-registered icon after a failed NIM_SETVERSION during "
+                + "TaskbarCreated recovery; the retained HICON is kept for the next attempt.");
+            return;
+        }
+
+        NotifyIconTrace.Verbose(
+            "TrayIcon re-registered after the TaskbarCreated broadcast: NIM_ADD and "
+            + "NIM_SETVERSION(NOTIFYICON_VERSION_4) were re-issued with the retained HICON.");
+    }
+
+    /// <summary>
     /// Removes the registration and releases the retained <c>HICON</c>.
     /// </summary>
     /// <remarks>
@@ -1785,6 +1917,16 @@ public class TrayIcon : FrameworkElement, IDisposable
     private void OnHostMessage(uint message, IntPtr wParam, IntPtr lParam)
     {
         TrayMessageWindow? host = _host;
+
+        if (host is not null && host.IsTaskbarCreatedMessage(message))
+        {
+            // The shell rebuilt the notification area, which discards the registration that lived
+            // in the previous Explorer process. Tested before the callback-id check below, because
+            // the broadcast shares nothing with a notification callback and that early return
+            // would drop it silently.
+            RecoverAfterTaskbarCreated();
+            return;
+        }
 
         if (host is null || message != host.CallbackMessageId)
         {
