@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Trustsoft.NotifyIcon.Interop;
@@ -521,6 +522,37 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// and undismissable (<see cref="TrayMenuAnchorWindow"/>).
     /// </remarks>
     private TrayMenuAnchorWindow? _menuAnchor;
+
+    /// <summary>
+    /// The popup window the last menu open resolved from the menu's own presentation source, or
+    /// <see cref="IntPtr.Zero"/> when no popup was resolved.
+    /// </summary>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. WPF's popup window
+    /// is an implementation detail of the framework, so the only way a test can assert "the library
+    /// repaired <em>the</em> popup" without enumerating the process's windows - a consumer
+    /// application has large windows of its own - is for the library to record the handle it used.
+    /// </remarks>
+    private IntPtr _menuPopup;
+
+    /// <summary>
+    /// The popup's <c>GW_OWNER</c> as WPF's own construction left it, read before the repair.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    private IntPtr _menuOwnerBeforeRepair;
+
+    /// <summary>
+    /// The popup's <c>GW_OWNER</c> read back after the repair - the value the OS reports, never the
+    /// value the write returned.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    private IntPtr _menuOwnerAfterRepair;
+
+    /// <summary>
+    /// Whether the last menu open left the anchor window as the desktop's foreground window.
+    /// </summary>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    private bool _menuAnchorIsForeground;
 
     /// <summary>
     /// The <c>HRESULT</c> of the last <see cref="IShellApi.ShellNotifyIconGetRect"/> call made for
@@ -1131,6 +1163,69 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// handle - and lets a test assert that the window is gone once the menu closed.
     /// </remarks>
     internal IntPtr MenuAnchorHandle => _menuAnchor?.Handle ?? IntPtr.Zero;
+
+    /// <summary>
+    /// Gets the popup window the last menu open resolved from the menu's own presentation source, or
+    /// <see cref="IntPtr.Zero"/> when no popup was resolved.
+    /// </summary>
+    /// <value>The <c>HWND</c> of the WPF popup window, read while the menu was being opened.</value>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is the identity
+    /// the owner repair acts on, so a test can assert the repair without enumerating the process's
+    /// windows: the popup is named by the library rather than guessed by a size or class heuristic.
+    /// </remarks>
+    internal IntPtr MenuPopupHandle => _menuPopup;
+
+    /// <summary>
+    /// Gets the popup's <c>GW_OWNER</c> as WPF's own construction left it, read before the library's
+    /// repair.
+    /// </summary>
+    /// <value>
+    /// The owner WPF decided, or <see cref="IntPtr.Zero"/> for the ownerless popup a refused
+    /// foreground claim produces.
+    /// </value>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is the hostile
+    /// state's own reading: a test can assert that WPF really built the popup ownerless and that the
+    /// non-zero value in <see cref="MenuOwnerAfterRepair"/> is therefore the library's write.
+    /// </remarks>
+    internal IntPtr MenuOwnerBeforeRepair => _menuOwnerBeforeRepair;
+
+    /// <summary>
+    /// Gets the popup's <c>GW_OWNER</c> as read back after the library's repair.
+    /// </summary>
+    /// <value>The owner the OS reports, which is the anchor window's handle when the repair took.</value>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    internal IntPtr MenuOwnerAfterRepair => _menuOwnerAfterRepair;
+
+    /// <summary>
+    /// Gets a value indicating whether the last menu open wrote the popup's owner because WPF had not
+    /// made it the anchor window itself.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> when the popup's owner had to be repaired to become the anchor's
+    /// handle; <see langword="false"/> when WPF's own construction already resolved it, which is the
+    /// ordinary click-driven case.
+    /// </value>
+    /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
+    internal bool MenuOwnerRepaired => _menuOwnerAfterRepair != IntPtr.Zero && _menuOwnerAfterRepair != _menuOwnerBeforeRepair;
+
+    /// <summary>
+    /// Gets a value indicating whether the last menu open left the anchor window as the desktop's
+    /// foreground window - either because the claim made before the menu opened took effect, or
+    /// because the repair re-claimed it.
+    /// </summary>
+    /// <value>
+    /// <see langword="true"/> when the anchor holds the foreground relationship the dismissal is
+    /// routed through; <see langword="false"/> when Windows refused every claim.
+    /// </value>
+    /// <remarks>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is what makes
+    /// the two halves of the mechanism distinguishable: the owner repair is measured by
+    /// <see cref="MenuOwnerRepaired"/>, the activation half by this value, and a refused claim that
+    /// left the anchor foreground anyway is a different (and better) state than one that did not.
+    /// </remarks>
+    internal bool MenuAnchorIsForeground => _menuAnchorIsForeground;
 
     /// <summary>
     /// Gets the <c>HRESULT</c> the last menu placement got from
@@ -2199,12 +2294,36 @@ public class TrayIcon : FrameworkElement, IDisposable
 
             menu.IsOpen = true;
 
+            // The popup window exists now, and its owner is the value WPF decided inside
+            // Popup.BuildWindow from the foreground relationship at the instant the window was
+            // created - so a session that refused the claim above produced an ownerless popup that an
+            // outside click does not dismiss (measured: D044). That value therefore stops being
+            // WPF's: the popup is resolved from the menu's own presentation source (the HwndSource
+            // WPF created for this popup, never a size or class heuristic over the process's windows,
+            // because a consumer application has large windows of its own), its owner is read,
+            // repaired to this anchor's handle when it differs, and read back.
+            IntPtr popup = PresentationSource.FromVisual(menu) is HwndSource menuSource
+                ? menuSource.Handle
+                : IntPtr.Zero;
+
+            MenuPopupOwnership ownership = anchor.OwnPopup(popup);
+
+            // ... and the activation relationship the dismissal is routed through is re-claimed when
+            // the claim made before the popup existed did not take effect. On the ordinary path the
+            // anchor is already the foreground window and the sequence is a no-op, which is what
+            // keeps the click-driven path unchanged.
+            _menuAnchorIsForeground = ownership.Popup != IntPtr.Zero && anchor.ReclaimForeground();
+
+            _menuPopup = ownership.Popup;
+            _menuOwnerBeforeRepair = ownership.OwnerBefore;
+            _menuOwnerAfterRepair = ownership.OwnerAfter;
+
             // Ownership moved to the fields; the handler must not also dispose it.
             anchor = null;
 
             NotifyIconTrace.Verbose(string.Create(
                 CultureInfo.InvariantCulture,
-                $"TrayIcon menu opened: iconRect=({iconRect.left},{iconRect.top},{iconRect.right},{iconRect.bottom}) source={(_lastMenuPlacementUsedCursorFallback ? "cursor" : "shell")} workArea=({workArea.left},{workArea.top},{workArea.right},{workArea.bottom}) dpi={dpi} scale={scale:0.###} offset=({offset.X:0.###},{offset.Y:0.###}) anchor=0x{MenuAnchorHandle.ToInt64():X} foreground={foreground}."));
+                $"TrayIcon menu opened: iconRect=({iconRect.left},{iconRect.top},{iconRect.right},{iconRect.bottom}) source={(_lastMenuPlacementUsedCursorFallback ? "cursor" : "shell")} workArea=({workArea.left},{workArea.top},{workArea.right},{workArea.bottom}) dpi={dpi} scale={scale:0.###} offset=({offset.X:0.###},{offset.Y:0.###}) anchor=0x{MenuAnchorHandle.ToInt64():X} popup=0x{_menuPopup.ToInt64():X} ownerBefore=0x{_menuOwnerBeforeRepair.ToInt64():X} ownerAfter=0x{_menuOwnerAfterRepair.ToInt64():X} foreground={foreground}."));
         }
         catch (Exception ex)
         {

@@ -60,6 +60,25 @@ internal enum ShellOperation
     /// <summary><see cref="IShellApi.GetWindowThreadProcessId"/>.</summary>
     GetWindowThreadProcessId,
 
+    /// <summary><see cref="IShellApi.GetCurrentThreadId"/>.</summary>
+    GetCurrentThreadId,
+
+    /// <summary>
+    /// <see cref="IShellApi.AttachThreadInput"/>. The fake records the join or separation it made,
+    /// because that bookkeeping is what lets a scripted foreground refusal model the foreground
+    /// lock - see <see cref="FakeShellApi.SetForegroundWindow"/>.
+    /// </summary>
+    AttachThreadInput,
+
+    /// <summary><see cref="IShellApi.BringWindowToTop"/>.</summary>
+    BringWindowToTop,
+
+    /// <summary>
+    /// <see cref="IShellApi.SwitchToThisWindow"/>. The last resort of the menu's foreground
+    /// sequence; a test asserts it was <em>not</em> taken on a desktop that has a foreground window.
+    /// </summary>
+    SwitchToThisWindow,
+
     /// <summary><see cref="IShellApi.CreateIconIndirect"/>.</summary>
     CreateIconIndirect,
 
@@ -227,6 +246,55 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             $"hwnd=0x{hWnd.ToInt64():X}; threadId={threadId}; processId={processId}",
             Environment.CurrentManagedThreadId);
 
+    /// <summary>Builds the record for a <see cref="IShellApi.GetCurrentThreadId"/> call.</summary>
+    /// <param name="threadId">The calling thread's id.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromGetCurrentThreadId(uint threadId) =>
+        new(
+            nameof(IShellApi.GetCurrentThreadId),
+            0,
+            0,
+            $"threadId={threadId}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for an <see cref="IShellApi.AttachThreadInput"/> call.</summary>
+    /// <param name="idAttach">The thread whose queue was named as the attached end.</param>
+    /// <param name="idAttachTo">The thread whose queue was named as the other end.</param>
+    /// <param name="fAttach">Whether the call attached or detached.</param>
+    /// <param name="result">Whether the queues were joined or separated.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromAttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach, bool result) =>
+        new(
+            nameof(IShellApi.AttachThreadInput),
+            0,
+            fAttach ? 1u : 0u,
+            $"idAttach={idAttach}; idAttachTo={idAttachTo}; fAttach={fAttach}; result={result}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.BringWindowToTop"/> call.</summary>
+    /// <param name="hWnd">The window that was raised.</param>
+    /// <param name="result">Whether the window was raised.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromBringWindowToTop(IntPtr hWnd, bool result) =>
+        new(
+            nameof(IShellApi.BringWindowToTop),
+            0,
+            0,
+            $"hwnd=0x{hWnd.ToInt64():X}; result={result}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.SwitchToThisWindow"/> call.</summary>
+    /// <param name="hWnd">The window that was switched to.</param>
+    /// <param name="altTab">The recorded Alt+Tab flag.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromSwitchToThisWindow(IntPtr hWnd, bool altTab) =>
+        new(
+            nameof(IShellApi.SwitchToThisWindow),
+            0,
+            altTab ? 1u : 0u,
+            $"hwnd=0x{hWnd.ToInt64():X}; altTab={altTab}",
+            Environment.CurrentManagedThreadId);
+
     /// <summary>Builds the record for a <see cref="IShellApi.RegisterWindowMessage"/> call.</summary>
     /// <param name="message">The message name that was requested.</param>
     /// <returns>The recorded call.</returns>
@@ -369,6 +437,11 @@ internal sealed class FakeShellApi : IShellApi
     private readonly List<DibSectionRequest> _dibSections = [];
     private readonly Dictionary<IntPtr, EmulatedDib> _emulatedDibs = [];
     private readonly Dictionary<IntPtr, IntPtr> _windowOwners = [];
+
+    /// <summary>Every <see cref="SetForegroundWindow"/> result, oldest first.</summary>
+    /// <remarks>Backs <see cref="SetForegroundWindowResults"/>; the refusal and the repair are
+    /// distinguishable by position, which is what a test reads.</remarks>
+    private readonly List<bool> _setForegroundWindowResults = [];
 
     /// <summary>
     /// The real implementation the window-manager members delegate to when they are not scripted.
@@ -598,6 +671,18 @@ internal sealed class FakeShellApi : IShellApi
     internal bool? LastSetForegroundWindowResult { get; private set; }
 
     /// <summary>
+    /// Gets the result of every <see cref="IShellApi.SetForegroundWindow"/> call so far, oldest
+    /// first.
+    /// </summary>
+    /// <remarks>
+    /// The menu's open path claims the foreground once before the popup is built and, when that
+    /// claim did not take effect, a second time through the attach-thread sequence. A test that has
+    /// to tell "the claim was refused and the repair re-claimed" from "the claim was granted and no
+    /// repair was needed" reads this rather than parsing the recorded call detail.
+    /// </remarks>
+    internal IReadOnlyList<bool> SetForegroundWindowResults => _setForegroundWindowResults;
+
+    /// <summary>
     /// Gets or sets the thread id <see cref="IShellApi.GetWindowThreadProcessId"/> returns.
     /// </summary>
     /// <remarks>
@@ -732,18 +817,79 @@ internal sealed class FakeShellApi : IShellApi
 
     /// <inheritdoc />
     /// <remarks>
+    /// <para>
     /// A refused claim is a successful measurement of a refusal, so it clears the reported error
     /// like any other reading rather than reporting one: the caller records the boolean in its trace
     /// line and carries on, and the owner repair is what keeps the menu dismissable. An unscripted
     /// call performs the real claim and reports its real result.
+    /// </para>
+    /// <para>
+    /// <b>A scripted result is consumed by the first claim - the one WPF's own construction depends
+    /// on.</b> The library claims the foreground once before the popup window is created, and that
+    /// claim is what decides whether <c>Popup.BuildWindow</c> gives the popup an owner; the repair's
+    /// re-claim is a later, different call. Scripting the refusal onto the first claim reproduces the
+    /// recorded hostile state (<c>setForegroundWindow=False</c> at the open, <c>owner=0x0</c>), and
+    /// every later claim performs the real call and reports its real result - because a scripted knob
+    /// that also refused the repair would make the very mechanism under test unmeasurable, and the
+    /// test would end up asserting its own script instead of the product's behaviour.
+    /// </para>
     /// </remarks>
     public bool SetForegroundWindow(IntPtr hWnd)
     {
-        bool result = SetForegroundWindowResult ?? _real.SetForegroundWindow(hWnd);
+        bool? scripted = _setForegroundWindowResults.Count == 0 ? SetForegroundWindowResult : null;
+        bool result = scripted ?? _real.SetForegroundWindow(hWnd);
+
         LastSetForegroundWindowResult = result;
+        _setForegroundWindowResults.Add(result);
         _calls.Add(ShellCall.FromSetForegroundWindow(hWnd, result));
         _lastError = 0;
         return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The real call, always: the attach/detach is window topology, and a fake cannot join two real
+    /// input queues. The pair is recorded, which is what lets a test assert that the attach-thread
+    /// branch was taken rather than the no-foreground last resort.
+    /// </remarks>
+    public bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach)
+    {
+        bool result = _real.AttachThreadInput(idAttach, idAttachTo, fAttach);
+        _calls.Add(ShellCall.FromAttachThreadInput(idAttach, idAttachTo, fAttach, result));
+        _lastError = 0;
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>The real call: raising a real anchor window is a real Z-order change.</remarks>
+    public bool BringWindowToTop(IntPtr hWnd)
+    {
+        bool result = _real.BringWindowToTop(hWnd);
+        _calls.Add(ShellCall.FromBringWindowToTop(hWnd, result));
+        _lastError = 0;
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The real call, recorded so a test can assert the last-resort branch was taken - or, on a
+    /// desktop that has a foreground window, that it was not.
+    /// </remarks>
+    public void SwitchToThisWindow(IntPtr hWnd, bool altTab)
+    {
+        _real.SwitchToThisWindow(hWnd, altTab);
+        _calls.Add(ShellCall.FromSwitchToThisWindow(hWnd, altTab));
+        _lastError = 0;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>The real call: the id names the calling thread, which a fake cannot invent.</remarks>
+    public uint GetCurrentThreadId()
+    {
+        uint threadId = _real.GetCurrentThreadId();
+        _calls.Add(ShellCall.FromGetCurrentThreadId(threadId));
+        _lastError = 0;
+        return threadId;
     }
 
     /// <inheritdoc />

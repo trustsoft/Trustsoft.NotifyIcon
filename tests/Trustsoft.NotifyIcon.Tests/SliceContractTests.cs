@@ -237,6 +237,14 @@ public sealed class SliceContractTests
     /// nothing) and pins the one window it can never be, the registration host, while the dismissal
     /// clause stays unconditional.
     /// </para>
+    /// <para>
+    /// <b>The bound belongs to this hand-built construction.</b> <see cref="TrayMenuScenario"/> builds
+    /// the popup itself, so the library's owner repair (the write that follows an open through the
+    /// product's path, S08/T02) never runs on it and the value is genuinely WPF's. Where the value is
+    /// the library's own write the equality D043 named as the one permissible direction is asserted
+    /// instead - <c>TrayIconMenuOwnerDeterminismTests</c> pins "the owner is the anchor" for the
+    /// delivered path, with the library's own before and after readings.
+    /// </para>
     /// </remarks>
     [StaFact]
     public void A_dismissable_popup_is_owned_by_the_anchor_window_not_by_the_registration_host()

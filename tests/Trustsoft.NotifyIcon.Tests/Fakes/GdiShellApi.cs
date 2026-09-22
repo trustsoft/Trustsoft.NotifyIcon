@@ -99,6 +99,21 @@ internal sealed class GdiShellApi : IShellApi
         _real.GetWindowThreadProcessId(hWnd, out processId);
 
     /// <inheritdoc />
+    /// <remarks>Delegated to the real export: the id belongs to the calling thread, not to the shell.</remarks>
+    public uint GetCurrentThreadId() => _real.GetCurrentThreadId();
+
+    /// <inheritdoc />
+    /// <remarks>Delegated to the real export: joining two real input queues cannot be emulated.</remarks>
+    public bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach) =>
+        _real.AttachThreadInput(idAttach, idAttachTo, fAttach);
+
+    /// <inheritdoc />
+    public bool BringWindowToTop(IntPtr hWnd) => _real.BringWindowToTop(hWnd);
+
+    /// <inheritdoc />
+    public void SwitchToThisWindow(IntPtr hWnd, bool altTab) => _real.SwitchToThisWindow(hWnd, altTab);
+
+    /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         IntPtr icon = _real.CreateIconIndirect(ref iconInfo);

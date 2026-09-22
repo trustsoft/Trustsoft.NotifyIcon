@@ -149,6 +149,40 @@ internal sealed class ShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    public uint GetCurrentThreadId()
+    {
+        uint result = GetCurrentThreadIdNative();
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach)
+    {
+        bool result = AttachThreadInputNative(idAttach, idAttachTo, fAttach);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public bool BringWindowToTop(IntPtr hWnd)
+    {
+        bool result = BringWindowToTopNative(hWnd);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public void SwitchToThisWindow(IntPtr hWnd, bool altTab)
+    {
+        // The export returns nothing, so there is no status to read back and nothing for the caller
+        // to branch on - the sequence's outcome is the SetForegroundWindow result that follows it.
+        // The last error is still captured, so a diagnosis cannot be polluted by a stale slot.
+        SwitchToThisWindowNative(hWnd, altTab);
+        CaptureLastError();
+    }
+
+    /// <inheritdoc />
     public uint RegisterWindowMessage(string message)
     {
         uint result = RegisterWindowMessageW(message);
@@ -305,6 +339,40 @@ internal sealed class ShellApi : IShellApi
     /// </remarks>
     [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId", SetLastError = true, ExactSpelling = true)]
     private static extern uint GetWindowThreadProcessIdNative(IntPtr hWnd, out uint processId);
+
+    /// <remarks>
+    /// <c>kernel32.dll</c>, not <c>user32.dll</c>: the thread id belongs to the kernel. The
+    /// declaration lives here because the attach-thread sequence needs both ends of the pair, and
+    /// this class is the seam's only <c>[DllImport]</c> home.
+    /// </remarks>
+    [DllImport("kernel32.dll", EntryPoint = "GetCurrentThreadId", SetLastError = true, ExactSpelling = true)]
+    private static extern uint GetCurrentThreadIdNative();
+
+    /// <remarks>
+    /// <c>BOOL</c>-returning, and a <see langword="false"/> result means the queues were not joined
+    /// or separated rather than that an error occurred. <c>ExactSpelling</c> names the single
+    /// unsuffixed export.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "AttachThreadInput", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInputNative(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    /// <remarks>
+    /// <c>BOOL</c>-returning. The boolean marshalling attribute on the <c>fAttach</c> parameter is not
+    /// optional decoration: without it this would be marshalled as a 4-byte <c>int</c> while the
+    /// export reads a 1-byte <c>BOOL</c>.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "BringWindowToTop", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool BringWindowToTopNative(IntPtr hWnd);
+
+    /// <remarks>
+    /// The export reports no status, so the declaration is <c>void</c> on purpose - declaring a
+    /// <c>bool</c> here would invent a result the OS never produced. Its <c>fAltTab</c> parameter is a
+    /// <c>BOOL</c> like <c>AttachThreadInput</c>'s flag.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "SwitchToThisWindow", SetLastError = true, ExactSpelling = true)]
+    private static extern void SwitchToThisWindowNative(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool fAltTab);
 
     /// <remarks>
     /// Single unsuffixed export in <c>user32.dll</c>; named explicitly so it can never be probed

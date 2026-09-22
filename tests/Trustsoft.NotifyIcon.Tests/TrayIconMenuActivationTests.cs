@@ -142,7 +142,7 @@ public sealed class TrayIconMenuActivationTests
             // The decisive clause: the popup has a real owner and it IS the anchor window - not the
             // shell registration host, whose handle the S01 contract test proves is a legal but
             // useless owner for a dismissable popup.
-            IntPtr popupOwner = Win32.GetWindow(popup, Win32.GW_OWNER);
+            IntPtr popupOwner = Win32.GetWindowOwner(popup);
 
             Assert.True(
                 popupOwner == anchor,
@@ -150,6 +150,18 @@ public sealed class TrayIconMenuActivationTests
 
             Assert.NotEqual(IntPtr.Zero, popupOwner);
             Assert.NotEqual(trayIcon.HostHandle, popupOwner);
+
+            // ... and the value is not a coincidence of this session: the library resolved the popup
+            // from the menu's own presentation source, reports what it did with the owner slot, and
+            // records whether the anchor holds the foreground relationship. On this path the claim
+            // took effect, so WPF's own construction already resolved the anchor and the repair wrote
+            // nothing - which is what "the click-driven path is unchanged" means as a measurement
+            // rather than as an intention (S08/T02; the refused-claim counterpart is
+            // TrayIconMenuOwnerDeterminismTests).
+            Assert.Equal(popup, trayIcon.MenuPopupHandle);
+            Assert.Equal(anchor, trayIcon.MenuOwnerAfterRepair);
+            Assert.False(trayIcon.MenuOwnerRepaired, Describe(trayIcon, shell, menu));
+            Assert.True(trayIcon.MenuAnchorIsForeground, Describe(trayIcon, shell, menu));
 
             // The menu is the caller's own instance, attached to the anchor's laid-out 1x1 visual, and
             // placed as an absolute point - a never-laid-out target produces no popup at all (T03).
@@ -818,7 +830,7 @@ public sealed class TrayIconMenuActivationTests
 
             IntPtr firstAnchor = first.MenuAnchorHandle;
             IntPtr popup = Assert.Single(TrayMenuScenario.FindPopupWindows());
-            IntPtr popupOwner = Win32.GetWindow(popup, Win32.GW_OWNER);
+            IntPtr popupOwner = Win32.GetWindowOwner(popup);
 
             Assert.True(
                 popupOwner == firstAnchor,
@@ -840,7 +852,7 @@ public sealed class TrayIconMenuActivationTests
             IReadOnlyList<IntPtr> popupsAfterSecondClick = TrayMenuScenario.FindPopupWindows();
 
             Assert.True(
-                popupsAfterSecondClick.Count == 1 && Win32.GetWindow(popupsAfterSecondClick[0], Win32.GW_OWNER) == firstAnchor,
+                popupsAfterSecondClick.Count == 1 && Win32.GetWindowOwner(popupsAfterSecondClick[0]) == firstAnchor,
                 $"The first icon's popup must still be the only popup, owned by 0x{firstAnchor.ToInt64():X}. {Describe(first, shell, menu)}");
 
             Assert.Single(shell.ShellNotifyIconGetRectIdentifiers);
@@ -1002,8 +1014,7 @@ public sealed class TrayIconMenuActivationTests
 
     /// <summary>
     /// Creates a <see cref="TrayIcon"/> registered over the given seams, optionally carrying a menu.
-    /// </summary>
-    /// <param name="shell">The scripted shell seam.</param>
+    /// </summary>    /// <param name="shell">The scripted shell seam.</param>
     /// <param name="monitorInfo">The scripted monitor reader.</param>
     /// <param name="menu">The menu to assign, or <see langword="null"/> for "no menu".</param>
     /// <param name="iconId">Receives the icon id the registration carried.</param>
@@ -1188,7 +1199,7 @@ public sealed class TrayIconMenuActivationTests
         IntPtr popup = popups.Count == 1 ? popups[0] : IntPtr.Zero;
         string owner = popup == IntPtr.Zero
             ? "n/a"
-            : $"0x{Win32.GetWindow(popup, Win32.GW_OWNER).ToInt64():X}";
+            : $"0x{Win32.GetWindowOwner(popup).ToInt64():X}";
         IntPtr foreground = Win32.GetForegroundWindow();
 
         return $"menuAssigned={menu is not null} menuIsOpen={menu?.IsOpen ?? false} placement={menu?.Placement.ToString() ?? "n/a"} "

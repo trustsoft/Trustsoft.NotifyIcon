@@ -295,6 +295,97 @@ internal interface IShellApi
     uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     /// <summary>
+    /// Calls <c>GetCurrentThreadId</c> to read the id of the calling thread.
+    /// </summary>
+    /// <returns>The calling thread's id, which is never <c>0</c> on a running thread.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the library's own runtime needs this.</b> The attach-thread foreground sequence names
+    /// the <em>calling</em> thread's input queue as the one to attach
+    /// (<see cref="AttachThreadInput"/> takes both ends), and the detach has to name the same pair
+    /// again. Reading it through the seam keeps the entry point in one home and lets a test observe
+    /// which queue the library attached.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (<c>TrayMenuAnchorWindow.ReclaimForeground</c>).
+    /// </para>
+    /// </remarks>
+    uint GetCurrentThreadId();
+
+    /// <summary>
+    /// Calls <c>AttachThreadInput</c> to attach or detach this thread's input queue to or from
+    /// another thread's.
+    /// </summary>
+    /// <param name="idAttach">The thread whose queue is attached - the library's own UI thread.</param>
+    /// <param name="idAttachTo">The thread whose queue it is attached to - the foreground window's.</param>
+    /// <param name="fAttach"><see langword="true"/> to attach, <see langword="false"/> to detach.</param>
+    /// <returns><see langword="true"/> when the queues were joined or separated.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the documented way to make the foreground claim succeed where Windows refuses
+    /// it.</b> A thread whose input queue is attached to the foreground thread's is treated as the
+    /// foreground thread for the purposes of <c>SetForegroundWindow</c>, which is why the menu's
+    /// owner repair performs the sequence instead of calling <c>SetForegroundWindow</c> a second
+    /// time and hoping (measured: the same anchor, the same popup, the plain claim refused, the
+    /// sequence granting it - D044).
+    /// </para>
+    /// <para>
+    /// <b>A failed attach is not an error.</b> The sequence then brings the window to the top and
+    /// makes the claim anyway, and records the outcome in the open trace line rather than
+    /// propagating a failure; the detach is skipped for an attach that did not happen, because
+    /// detaching a pair that was never joined would separate queues the process did not join.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (<c>TrayMenuAnchorWindow.ReclaimForeground</c>).
+    /// </para>
+    /// </remarks>
+    bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    /// <summary>
+    /// Calls <c>BringWindowToTop</c> to raise a window to the top of its Z order.
+    /// </summary>
+    /// <param name="hWnd">The window - the menu's anchor.</param>
+    /// <returns><see langword="true"/> when the window was raised.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Part of the attach-thread sequence, not a styling choice.</b> Raising the anchor is what
+    /// makes the foreground transition observable to the OS as an activation of that window, which
+    /// is the relationship an outside click's dismissal is routed through; the measured sequence is
+    /// attach, raise, claim, detach (D044).
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (<c>TrayMenuAnchorWindow.ReclaimForeground</c>).
+    /// </para>
+    /// </remarks>
+    bool BringWindowToTop(IntPtr hWnd);
+
+    /// <summary>
+    /// Calls <c>SwitchToThisWindow</c> to switch the desktop to a window.
+    /// </summary>
+    /// <param name="hWnd">The window to switch to - the menu's anchor.</param>
+    /// <param name="altTab"><see langword="false"/>, so the switch is not recorded as an Alt+Tab.</param>
+    /// <returns>Nothing: the export reports no status.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The recorded last resort, taken only when there is no foreground window to attach to.</b>
+    /// <see cref="AttachThreadInput"/> needs a second thread, and a desktop whose foreground window
+    /// is <see cref="IntPtr.Zero"/> has none; the sequence then switches to the anchor and claims
+    /// the foreground directly. It is deliberately <em>not</em> the primary route: it is not
+    /// documented for general use, while the attach-thread sequence is the documented one, and the
+    /// S08 measurement took this branch in no run (D044).
+    /// </para>
+    /// <para>
+    /// <b>No status is reported by the export</b>, so the sequence records the subsequent
+    /// <see cref="SetForegroundWindow"/> result as the outcome rather than inventing a result for
+    /// this call. The declaration is <c>void</c> for that reason and not to hide a failure.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (<c>TrayMenuAnchorWindow.ReclaimForeground</c>).
+    /// </para>
+    /// </remarks>
+    void SwitchToThisWindow(IntPtr hWnd, bool altTab);
+
+    /// <summary>
     /// Calls <c>RegisterWindowMessageW</c> to obtain a session-unique message id for the given
     /// message name.
     /// </summary>

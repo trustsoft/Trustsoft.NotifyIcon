@@ -94,6 +94,14 @@ public sealed class TrayMenuDismissalCollection
 /// connection hold at that instant (measured: finding F5 in <c>docs/UAT-S03.md</c>).
 /// </para>
 /// <para>
+/// <b>Why this harness keeps that bound while the product no longer needs it.</b> Everything here
+/// builds its popup itself - there is no <see cref="TrayIcon"/> and no notification area, on
+/// purpose - so the library's owner repair (the write that follows the open, S08/T02) never runs on
+/// this popup and the value really is WPF's. The delivered path asserts the anchor as an equality
+/// because the value there is the library's own write:
+/// <c>TrayIconMenuOwnerDeterminismTests</c> is where D043's tightened clause lives.
+/// </para>
+/// <para>
 /// <b>One test process at a time.</b> The measurements read process-global OS state (the foreground
 /// window, this process's visible window list) and the outside click is real system input, so two
 /// <c>dotnet test</c> processes running this class at the same time interfere with each other: a
@@ -133,6 +141,14 @@ public sealed class TrayMenuDismissalTests
     /// asserted as such, and the clause that reaches the user (the dismissal) is asserted
     /// unconditionally. The name states the delivered shape; this remark states what is measured.
     /// Docs: <c>docs/UAT-S03.md</c>, finding F5, with the raw failure lines.
+    /// </para>
+    /// <para>
+    /// <b>The bound belongs to this construction, and only to it.</b> This test builds its popup by
+    /// hand - no <see cref="TrayIcon"/> is involved - so the library's repair (the owner write that
+    /// follows an open through the product's path) never runs here and the value is genuinely WPF's
+    /// decision. Where the library does own the value, the equality D043 named as the one permissible
+    /// direction is asserted instead: <c>TrayIconMenuOwnerDeterminismTests</c> pins "the owner is the
+    /// anchor" for the delivered path, with the library's own before and after readings.
     /// </para>
     /// </remarks>
     [StaFact]
@@ -179,11 +195,22 @@ public sealed class TrayMenuDismissalTests
     /// ownerless and an outside click does <em>not</em> dismiss it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This is the regression pin. If it ever starts failing, the anchor window is no longer the
     /// only construction that satisfies R003's dismissal clause, and the anchor design must be
     /// re-examined deliberately rather than quietly simplified away. The assertions are the exact
     /// mirror of the positive test, so the difference between the two outcomes is the construction
     /// and nothing else.
+    /// </para>
+    /// <para>
+    /// <b>And it is the control for the library's repair, which does not reach it.</b> The ownerless
+    /// popup S08 measured is built here by WPF from a placement target that has no window at all; the
+    /// library's repair acts on the popup its own open resolved from the menu's presentation source
+    /// and on the anchor window it created, so this construction is untouched by it and stays the
+    /// ownerless menu an outside click does not dismiss. Both halves matter: without this pin, a
+    /// future change that repaired <em>every</em> popup in the process - rather than the library's own
+    /// - would look like a pass.
+    /// </para>
     /// </remarks>
     [StaFact]
     public void An_ownerless_popup_with_no_placement_target_is_not_dismissed_by_an_outside_click()
@@ -295,7 +322,7 @@ public sealed class TrayMenuDismissalTests
 
         // Top-level: no parent and no owner, which is what makes it a legal popup owner.
         Assert.Equal(handle, Win32.GetAncestor(handle, Win32.GA_ROOT));
-        Assert.Equal(IntPtr.Zero, Win32.GetWindow(handle, Win32.GW_OWNER));
+        Assert.Equal(IntPtr.Zero, Win32.GetWindowOwner(handle));
 
         long style = Win32.GetWindowLongPtr(handle, Win32.GWL_STYLE);
 
@@ -581,7 +608,7 @@ internal static class TrayMenuScenario
                 popupClassName = Win32.GetClassName(popup);
             }
 
-            IntPtr owner = popup != IntPtr.Zero ? Win32.GetWindow(popup, Win32.GW_OWNER) : IntPtr.Zero;
+            IntPtr owner = popup != IntPtr.Zero ? Win32.GetWindowOwner(popup) : IntPtr.Zero;
             IntPtr foregroundAtMeasure = Win32.GetForegroundWindow();
             IntPtr activeWindowAtMeasure = Win32TestInput.GetActiveWindow();
             bool isOpenBefore = menu.IsOpen;

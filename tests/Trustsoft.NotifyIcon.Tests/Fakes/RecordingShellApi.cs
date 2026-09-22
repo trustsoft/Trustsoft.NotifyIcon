@@ -153,6 +153,49 @@ internal sealed class RecordingShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after delegation, like the other window-manager members: the line carries the id the
+    /// real kernel call produced.
+    /// </remarks>
+    public uint GetCurrentThreadId()
+    {
+        uint result = _inner.GetCurrentThreadId();
+        _calls.Add(ShellCall.FromGetCurrentThreadId(result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Delegated to the real export and recorded with both ends of the pair and the direction, so the
+    /// log proves which queues the sequence joined and that the detach named the same thread.
+    /// </remarks>
+    public bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach)
+    {
+        bool result = _inner.AttachThreadInput(idAttach, idAttachTo, fAttach);
+        _calls.Add(ShellCall.FromAttachThreadInput(idAttach, idAttachTo, fAttach, result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    public bool BringWindowToTop(IntPtr hWnd)
+    {
+        bool result = _inner.BringWindowToTop(hWnd);
+        _calls.Add(ShellCall.FromBringWindowToTop(hWnd, result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The real switch is performed and then recorded; it reports no status, so there is none to
+    /// carry in the line.
+    /// </remarks>
+    public void SwitchToThisWindow(IntPtr hWnd, bool altTab)
+    {
+        _inner.SwitchToThisWindow(hWnd, altTab);
+        _calls.Add(ShellCall.FromSwitchToThisWindow(hWnd, altTab));
+    }
+
+    /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         _calls.Add(ShellCall.FromCreateIconIndirect(ref iconInfo));

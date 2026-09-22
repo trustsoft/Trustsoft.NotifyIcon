@@ -243,6 +243,146 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
     internal bool MakeForeground() => _shell.SetForegroundWindow(_hwndSource.Handle);
 
     /// <summary>
+    /// Repairs the open popup's owner so that it is this anchor window, and returns the owner value
+    /// before and after the repair.
+    /// </summary>
+    /// <param name="popup">
+    /// The popup window the menu's own presentation source resolved to, or <see cref="IntPtr.Zero"/>
+    /// when the open produced none.
+    /// </param>
+    /// <returns>The readings of the repair; see <see cref="MenuPopupOwnership"/>.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the library writes this value.</b> WPF decides the popup's owner inside
+    /// <c>Popup.BuildWindow</c>, and only when the placement target resolves to an <c>HwndSource</c>
+    /// that is connected to the foreground window at that instant. A session in which Windows
+    /// refuses the foreground claim therefore produces an ownerless popup that an outside click does
+    /// not dismiss - the value flips with the environment rather than with the code (measured, F5
+    /// and D044). The value becomes the library's own by writing it here and reading it back, which
+    /// is the one direction D043 allowed the S03 "the anchor or absent" bound to be tightened into
+    /// an equality.
+    /// </para>
+    /// <para>
+    /// <b>Nothing is written when the owner already is the anchor</b>, so the ordinary case - the
+    /// process's click made the anchor foreground and WPF resolved the owner itself - is byte for
+    /// byte the behaviour it was before this method existed.
+    /// </para>
+    /// <para>
+    /// <b>A write is never trusted, only read back.</b> <c>SetWindowLongPtr</c> reports the
+    /// <em>previous</em> owner and its zero result is ambiguous, so the value that reaches the trace
+    /// line and the internal readings is the one <see cref="IShellApi.GetWindowOwner"/> reports
+    /// afterwards. A refused write therefore shows up as <c>ownerAfter=0x0</c> in the open line, and
+    /// the open still does not throw: the menu stays open, it just may not dismiss.
+    /// </para>
+    /// <para>
+    /// <b>A destroyed anchor writes nothing.</b> If the menu closed while it was being opened, the
+    /// anchor is already disposed and its handle is zero; writing zero as an owner would orphan the
+    /// popup, so the repair reads and reports instead of writing a handle that no longer exists.
+    /// </para>
+    /// </remarks>
+    internal MenuPopupOwnership OwnPopup(IntPtr popup)
+    {
+        if (popup == IntPtr.Zero)
+        {
+            return new MenuPopupOwnership(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        IntPtr handle = _hwndSource.Handle;
+        IntPtr before = _shell.GetWindowOwner(popup);
+
+        if (handle == IntPtr.Zero || before == handle)
+        {
+            return new MenuPopupOwnership(popup, before, before);
+        }
+
+        _shell.SetWindowOwner(popup, handle);
+
+        return new MenuPopupOwnership(popup, before, _shell.GetWindowOwner(popup));
+    }
+
+    /// <summary>
+    /// Re-claims the foreground for this anchor through the attach-thread sequence, when the claim
+    /// made before the menu opened did not take effect.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when this anchor was already the foreground window or became it;
+    /// <see langword="false"/> when Windows refused again, which leaves the menu open and possibly
+    /// undismissable rather than an error.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The measured mechanism (D044).</b> The owner write alone repairs the value but not the
+    /// behaviour: the popup is owned by the anchor and the outside click still leaves it open. What
+    /// makes the dismissal work is the <em>activation</em> relationship, and the documented way to
+    /// obtain it after a refusal is to attach this thread's input queue to the foreground window's
+    /// thread, raise the anchor, claim the foreground, and detach. All four steps are measured: the
+    /// popup owned by the anchor, the anchor the desktop's foreground window, and the outside click
+    /// dismissing the menu with no popup window left.
+    /// </para>
+    /// <para>
+    /// <b>It is a no-op on the ordinary path.</b> When the earlier claim took effect the anchor is
+    /// already the foreground window and nothing is attached, raised or re-claimed - which is what
+    /// keeps the click-driven path unchanged rather than merely equivalent.
+    /// </para>
+    /// <para>
+    /// <b><c>SwitchToThisWindow</c> is the recorded last resort</b>, taken only when there is no
+    /// foreground window to attach to: <c>AttachThreadInput</c> needs a second thread, and a desktop
+    /// with no foreground window has none. It is deliberately not the primary route (D044).
+    /// </para>
+    /// <para>
+    /// <b>Every failure is a reading.</b> A failed attach, a failed raise and a refused claim are
+    /// recorded by the caller's trace line and internal readings; the method itself never throws,
+    /// because it runs while the menu is being opened from a window procedure.
+    /// </para>
+    /// </remarks>
+    internal bool ReclaimForeground()
+    {
+        IntPtr handle = _hwndSource.Handle;
+
+        if (handle == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr foreground = _shell.GetForegroundWindow();
+
+        if (foreground == handle)
+        {
+            // The claim made before the popup existed took effect; there is nothing to reclaim.
+            return true;
+        }
+
+        if (foreground == IntPtr.Zero)
+        {
+            // No foreground window to borrow an input queue from: the recorded last resort.
+            _shell.SwitchToThisWindow(handle, altTab: false);
+            return _shell.SetForegroundWindow(handle);
+        }
+
+        uint ourThread = _shell.GetCurrentThreadId();
+        uint foregroundThread = _shell.GetWindowThreadProcessId(foreground, out _);
+
+        // Attaching a thread to itself is not a join, and this thread already owns the foreground
+        // input state when the foreground window is one of its own.
+        bool attached = foregroundThread != 0
+            && foregroundThread != ourThread
+            && _shell.AttachThreadInput(ourThread, foregroundThread, fAttach: true);
+
+        try
+        {
+            _shell.BringWindowToTop(handle);
+            return _shell.SetForegroundWindow(handle);
+        }
+        finally
+        {
+            if (attached)
+            {
+                _shell.AttachThreadInput(ourThread, foregroundThread, fAttach: false);
+            }
+        }
+    }
+
+    /// <summary>
     /// Destroys the anchor window. Safe to call more than once.
     /// </summary>
     /// <remarks>
@@ -275,3 +415,29 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
         _hwndSource.Dispose();
     }
 }
+
+/// <summary>
+/// The readings of one popup-owner repair: which window was resolved as the popup and what its owner
+/// was before and after the repair.
+/// </summary>
+/// <param name="Popup">
+/// The popup window the menu's own presentation source resolved to, or <see cref="IntPtr.Zero"/> when
+/// the open produced none.
+/// </param>
+/// <param name="OwnerBefore">The popup's <c>GW_OWNER</c> before the repair - what WPF's own construction decided.</param>
+/// <param name="OwnerAfter">The popup's <c>GW_OWNER</c> read back after the repair, or the same value when nothing was written.</param>
+/// <remarks>
+/// <para>
+/// A value rather than three loose fields so the open path can record the readings in one piece: the
+/// trace line and the instance's internal diagnostics both carry exactly what was measured, and a
+/// test can assert "WPF built it ownerless and the library repaired it" from the same two numbers
+/// the support log shows.
+/// </para>
+/// <para>
+/// <b>The pair is the evidence, not the write.</b> A popup whose owner was already the anchor reports
+/// the same value twice, which is the ordinary click-driven case; a popup that WPF left ownerless and
+/// the library repaired reports <see cref="IntPtr.Zero"/> then the anchor - the hostile-state case
+/// this repair exists for.
+/// </para>
+/// </remarks>
+internal readonly record struct MenuPopupOwnership(IntPtr Popup, IntPtr OwnerBefore, IntPtr OwnerAfter);
