@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -461,6 +462,29 @@ public class TrayIcon : FrameworkElement, IDisposable
     private const int MaxBalloonTitleLength = 63;
 
     /// <summary>
+    /// How long the close path waits for WPF to run its own popup destroy - the destroy that raises
+    /// the open menu's <c>Closed</c> - before the anchor window is destroyed underneath it.
+    /// </summary>
+    /// <remarks>
+    /// <b>A stated bound, not an open-ended wait.</b> The delivery is one dispatcher operation
+    /// (<c>Popup.HideWindow</c> is posted at <c>DispatcherPriority.Normal</c>), so half a second is
+    /// orders of magnitude more than its measured cost, and a menu whose <c>Closed</c> never arrives
+    /// cannot turn a disposal into a hang. The close path records the wait's outcome in the close
+    /// trace line, so a timeout is visible rather than indistinguishable from a delivery.
+    /// </remarks>
+    private const int MaxMenuCloseNotificationWaitMilliseconds = 500;
+
+    /// <summary>
+    /// How often the bounded close pump re-checks whether the notification has been delivered.
+    /// </summary>
+    /// <remarks>
+    /// The pump is a <see cref="DispatcherTimer" /> rather than a spin loop, and its interval only
+    /// decides how promptly the bound is noticed - the delivery itself pre-empts it, because it runs
+    /// at a higher dispatcher priority.
+    /// </remarks>
+    private const int MenuCloseNotificationPollMilliseconds = 5;
+
+    /// <summary>
     /// The process-wide source of icon ids.
     /// </summary>
     /// <remarks>
@@ -553,6 +577,28 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// </summary>
     /// <remarks>Diagnostics and verification only; not part of the shipped public surface.</remarks>
     private bool _menuAnchorIsForeground;
+
+    /// <summary>
+    /// Whether the open menu's own <c>Closed</c> event has been delivered to this instance since that
+    /// menu was opened. Reset when a menu opens, set by <see cref="OnContextMenuClosed"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the close path needs to know.</b> WPF raises the menu's <c>Closed</c> from the popup
+    /// destroy it <em>schedules</em> on the owning dispatcher, not from the assignment that closes the
+    /// menu. Destroying the anchor window before that destroy runs takes the popup's owner away first,
+    /// so WPF's teardown never reaches its own notification and a consumer handler never runs - the
+    /// gap D030 recorded and measured twice in the reference sample (menu opens=1, menu
+    /// dismissals=0). <see cref="CloseMenu"/> therefore waits, bounded, for this flag before it lets
+    /// <see cref="TearDownMenu"/> destroy the anchor.
+    /// </para>
+    /// <para>
+    /// Diagnostics and verification only; not part of the shipped public surface. It is read back in
+    /// <see cref="TearDownMenu"/>'s trace line, which is what makes "the consumer's Closed was
+    /// delivered" a reading rather than an assumption.
+    /// </para>
+    /// </remarks>
+    private bool _menuCloseNotificationDelivered;
 
     /// <summary>
     /// The <c>HRESULT</c> of the last <see cref="IShellApi.ShellNotifyIconGetRect"/> call made for
@@ -2285,6 +2331,12 @@ public class TrayIcon : FrameworkElement, IDisposable
             menu.Placement = PlacementMode.AbsolutePoint;
             menu.HorizontalOffset = offset.X;
             menu.VerticalOffset = offset.Y;
+            // Reset before the menu opens: the flag describes the delivery of *this* menu's Closed,
+            // and the previous menu's delivery must not be mistaken for it. The fields below are
+            // assigned after the subscription, so a Closed raised while IsOpen is being set is still
+            // attributed to this menu.
+            _menuCloseNotificationDelivered = false;
+
             menu.Closed += OnContextMenuClosed;
 
             // The fields are assigned before the menu is opened, so a Closed event raised while
@@ -2498,7 +2550,14 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// </summary>
     /// <param name="sender">The menu; unused, because the state lives on this instance.</param>
     /// <param name="e">The event payload; unused.</param>
-    private void OnContextMenuClosed(object? sender, RoutedEventArgs e) => TearDownMenu();
+    private void OnContextMenuClosed(object? sender, RoutedEventArgs e)
+    {
+        // Recorded before the teardown, so the close path's bounded pump observes the delivery even
+        // though the teardown this triggers clears the menu state the same pump also looks at.
+        _menuCloseNotificationDelivered = true;
+
+        TearDownMenu();
+    }
 
     /// <summary>
     /// Releases the open menu's anchor window and clears the menu state. Idempotent, and safe to
@@ -2517,6 +2576,16 @@ public class TrayIcon : FrameworkElement, IDisposable
     /// the anchor window, and a menu still pointing at a destroyed visual is exactly the half-torn
     /// state this method exists to prevent - the order mirrors the anchor's own "release what can be
     /// called, then destroy" discipline.
+    /// </para>
+    /// <para>
+    /// <b>The close line carries the notification's delivery.</b> <c>closeNotificationDelivered</c> is
+    /// read from <see cref="_menuCloseNotificationDelivered"/> - the flag
+    /// <see cref="OnContextMenuClosed"/> sets - so the line that names the destroyed anchor also says
+    /// whether the consumer's own <c>Closed</c> handler ran for that teardown. It is
+    /// <see langword="true"/> for every close WPF delivered (an outside click, Escape, a chosen item,
+    /// a disposal-driven close that waited for the notification) and <see langword="false"/> for a
+    /// teardown this instance performed itself - the failure path of the open, or a close whose
+    /// notification did not arrive within the close path's bound.
     /// </para>
     /// </remarks>
     private void TearDownMenu()
@@ -2552,29 +2621,155 @@ public class TrayIcon : FrameworkElement, IDisposable
 
         NotifyIconTrace.Verbose(string.Create(
             CultureInfo.InvariantCulture,
-            $"TrayIcon menu closed; anchor 0x{destroyedAnchor.ToInt64():X} destroyed."));
+            $"TrayIcon menu closed; anchor 0x{destroyedAnchor.ToInt64():X} destroyed; closeNotificationDelivered={_menuCloseNotificationDelivered}."));
     }
 
     /// <summary>
-    /// Closes the open menu if it is showing, then tears the menu state down.
+    /// Closes the open menu if it is showing, waits (bounded) for WPF to deliver its <c>Closed</c>,
+    /// then tears the menu state down.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Closing raises <c>Closed</c>, which runs <see cref="TearDownMenu"/> - so the user-facing route
     /// and the disposal route are the same code. The explicit teardown afterwards is the idempotent
     /// remainder: a menu that was open but whose close raised nothing must still not leave its anchor
     /// window behind.
+    /// </para>
+    /// <para>
+    /// <b>Why the wait exists, and why it is bounded (D030, the S03 finding F1).</b> Assigning
+    /// <c>IsOpen = false</c> does not raise the notification: WPF raises it from the popup destroy it
+    /// schedules on this dispatcher (<c>Popup.HideWindow</c>). Destroying the anchor immediately - which
+    /// is what this method used to do - removes the popup's owner before that destroy runs, so WPF's
+    /// teardown never reaches <c>OnClosed</c> and a consumer handler never runs: measured twice in the
+    /// reference sample as <c>menu opens=1, menu dismissals=0</c> for a run closed only by disposal.
+    /// The wait is a <see cref="Dispatcher.PushFrame"/> with a timeout, never an open-ended one, and
+    /// it happens only when a close is actually pending - an instance with no open menu returns
+    /// through the idempotent teardown below without touching the queue.
+    /// </para>
+    /// <para>
+    /// <b>The teardown still owns the resources.</b> Whatever the wait's outcome, the anchor window and
+    /// the menu state are released by <see cref="TearDownMenu"/> before this method returns, so
+    /// disposal stays synchronous and complete: after it, the icon is unregistered, the <c>HICON</c>
+    /// is released, no anchor window is alive and the popup window is gone.
+    /// </para>
     /// </remarks>
     private void CloseMenu()
     {
         ContextMenu? menu = _openMenu;
 
-        if (menu is not null && menu.IsOpen)
+        if (menu is not null)
         {
-            menu.IsOpen = false;
+            if (menu.IsOpen)
+            {
+                // The assignment asks WPF to tear its popup down; the notification that reports it is
+                // raised from the destroy WPF schedules as a result, not from here.
+                menu.IsOpen = false;
+            }
+
+            if (!_menuCloseNotificationDelivered)
+            {
+                // The close - this one or the consumer's own - is still waiting for that scheduled
+                // destroy, which is what delivers Closed to the consumer handler. Wait for it here,
+                // while the anchor the popup is owned by still exists.
+                PumpUntilMenuClosed();
+            }
         }
 
         TearDownMenu();
     }
+
+    /// <summary>
+    /// Pumps the owning dispatcher, bounded by <see cref="MaxMenuCloseNotificationWaitMilliseconds"/>,
+    /// until the pending close has both raised the menu's <c>Closed</c> and taken its popup window away.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the notification was delivered; <see langword="false"/> when the
+    /// bound expired first (or there was no queue to pump), which leaves the teardown to the caller and
+    /// is traced rather than hidden.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Both halves are waited for, because they are two different facts.</b> The notification says
+    /// the consumer's handler ran; the popup window being gone says the teardown this close asked for
+    /// finished. A close that reports itself delivered while its window is still on screen would leave
+    /// the next menu open fighting a stale popup, and the sample's own popup enumeration reads the
+    /// window rather than the event.
+    /// </para>
+    /// <para>
+    /// <b>Priority, and why the wait cannot starve.</b> The poll runs at
+    /// <see cref="DispatcherPriority.Normal"/> - the same priority WPF posted the popup destroy at -
+    /// so a busy queue cannot starve the bound check the way a lower-priority poll could, and the
+    /// destroy that was posted first is processed first. The frame is closed by the bound itself, so
+    /// this method always returns.
+    /// </para>
+    /// <para>
+    /// <b>It is a no-op when there is nothing to wait for.</b> An instance created without a dispatcher,
+    /// or one whose dispatcher has shut down, has no queue that could deliver anything and is reported
+    /// from the flag as it stands.
+    /// </para>
+    /// </remarks>
+    private bool PumpUntilMenuClosed()
+    {
+        Dispatcher? dispatcher = _dispatcher;
+
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+        {
+            return _menuCloseNotificationDelivered;
+        }
+
+        var frame = new DispatcherFrame();
+        var stopwatch = Stopwatch.StartNew();
+        var timer = new DispatcherTimer(DispatcherPriority.Normal, dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(MenuCloseNotificationPollMilliseconds),
+        };
+
+        timer.Tick += (_, _) =>
+        {
+            if (MenuCloseSettled() || stopwatch.ElapsedMilliseconds >= MaxMenuCloseNotificationWaitMilliseconds)
+            {
+                frame.Continue = false;
+            }
+        };
+
+        bool settled;
+
+        try
+        {
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+        }
+        finally
+        {
+            timer.Stop();
+            settled = MenuCloseSettled();
+        }
+
+        if (!settled)
+        {
+            // Verbose, never Error: a close whose notification did not arrive is not a shell failure and
+            // has no error code. The line is what makes the timeout a measurement instead of a silence
+            // that looks exactly like a successful delivery.
+            NotifyIconTrace.Verbose(string.Create(
+                CultureInfo.InvariantCulture,
+                $"TrayIcon waited {stopwatch.ElapsedMilliseconds} ms for WPF to finish the menu's close after IsOpen=false; closed={_menuCloseNotificationDelivered} popup={(_menuPopup == IntPtr.Zero || !Win32.IsWindow(_menuPopup) ? "gone" : $"0x{_menuPopup.ToInt64():X} still a window")}. The anchor window is torn down anyway, so a consumer handler for this close may not have run."));
+        }
+
+        return settled;
+    }
+
+    /// <summary>
+    /// Reports whether the pending close has settled: the menu's <c>Closed</c> was delivered and its
+    /// popup window no longer exists.
+    /// </summary>
+    /// <returns><see langword="true"/> when there is nothing left to wait for.</returns>
+    /// <remarks>
+    /// The popup is named by the handle the open resolved from the menu's own presentation source, so
+    /// this asks about <em>the</em> popup rather than about any window in the process - a consumer
+    /// application has windows of its own, and the library never enumerates them.
+    /// </remarks>
+    private bool MenuCloseSettled() =>
+        _menuCloseNotificationDelivered && (_menuPopup == IntPtr.Zero || !Win32.IsWindow(_menuPopup));
 
     /// <summary>
     /// Reports a failure of the menu path through the same channels a runtime shell failure uses, and
