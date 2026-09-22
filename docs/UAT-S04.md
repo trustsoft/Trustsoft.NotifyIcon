@@ -425,3 +425,29 @@ Recorded for S04/T05 on 2026-09-20 (Windows 11 Pro build 26200, .NET SDK 10.0.40
   `Expected: Bubble / Actual: Tunnel`, full suite green again at 373/0/0);
 - the requirements this slice owns are **R004** (checks 1, 4, 5) and **R016** (checks 2, 3), left
   non-terminal for complete-slice.
+
+## HUMAN OBSERVATION (2026-09-22, project owner, authenticated subjective UAT)
+
+Added 2026-09-22, after the sections above; nothing above is rewritten. The block below records the
+project owner's answer from the milestone's authenticated subjective UAT
+(`gsd_answer_milestone_subjective_uat`, session-authenticated; verbatim response
+**"Accept (Recommended)"**, tested source revision `14ce7da9e43d1c49c1c90d565c5307fd4cd68116`).
+The rationale is quoted verbatim in the owner's own words; the machine-measured record above stands
+unchanged beside it.
+
+### uat-balloon-feel (criterionId `6ba5c2ba-81bd-4cc8-9817-d03cfcca6c74`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец принял представление balloon (появление, звук, quiet time)
+  по живым прогонам S05/S07 и собственному наблюдению по клику на сэмпле.»
+- Objective measurements the owner observed: the S05 live runs where the shell's own `NIN_BALLOONSHOW`
+  (event `0x0402`) followed the sample's request on a recovered icon (gsd_uat_exec `fd64ba64`,
+  `04d85738`, `924d2e9a`, `622f2732` - Check 12 of `docs/UAT-S05.md`), this document's own live runs
+  (checks 1 and 3: the accepted request plus the `ShellExperienceHost` banner window), and S07's
+  consumer-proof live runs (`docs/uat-logs/S07/t03-consumer-proof.txt`).
+- Bears on: the rows this document marked needing a human eye - the drawn balloon itself, sound
+  audibility, and the quiet-time reviewer exercise in *What was NOT observed*. The owner observed the
+  balloon appear with sound under normal (non-quiet-time) conditions and accepted the presentation;
+  the quiet-time-suppressed outcome itself remains unobserved. The owner's click observation is also
+  human-eye evidence adjacent to S07's open click-delivery follow-up, recorded here without flipping
+  that item's status.

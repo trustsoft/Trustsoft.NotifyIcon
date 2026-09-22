@@ -596,3 +596,134 @@ F5 is **TIGHTENED TO EQUALITY** by S08/T02 (D044) - the `GW_OWNER` is the librar
 product path. F2 and F3 stand unchanged. The per-finding status lines above name the test class or run
 carrying each verdict; `docs/UAT-S08.md` holds the raw evidence and `docs/TEST-ENVIRONMENT.md` records
 that the five-failure environment dependency is retired.
+
+## Attempt-3 continuation: the switched-primary measurement (S03-05b), added 2026-09-22 at revision `329698e`
+
+Everything above this section is unchanged. This section records the one row that was still
+NOT OBSERVED / NEEDS-HUMAN after attempt 2: **S03-05b** - the menu with the icon and taskbar on
+monitor 2 (100 %) after the primary display is switched to monitor 2. Attempt 2 could not do it
+because the switch is a Windows Settings action; the **project owner performed the switch manually
+between the attempts** (confirmed by them), and this session measured on the live system without
+touching any display setting itself (nothing was switched back either).
+
+### Environment after the switch (gsd_uat_exec `a0360190-e669-4761-b866-e6aeb7141b4c`)
+
+Run via `.gsd/uat-s03-mixed/run-envprobe.ps1` (wrapper that restores the exec-stripped environment)
+around the preserved `env-probe.ps1`. Two independent readings - the probe's own
+PER_MONITOR_AWARE_V2 enumeration and the sample's startup block - agree:
+
+```
+monitors=2  virtualScreen=-1920,0 3840x1200  primaryPhysical=1920x1080
+monitor: device=\.\DISPLAY1 primary=False rect=-1920,0 1920x1200 work=-1920,0 1920x1128 dpi=144 scale=1.5
+monitor: device=\.\DISPLAY2 primary=True  rect=0,0 1920x1080     work=0,0 1920x1032     dpi=96  scale=1
+[sample] tray monitor: primary monitor device=\.\DISPLAY2 dpi=96 scale=1
+```
+
+The expected geometry swap happened exactly as the switch implies: monitor 2 (DISPLAY2) is now the
+primary at the origin, 1920x1080 at 96 DPI / 100 %; monitor 1 (DISPLAY1) became the secondary at
+x = -1920, still 144 DPI / 150 %.
+
+### The measurement (gsd_uat_exec `3dfdf2d9-4086-4eed-bd6c-5eb8484b27b4`)
+
+The sample was rebuilt Release from the worktree at `329698e` before the run (build succeeded,
+0 warnings, 0 errors). The scenario is the preserved T06 instrument `.gsd/uat-s03-mixed/menu-probe2.ps1`
+through the wrapper `run-menu-click-05b.ps1` (`-ClickDelay 8`, outside click at `-1860,300` on the
+other monitor). Raw capture lines (verbatim):
+
+```
+icon identity: hwnd=0x9A702A2 uID=1 rect=1507,1032 32x48 (Shell_NotifyIconGetRect hr=0x00000000)
+UIA element at the icon rectangle: name="Trustsoft.NotifyIcon sample - the icon changes every second" id=NotifyItemIcon rect=1507,1032 32x48
+window under click point (1531,1068): 0x3808DC class=TrayNotifyWnd title=""
+click injected: right click at (1531,1068) - the icon's own rectangle
+CLICK menu-window | popup=0x275024C class='HwndWrapper[...]' rect=1507,976 251x55 dpi=96 scale=1 owner=0x237012E
+owner detail: class='HwndWrapper[...]' rect=365,687 1x1 belongsToSampleProcess=True   (title: "Trustsoft.NotifyIcon.TrayMenuAnchorWindow")
+CLICK menu-placement | iconRect=1507,1032 32x48 menuTopLeft=1507,976 popupRight=1758 popupBottom=1031 deltaVsIconLeftAndTopOfPopup=0,-1 atScreenCorner=False
+[sample] menu opened: popup=0x275024C ... rect=1507,976 251x55 dpi=96 scale=1 owner=0x237012E cursor=1531,1068 bottomLeftDip=1507,1031
+outside click target (-1860,300): 0x2CE092E class=Windows.UI.Core.CoreWindow title="Settings"
+CLICK menu-after-outside-click | no visible popup window of the sample process remains
+[sample] menu dismissed.
+[sample] totals: ... clicks=1, ... menu opens=1, menu dismissals=1.
+```
+
+Verdict per the checklist criteria, all measured, none inferred:
+
+- **popup on monitor 2** - YES: icon `x 1507..1539, y 1032..1080` and popup `x 1507..1758, y 976..1031`
+  both lie entirely inside DISPLAY2 (`0,0 1920x1080`); the click landed on `TrayNotifyWnd` of the new
+  primary taskbar, and the icon was a real displayed button (`NotifyItemIcon`), not the overflow chevron;
+- **dpi=96 / scale=100 %** - YES: both the probe's `GetDpiForWindow` and the sample's own
+  `menu opened:` line read `dpi=96 scale=1` - the icon monitor's own values;
+- **owner = the library's anchor, not `0x0`** - YES: `owner=0x237012E`, resolved out of process to the
+  1x1 same-process window titled `Trustsoft.NotifyIcon.TrayMenuAnchorWindow` - not the registration
+  host `0x9A702A2` (`TrayMessageWindow`);
+- **dismissed by an external click** - YES: the outside right+left at `(-1860,300)` was delivered on
+  the *other* monitor (DISPLAY1, a Settings `CoreWindow`), after which no visible popup window of the
+  sample process remained, the sample printed `menu dismissed.`, and the totals read
+  `menu opens=1, menu dismissals=1` (no second open/close pair).
+
+S03-05b therefore moves from NOT OBSERVED / NEEDS-HUMAN to **PASS**, recorded in the UAT result
+(attempt 3 continuation). The attempt-2 prediction ("popup dpi=96 scale=1 at the icon on DISPLAY2")
+held verbatim. The two remaining NEEDS-HUMAN rows are unchanged and stay NEEDS-HUMAN: S03-04's
+125/175/200 % columns (human Scale changes in Settings) and S03-10f (a human parking the icon in the
+overflow flyout). Instrument inventory note: this section's scenario was run by `menu-probe2.ps1`
+because the `.gsd/probe-clicks` project this document referenced in "How the results were obtained"
+was never version-controlled and no longer exists (disclosed since attempt 2).
+
+**The display configuration was left as the owner set it** (primary = monitor 2); this session changed
+no display settings and did not switch back - restoring the primary to monitor 1 is the owner's manual
+step, as agreed.
+
+## HUMAN OBSERVATION (2026-09-22, project owner, authenticated subjective UAT)
+
+Added 2026-09-22, after the sections above; nothing above is rewritten. The four blocks below record
+the project owner's answers from the milestone's authenticated subjective UAT
+(`gsd_answer_milestone_subjective_uat`, session-authenticated; every criterion answered
+**"Accept (Recommended)"**, tested source revision `14ce7da9e43d1c49c1c90d565c5307fd4cd68116`).
+Rationales are quoted verbatim in the owner's own words. These are the human-eye observations the
+NOT OBSERVED rows above were waiting for; the machine-measured record stands unchanged beside them.
+
+### uat-display-scale-current (criterionId `9548c7d3-86a5-4c97-9cef-ae8aa0fbe2fe`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец проекта наблюдал живую иконку в трее при 150 % на основном
+  мониторе 2026-09-22 (сэмпл запущен оператором, PID 20828): иконка корректная, меню по правому клику
+  у иконки и читаемо. Живые измерения: gsd_uat_exec bfca9edf, 92c01010 (rect 1446,1045 377x83,
+  dpi=144, scale=150 %, owner=anchor).»
+- Objective measurements the owner observed: gsd_uat_exec `bfca9edf`, `92c01010` - live icon
+  `rect=1446,1045 377x83`, `dpi=144`, `scale=150 %`, owner = the library's anchor window.
+- Bears on: the live 150 % column of check 4 (the only column measured live in this document).
+
+### uat-display-scale-matrix (criterionId `9577ee39-25e2-4643-802b-3d39fce28bbe`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Наблюдены 150 % (primary) и 100 % (secondary) 2026-09-22: иконка и
+  меню корректны. Полная матрица 100/125/175/200 % покрыта фикстурами TrayIconPlacementTests (все
+  масштабы + mixed-scale пары), оставшиеся живые строки зафиксированы как planned human-follow-up.»
+- Bears on: check 4. The owner personally observed the two reachable columns (150 % primary, 100 %
+  secondary); the 125/175/200 % live columns remain planned human-follow-up exactly as the row above
+  records, covered by the `TrayIconPlacementTests` fixtures.
+
+### uat-two-monitor-placement (criterionId `aa0e1f4c-c373-45d7-9ff6-4af54a1974cc`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец подтвердил на подключённой двухмониторной конфигурации
+  (150 % primary + 100 % secondary): меню открывается у иконки на нужном мониторе, не перелетает.
+  Живое измерение mixed-scale: gsd_uat_exec bfca9edf, 92c01010, 6543e315, 39977389 на 14ce7da.»
+- Objective measurements the owner observed: gsd_uat_exec `bfca9edf`, `92c01010`, `6543e315`,
+  `39977389` at `14ce7da` (mixed-scale live runs), together with the S03-05b switched-primary
+  measurement in the section above (`a0360190`, `3dfdf2d9` at `329698e`).
+- Bears on: check 5 (the two-monitor mixed-scale case) - the human half of the row is now supplied;
+  the instrumented half is the S03-05b section above.
+
+### uat-icon-sharpness-r014 (criterionId `c0035ae5-4fc1-4306-a760-36ee2e646630`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец посмотрел иконку при 150 % и принял фиксированный 16 px
+  HICON как приемлемое ограничение v1 (менее резкая, чем нативная). Доработка масштабируемой иконки
+  остаётся за пределами M001.»
+- Bears on: the rendered-icon quality clause of R014 at 150 % - accepted by the owner as a v1
+  limitation; scalable-icon work stays outside M001. Recorded as an observation; R014's recorded
+  status is not edited here.
+
+Still NEEDS-HUMAN in this document, untouched by the answers above: check 4's **125/175/200 % live
+columns** (need a human changing Scale in Windows Settings) and check **10f** (a human parking the
+icon in the overflow flyout to reproduce the hidden-icon configuration).

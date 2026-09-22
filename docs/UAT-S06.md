@@ -642,3 +642,22 @@ section above records, not a repository fact.
 - **A menu's data context is the consumer's to set (T06).** The README's XAML snippet should say so next to the `ContextMenu` it shows: a declared menu has no logical parent and the library never writes the menu's `DataContext`, so bindings in the menu resolve against the menu's own data context (`DataContext="{StaticResource ...}"`, or `menu.DataContext = ...` in C#). The declarative and code-first sample menus now both do exactly that and print the resolved text as they open.
 - The packaging proof must not include `scripts/probe-live`: it is deliberately absent from `Trustsoft.NotifyIcon.sln` and takes no project reference to the library, so it cannot enter the shipped package or be mistaken for a supported artifact.
 - A live click-delivery check for the declarative path is still missing (F1); if S07 wants one, it needs an instrument that can open the Windows 11 overflow flyout, not this one. Nothing in the shipped surface depends on it: the click attributes bind and fire (headless proof) and the same open path is proven live through the declared menu.
+
+## HUMAN OBSERVATION (2026-09-22, project owner, authenticated subjective UAT)
+
+Added 2026-09-22, after the sections above; nothing above is rewritten. The block below records the
+project owner's answer from the milestone's authenticated subjective UAT
+(`gsd_answer_milestone_subjective_uat`, session-authenticated; verbatim response
+**"Accept (Recommended)"**, tested source revision `14ce7da9e43d1c49c1c90d565c5307fd4cd68116`).
+The rationale is quoted verbatim in the owner's own words; the machine-measured record above stands
+unchanged beside it.
+
+### uat-xaml-ergonomics (criterionId `0b74fd3a-d196-4ad0-9ff6-856ddf378508`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец (разработчик) просмотрел декларативное использование в
+  samples/Trustsoft.NotifyIcon.Sample/App.xaml и samples/consumer-proof/: объявление TrayIcon через
+  merged ResourceDictionary эргономично.»
+- Bears on: the declarative-usage ergonomics this document's live checks exercise (Check 1, T06
+  Check 2) - the consumer-developer point of view on the markup surface is now recorded by the person
+  it is designed for. No row above is changed; the click-delivery NOT OBSERVED row stands.

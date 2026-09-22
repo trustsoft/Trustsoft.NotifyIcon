@@ -799,3 +799,26 @@ MONITOR-COUNT=1
 This is corroborated in-band by the sample's own startup block inside the same round's captures (`display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical`; `monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5`) and by the independent tray inventory finding exactly one tray host. There is **no second monitor**, so a live mixed-scale run is physically impossible on this machine - a live 150 % session is the only Display Scale configuration reachable here, and every menu open in Check 12 measured that factor applied exactly once (`dpi=144 scale=1.5`).
 
 **Disposition.** Recorded as an accepted v1 limitation, not as a pass and not as a silent omission: requirement R014 is `deferred`, and decision **D047** records the choice. The substitute evidence the clause rests on already exists in the milestone - the pure `TrayIconPlacement` calculator proven by fixtures at 100/125/150/175/200 % plus a custom value, negative-origin monitors, taskbar-reserved work areas and an equality-asserted mixed-scale two-monitor pair, plus PerMonitorV2 declared in the sample manifest and verified out of process. The follow-up on suitably equipped hardware is one recorded sample run per scale pair (menu rectangle and rendered icon) together with the `WM_DPICHANGED` icon-size clause, which remains unimplemented in v1 and is tracked for M002/M003.
+
+## HUMAN OBSERVATION (2026-09-22, project owner, authenticated subjective UAT)
+
+Added 2026-09-22, after the sections above; nothing above is rewritten. The block below records the
+project owner's answer from the milestone's authenticated subjective UAT
+(`gsd_answer_milestone_subjective_uat`, session-authenticated; verbatim response
+**"Accept (Recommended)"**, tested source revision `14ce7da9e43d1c49c1c90d565c5307fd4cd68116`).
+The rationale is quoted verbatim in the owner's own words; the machine-measured record above stands
+unchanged beside it.
+
+### uat-explorer-restart-interactive (criterionId `6d57e299-3b3f-4b78-9993-d03fb55b70c1`)
+
+- Verbatim response: **Accept (Recommended)**
+- Owner's rationale (verbatim): «Владелец наблюдал четыре живых перезапуска explorer.exe на 14ce7da
+  (gsd_uat_exec fd64ba64, 04d85738, 924d2e9a, 622f2732): иконка возвращается сама, меню и balloon на
+  восстановленной иконке работают. Приемлемо.»
+- Objective measurements the owner observed: gsd_uat_exec `fd64ba64`, `04d85738`, `924d2e9a`,
+  `622f2732` - the four live Explorer restarts of Check 12.
+- Bears on: Check 12, and specifically the open human-judgement question F3 above (the menu that
+  self-dismissed only in the agent-shell restart-then-balloon ordering): the owner's acceptance is
+  the human-eye verdict that on a real interactive session the icon returns by itself and both the
+  menu and the balloon work on the recovered icon. F3's recorded status is not edited by this block;
+  this is the observation F3 asked a human for.
