@@ -251,6 +251,9 @@ reading when it is not in effect - which is the diagnosable form of the stale-bi
 ### 7. The menu is torn down on a graceful exit
 
 Result: **PASS for the library's contract, NOT OBSERVED as a sample `Closed` line - see finding F1.**
+**Superseded by S08/T03 (D045), revision `996c9b0`: a disposal-driven close now delivers the consumer's
+`Closed` and the sample prints `[sample] menu dismissed.` for it - see F1's status line and
+`docs/UAT-S08.md`.**
 In-repo, `TrayIconMenuActivationTests.Dispose_closes_the_menu_destroys_the_anchor_and_is_idempotent`
 proves synchronously, after `Dispose`: the menu is closed, `OpenContextMenu` is null, the anchor
 handle is `IntPtr.Zero`, `Win32.IsWindow(anchor)` is false, the popup is gone after a pump and a
@@ -310,7 +313,7 @@ delivers a callback - only check 1 does that. Finding F4 is the other half of th
 | 10c | `MenuActivation = None` | **PASS in-repo only** (`TrayIconMenuActivationTests.MenuActivation_None_opens_nothing_and_still_delivers_both_right_click_events`). 10b is the same shape live - no menu, no menu line - but through the Preview-cancellation opt-out rather than `MenuActivation`; the live `MenuActivation = None` variant was not run (the sample has no switch for it) and is therefore **NOT OBSERVED**. |
 | 10d | A second right click while the menu is already open | **PASS in-repo only** (`TrayIconMenuActivationTests.A_second_right_click_while_the_menu_is_open_opens_nothing_new`). Not demonstrated live: no instrument in this session can inject a second click while the menu is open without first dismissing it. **NOT OBSERVED** live. |
 | 10e | An empty `ContextMenu` item collection | **Design, recorded live**: WPF suppresses a menu with no items, so an empty menu would demonstrate nothing about placement. The sample therefore carries two real items and says so on every run: `[sample] context menu assigned with 2 item(s); a right click on the icon must open it at the icon.` - present in every capture above, which is the cheap non-empty assertion. |
-| 10f | A hidden icon's menu (the same no-click open with the flyout closed) | **FAIL of the dismissal contract - finding F4**, recorded with raw captures rather than repaired. |
+| 10f | A hidden icon's menu (the same no-click open with the flyout closed) | **FAIL of the dismissal contract - finding F4**, recorded with raw captures rather than repaired. **F4 is superseded by S08/T02 (D044), revision `996c9b0`:** a menu opened with no preceding click is now owned by the anchor window and dismissed by an outside click - see F4's status line and `docs/UAT-S08.md`. |
 
 ## Findings
 
@@ -318,6 +321,15 @@ Measurements that contradict something written down or expected. None of them wa
 late change inside these tasks: each is recorded with the evidence needed to act on it.
 
 ### F1 — a disposal-driven close does not deliver `ContextMenu.Closed` to the consumer
+
+> **Status — CLOSED by S08/T03, decision D045, 2026-09-22, revision `996c9b0`.** The measurement below
+> stands as the S03 record; the gap is repaired inside the library. After `IsOpen = false` the close path
+> now waits, bounded at 500 ms, for WPF's own deferred popup destroy before the anchor window is
+> destroyed, so the consumer's `Closed` handler runs exactly once before `Dispose` returns. Carried by
+> `TrayIconMenuCloseNotificationTests` (4/4, including the refused-foreground variant and the no-pump
+> negative), the live sample run that moved `menu opens=1, menu dismissals=0` to `1/1` (gsd_exec
+> `52a02e73`, reproduced at `9ea72e4d`), and the hostile-session full-suite run at 416/416 (gsd_exec
+> `9a9e274d`). D030's recorded gap is superseded by D045. Raw evidence: `docs/UAT-S08.md`.
 
 Measured twice with the `right` scenario (menu opened, nothing clicked outside, then the sample's
 `--run-seconds` shutdown path disposes the icon): `menu opens=1, menu dismissals=0`, with no
@@ -363,6 +375,19 @@ control instrument that changes its reading between slices is exactly the kind o
 reads as a mystery.
 
 ### F4 — a menu opened for a **hidden** icon has no owner and is not dismissed by an outside click
+
+> **Status — SUPERSEDED by S08/T02, decision D044, 2026-09-22, revision `996c9b0`.** D042's
+> document-only v1 disposition is replaced: the library now writes the popup's owner itself and
+> re-claims the foreground, so a menu opened with no preceding click is owned by the anchor window and
+> an outside click dismisses it, in the hostile state as well. Carried by
+> `TrayIconMenuOwnerDeterminismTests.With_the_foreground_claim_refused_the_popup_is_owned_by_the_anchor_and_never_by_the_registration_host`
+> and `...With_the_foreground_claim_refused_an_outside_click_dismisses_the_menu_and_leaves_no_popup_window`
+> (4/4), `TrayMenuOwnerMechanismProbeTests` (4/4; the V1/V2/V3 measurement with its raw lines is in
+> `docs/REMEDIATION-S08-MEASUREMENT.md`), and the live sample run in this refused-foreground session
+> that reports `menu dismissals=1` (gsd_exec `9ea72e4d`). The hand-built ownerless construction this
+> finding pinned is still ownerless and still not dismissed
+> (`TrayMenuDismissalTests.An_ownerless_popup_with_no_placement_target_is_not_dismissed_by_an_outside_click`),
+> because it is WPF's own construction and not what the library repairs. Raw evidence: `docs/UAT-S08.md`.
 
 Measured in T06 while exercising the new no-click switch, and it is a live reproduction of the exact
 construction T03 pinned as a negative in-repo. Two configurations, one variable - whether the icon is
@@ -426,6 +451,15 @@ reach the menu path without a shell click. Check 9 records what it proves; this 
 one configuration in which it produces something the click path does not.
 
 ### F5 — the popup's `GW_OWNER` is a WPF-internal outcome, not a value the library can promise
+
+> **Status — TIGHTENED TO EQUALITY by S08/T02, decision D044, 2026-09-22, revision `996c9b0`.** The
+> bound below ("the anchor or absent") was the right contract while the value was WPF's. It is the
+> library's own write now - the direction D043 itself allowed - so every product-path test asserts
+> `GW_OWNER == anchor` and never the registration host, with the dismissal clauses left unconditional.
+> Carried by `TrayIconMenuOwnerDeterminismTests` (4/4), `TrayMenuOwnerMechanismProbeTests` (4/4) and
+> `TrayIconMenuActivationTests` (16/16). The "or absent" bound survives only where the popup is
+> hand-built by the shared `TrayMenuScenario` harness, on which the library's repair deliberately never
+> runs. D043 is superseded by D044. Raw evidence: `docs/UAT-S08.md`.
 
 Found in T06 while re-running the **automated** suite for this task's verification gate, and it is
 the explanation of the one intermittent assertion S03's menu proof carried: both
@@ -507,6 +541,9 @@ limit on what the *automated* instrument may claim rather than as a product defe
   instant. Measured as the anchor in a quiet process and as `0x0` under full-suite load with the
   anchor foreground, laid out and active — with the dismissal still correct either way. The suite
   therefore asserts "the anchor or nothing, never the registration host" instead of equality.
+  **S08/T02 (D044) changes this:** the library now writes the owner itself and reads it back, so every
+  product-path test asserts equality (see F5's status line); the bounded form survives only for the
+  hand-built `TrayMenuScenario` popup, which the library's repair never touches.
 - **Keyboard dismissal (Escape) and the taskbar (non-flyout) surface.** Neither was injected; the
   earlier S02 caveat about the taskbar copy therefore still stands for the menu path (check 8).
 - **The live `MenuActivation = None` and second-click-while-open variants** (10c, 10d): in-repo only,
@@ -550,3 +587,12 @@ ones on the SYSTEM_AWARE build it replaced):
   WPF-internal outcome - the anchor in a quiet process, `0x0` under full-suite load with the anchor
   foreground and the dismissal still correct - which is why the suite's boundary assertion reads
   "the anchor or absent, never the registration host").
+
+**S08 status, added 2026-09-22 at revision `996c9b0` (the S03 record above is unchanged):** F1 is
+**CLOSED** by S08/T03 (D045) - a disposal-driven close now delivers the consumer's `Closed` exactly
+once before `Dispose` returns; F4 is **SUPERSEDED** by S08/T02 (D044) - D042's document-only v1
+disposition is replaced by the owner repair, which makes the no-click open anchor-owned and dismissable;
+F5 is **TIGHTENED TO EQUALITY** by S08/T02 (D044) - the `GW_OWNER` is the library's own write on every
+product path. F2 and F3 stand unchanged. The per-finding status lines above name the test class or run
+carrying each verdict; `docs/UAT-S08.md` holds the raw evidence and `docs/TEST-ENVIRONMENT.md` records
+that the five-failure environment dependency is retired.

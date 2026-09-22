@@ -381,7 +381,7 @@ public sealed class TrayIconMenuContractTests
             // dismissed by the foreground grant itself and the assertions below would read as the
             // two-icon rule working when the measurement was simply lost.
             IntPtr popup = Assert.Single(TrayMenuScenario.FindPopupWindows());
-            IntPtr popupOwner = Win32.GetWindow(popup, Win32.GW_OWNER);
+            IntPtr popupOwner = Win32.GetWindowOwner(popup);
 
             Assert.True(
                 popupOwner == firstAnchor,
@@ -424,7 +424,7 @@ public sealed class TrayIconMenuContractTests
                 IntPtr stillShowingPopup = Assert.Single(TrayMenuScenario.FindPopupWindows());
 
                 Assert.True(
-                    Win32.GetWindow(stillShowingPopup, Win32.GW_OWNER) == firstAnchor,
+                    Win32.GetWindowOwner(stillShowingPopup) == firstAnchor,
                     $"The live popup must still be owned by the first instance's anchor 0x{firstAnchor.ToInt64():X}. {outcome}");
             }
             else
