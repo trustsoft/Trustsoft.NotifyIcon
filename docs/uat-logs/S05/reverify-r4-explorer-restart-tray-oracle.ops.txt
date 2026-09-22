@@ -1,0 +1,26 @@
+[r4] revision=14ce7da; restart t=16; tray scan t=27; scanner control t=33; menu t=40; balloon t=62
+[r4 12:24:02 t=16] taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 21132 has been terminated.
+[r4 12:24:02] explorer gone after 1s
+[r4 12:24:03] explorer back after 1s
+[r4 12:24:13 t=27] tray inventory DURING RECOVERY, needle Trustsoft.NotifyIcon
+US
+
+To switch input methods, press Windows key + space.' rect=1590,1128 66x72
+Button 'Trustsoft.NotifyIcon sample - the icon changes every second' rect=1398,1128 48x72
+Button 'USB Safely Remove' rect=1494,1128 48x72
+Button 'Visual Studio Code pinned' rect=413,1128 66x72
+Button 'Visual Studio pinned' rect=479,1128 66x72
+Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+Button 'Yandex pinned' rect=215,1128 66x72
+Pane 'Running applications' rect=83,1128 594x72
+named-elements-total: 21
+verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+[r4 12:24:19 t=33] scanner control, impossible needle
+Button 'Visual Studio pinned' rect=479,1128 66x72
+Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+Button 'Yandex pinned' rect=215,1128 66x72
+Pane 'Running applications' rect=83,1128 594x72
+named-elements-total: 21
+verdict: ABSENT - the notification area exposes no element matching 'no such tray tooltip exists'
+[r4] probe-exit=0 gone=1s back=1s

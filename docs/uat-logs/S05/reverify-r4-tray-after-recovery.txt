@@ -1,0 +1,67 @@
+tray-inventory: 2026-09-22 12:24:13 needle='Trustsoft.NotifyIcon'
+host Shell_TrayWnd : present hwnd=0x2D10500 name=''
+  Button 'Start' rect=0,1128 83x72
+  Button 'Search' rect=83,1128 66x72
+  Button 'File Explorer pinned' rect=149,1128 66x72
+  Button 'Yandex pinned' rect=215,1128 66x72
+  Button 'Google Chrome pinned' rect=281,1128 66x72
+  Button 'Rider pinned' rect=347,1128 65x72
+  Button 'Visual Studio Code pinned' rect=413,1128 66x72
+  Button 'Visual Studio pinned' rect=479,1128 66x72
+  Button 'Bondly pinned' rect=545,1128 66x72
+  Button 'Notepad3 - 3 running windows pinned' rect=611,1128 66x72
+  Button 'Terminal - 1 running window' rect=677,1128 66x72
+  Button 'Trustsoft.NotifyIcon sample - the icon changes every second' rect=1398,1128 48x72
+  Button 'USB Safely Remove' rect=1494,1128 48x72
+  Button 'Sticky Password is unlocked' rect=1542,1128 48x72
+  Button 'Tray Input Indicator English (United States)
+US
+
+To switch input methods, press Windows key + space.' rect=1590,1128 66x72
+  Button 'Network TPLE54B5G
+Internet access
+
+Tailscale
+No internet access' rect=1662,1128 36x72
+  Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+  Button 'Power Battery status: fully charged 100%' rect=1746,1128 42x72
+  Button 'Clock 12:24 PM
+‎22-‎Sep-‎26' rect=1800,1128 96x72
+  Button 'Show Desktop' rect=1902,1128 18x72
+  Pane 'Running applications' rect=83,1128 594x72
+  named-elements: 21
+host Shell_SecondaryTrayWnd : ABSENT
+host NotifyIconOverflowWindow : ABSENT
+host TopLevelWindowForOverflowXamlIsland : ABSENT
+--- all named elements, sorted ---
+Button 'Bondly pinned' rect=545,1128 66x72
+Button 'Clock 12:24 PM
+‎22-‎Sep-‎26' rect=1800,1128 96x72
+Button 'File Explorer pinned' rect=149,1128 66x72
+Button 'Google Chrome pinned' rect=281,1128 66x72
+Button 'Network TPLE54B5G
+Internet access
+
+Tailscale
+No internet access' rect=1662,1128 36x72
+Button 'Notepad3 - 3 running windows pinned' rect=611,1128 66x72
+Button 'Power Battery status: fully charged 100%' rect=1746,1128 42x72
+Button 'Rider pinned' rect=347,1128 65x72
+Button 'Search' rect=83,1128 66x72
+Button 'Show Desktop' rect=1902,1128 18x72
+Button 'Start' rect=0,1128 83x72
+Button 'Sticky Password is unlocked' rect=1542,1128 48x72
+Button 'Terminal - 1 running window' rect=677,1128 66x72
+Button 'Tray Input Indicator English (United States)
+US
+
+To switch input methods, press Windows key + space.' rect=1590,1128 66x72
+Button 'Trustsoft.NotifyIcon sample - the icon changes every second' rect=1398,1128 48x72
+Button 'USB Safely Remove' rect=1494,1128 48x72
+Button 'Visual Studio Code pinned' rect=413,1128 66x72
+Button 'Visual Studio pinned' rect=479,1128 66x72
+Button 'Volume Speakers (Realtek(R) Audio): 100%' rect=1704,1128 36x72
+Button 'Yandex pinned' rect=215,1128 66x72
+Pane 'Running applications' rect=83,1128 594x72
+named-elements-total: 21
+verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'

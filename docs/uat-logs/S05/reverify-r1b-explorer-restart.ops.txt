@@ -1,0 +1,12 @@
+[r1b] revision=14ce7da branch=milestone/M001
+[r1b] command: /c/Users/Maxim/Desktop/Trustsoft.NotifyIcon/.gsd-worktrees/M001/scripts/probe-live/bin/Release/net8.0-windows/probe-live.exe /c/Users/Maxim/Desktop/Trustsoft.NotifyIcon/.gsd-worktrees/M001/samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 90 --balloon-after 45 --menu-after 60
+[r1b] plan: t=16 taskkill //f //im explorer.exe ; poll gone ; start explorer.exe detached ; balloon 45 ; menu 60
+[r1b 12:15:49 t=16s] taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 14700 has been terminated.
+[r1b 12:15:50] explorer gone after 1s; tasklist:
+INFO: No tasks are running which match the specified criteria.
+[r1b 12:15:50] starting explorer.exe (stdio detached)
+[r1b 12:15:50] explorer back after 1s; tasklist:
+========================= ======== ================ =========== ============
+explorer.exe                 18444 Console                    1     52,364 K
+[r1b] probe-exit=0

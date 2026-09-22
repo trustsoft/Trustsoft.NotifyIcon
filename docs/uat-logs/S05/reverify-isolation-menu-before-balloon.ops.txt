@@ -1,0 +1,5 @@
+[iso] revision=14ce7da; restart at t=16; menu at t=40; balloon at t=55 (after the menu)
+[iso 12:18:55 t=16] taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 18444 has been terminated.
+[iso 12:18:55] explorer gone after 1s
+[iso 12:18:56] explorer back after 1s

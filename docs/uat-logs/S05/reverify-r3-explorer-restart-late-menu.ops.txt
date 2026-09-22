@@ -1,0 +1,6 @@
+[r3] revision=14ce7da; restart at t=16; menu at t=60 with NO balloon before it; balloon at t=78
+[r3 12:22:00 t=16] taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 11356 has been terminated.
+[r3 12:22:01] explorer gone after 1s
+[r3 12:22:01] explorer back after 1s
+[r3] probe-exit=0 gone=1s back=1s

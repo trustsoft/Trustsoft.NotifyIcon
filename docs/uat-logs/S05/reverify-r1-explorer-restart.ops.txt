@@ -1,0 +1,17 @@
+[r1] revision=14ce7da branch=milestone/M001 os=
+[r1] probe: dotnet-equivalent direct exe: /c/Users/Maxim/Desktop/Trustsoft.NotifyIcon/.gsd-worktrees/M001/scripts/probe-live/bin/Release/net8.0-windows/probe-live.exe /c/Users/Maxim/Desktop/Trustsoft.NotifyIcon/.gsd-worktrees/M001/samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe 90 --balloon-after 45 --menu-after 60
+[r1] plan: t=16 taskkill //f //im explorer.exe ; then start explorer.exe ; balloon at 45 ; menu at 60
+[r1 12:11:12 t=16s] taskkill //f //im explorer.exe
+SUCCESS: The process "explorer.exe" with PID 20132 has been terminated.
+[r1 12:11:13] explorer gone after 1s; tasklist says:
+INFO: No tasks are running which match the specified criteria.
+[r1 12:11:13] starting explorer.exe
+[r1 12:11:14] explorer back after 1s; tasklist says:
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+explorer.exe                 14700 Console                    1     56,892 K
+[r1 12:12:27] explorer at end of run:
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+explorer.exe                 14700 Console                    1    259,356 K
+[r1] probe-exit=0

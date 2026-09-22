@@ -703,3 +703,99 @@ The logs for Checks 1-8 were written to `/tmp` while the runs were made and copi
 The commands that make a check reproducible are the probe line above plus, for the Explorer-restart checks, the shell restart (`taskkill //f //im explorer.exe`, then start `explorer.exe`). Check 9's operator log records both commands with wall-clock timestamps, so the restart can be timed against the series. Everything else is self-contained in the probe invocation. Restarting Explorer is disruptive - the taskbar restarts, open File Explorer windows close, the overflow flyout resets - so the restart checks are once-per-session measurements rather than loops (Check 1 and Check 9 are the two that were made).
 
 Check 10 needs no Explorer restart and is therefore cheap to repeat: two commands per case, the probe line for the case and `powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File scripts/tray-inventory.ps1 -OpenOverflow -All -Needle Trustsoft.NotifyIcon` at the timings recorded in `t05-live-teardown.ops.txt` (before the kill, immediately after it, and once it has settled). The scanner is committed as a tracked script alongside the probe for exactly that reason.
+
+---
+
+## Check 12 - the inherited live Explorer-restart leg re-measured on `14ce7da`
+
+**Why this check exists.** The M001 validation (round 1) recorded C4 as inconclusive for one reason: the three live Explorer-restart measurements this document describes were **not re-executed on the frozen revision**. The S05 assessment marked them `INHERITED EVIDENCE - NOT RE-EXECUTED IN THIS ROUND` (checks S05-13/14/15) because the recorded logs came from an older probe (`scripts/probe-live/Program.cs`, +56 lines) and an older sample (`App.xaml`/`App.xaml.cs`, +131 lines) than the revision under test - even though every `.cs` file under `src/` was byte-identical between those runs' commit and `c57446a`. This check removes that objection by re-measuring the live leg on the frozen revision with the binaries built from it. Restarting `explorer.exe` was explicitly approved by the project owner for this session.
+
+**Revision and binaries.** `milestone/M001` at `14ce7da`, worktree `.gsd-worktrees/M001`, clean tree. Both instruments were rebuilt from that revision before the runs: the sample (which carries the library assembly) and `scripts/probe-live`. The build is `0 Warning(s), 0 Error(s)`.
+
+**One deliberate difference from the command lines above.** The archived checks invoke the probe through `dotnet run --project scripts/probe-live -c Release --no-build -- ...`. That form re-evaluates the project on every run and, in this worktree, needs the repository-hygiene workaround this document already records (a bare `dotnet build` fails on the duplicate `NuGet.config`/`nuget.config` pair). To keep the measurement about the library rather than about the build system, these runs execute the **already-built probe and sample executables directly**, which is the same instrument measured by the same code: `scripts/probe-live/bin/Release/net8.0-windows/probe-live.exe <sampleExe> ...`. Nothing else changed; the probe's own triggers (`--balloon-after`, `--menu-after`) and their validation are used unchanged.
+
+**The restart procedure, verbatim.** While the probe observes, at t=16 s: `taskkill //f //im explorer.exe` (the doubled-slash spelling this document records as mandatory under MSYS path conversion), then poll until no `explorer.exe` remains, then restart it with `cmd //c start "" explorer.exe` and poll until a new `explorer.exe` pid exists. The started process has its standard handles detached, because an Explorer that inherits the harness's stdout pipe keeps that pipe open and the measurement's own process never sees EOF. Nothing else touches the sample in any run: no restart, no `Visible` toggle, no click, no keyboard input.
+
+**The four runs (each one `gsd_uat_exec`, all exit 0).** In every run the taskbar was gone within 1 s and a new `explorer.exe` was present within 1 s.
+
+| # | exec id | sample pid | identity (hwnd / uID / title) | presence series | GDI |
+|---|---|---|---|---|---|
+| 1 | `fd64ba64-2edd-4054-a2fd-c9e4e1a7c745` | 20024 | `0x200248` / 1 / `Trustsoft.NotifyIcon.TrayMessageWindow` | present t=1..15 -> **absent `hr=0x80004005` t=16..20** -> **present t=21** | 13 -> 15 -> 17, then flat 17 across the event |
+| 2 | `04d85738-5e74-4b64-b532-6d4c47631d23` | 17344 | `0x5460340` / 1 / same title | present -> absent t=16..20 -> present t=21 | flat 17 across the event |
+| 3 | `924d2e9a-a973-413a-9acb-7bc86853986d` | 6112 | `0x17034A` / 1 / same title | present -> absent t=16..20 -> present t=21 | flat 17 across the event |
+| 4 | `622f2732-ab0b-453a-8ddd-f71b09b47eb0` | 8544 | `0x18034A` / 1 / same title | present -> absent t=16..20 -> present t=21 | flat 17 across the event |
+
+**What the series says.** In all four runs the icon disappears with the shell (`present` -> `absent hr=0x80004005` for five consecutive readings, i.e. the registration really did live in the process that was replaced) and then comes back **by itself** for the *same* window, the *same* icon id and the *same* process pid, with no application action of any kind in between. The only producer-side output during each outage is the sample's own `TrayError operation=Modify ... retried=True` line - its 1 Hz icon rotation hitting a shell with no registration to modify - which is the archived, expected consequence of rotating during an outage and is also what proves the comeback was a re-add rather than a lucky `NIM_MODIFY`. As in Check 1, the recovered icon settles one tray slot to the left (`1446` -> `1398`); that is the shell's own layout decision. The `icons-in-notification-area: 1` line says recovery replaced one registration rather than stacking a second.
+
+**The recovered icon is the shell's icon, not just an answer to an API question (run 4).** 11 s after recovery, `scripts/tray-inventory.ps1 -All -Needle Trustsoft.NotifyIcon` read the shell's own tray UI through UI Automation:
+
+```
+host Shell_TrayWnd : present hwnd=0x2D10500 name=''
+  ...
+  Button 'Trustsoft.NotifyIcon sample - the icon changes every second' rect=1398,1128 48x72
+named-elements-total: 21
+verdict: PRESENT - 1 element(s) in the notification area match 'Trustsoft.NotifyIcon'
+```
+
+The named element sits at `rect=1398,1128 48x72` - the same 48x72 slot `Shell_NotifyIconGetRect` reports for the recovered registration - so two instruments that share no code path, no API and no notion of identity agree on *where* the recovered icon is. Six seconds later the same scanner, over the same 21 elements, was given a needle that cannot exist and answered `verdict: ABSENT - the notification area exposes no element matching 'no such tray tooltip exists'`, which is the scanner's own negative control: the `PRESENT` above is a match, not a stuck verdict. Only one tray host exists on this machine (`Shell_SecondaryTrayWnd`, `NotifyIconOverflowWindow` and `TopLevelWindowForOverflowXamlIsland` all report `ABSENT`), which is consistent with one monitor.
+
+**A balloon and a menu still work on the recovered icon.**
+
+| leg | run 1 | run 2 | run 3 | run 4 |
+|---|---|---|---|---|
+| shell accepted the balloon (`NIN_BALLOONSHOW`, `event=0x0402`) | t=45 s, `hwnd=0x200248` | t=55 s, `hwnd=0x5460340` | t=78 s, `hwnd=0x17034A` | t=62 s, `hwnd=0x18034A` |
+| menu opened at the recovered icon | t=60 s, `rect=1398,1045 377x83 dpi=144` | t=40 s, same rect | t=60 s, same rect | t=40 s, same rect, `owner=0x263099A` |
+| menu held its full 6 s hold, closed consumer-driven | no - see F3 | yes (`gdi=29` t=41..46, close t=47) | yes (t=61..66, close t=67) | yes |
+
+The balloon proof is the shell's own acceptance callback, not the app's return value: `NIN_BALLOONSHOW` is delivered for the *recovered* identity in every run (the callback `hwnd` equals the `hwnd` the probe independently resolved after the restart). The menu proof is a real popup window - `HwndWrapper[Trustsoft.NotifyIcon.Sample;...]` - placed so that its left edge equals the recovered icon's left edge and its bottom edge `1045 + 83 = 1128` equals its top edge, with `dpi=144` applied exactly once.
+
+### F3 - the one thing in this check that is not explained
+
+In the two runs where a balloon was shown **before** the menu after a restart (run 1 above, and the first attempt `96fb1e36` which is otherwise complete), the menu popup was created correctly at the rectangle above and then **closed without the sample's consumer-driven close**: the sample printed `menu dismissed.` immediately after the open, and its hold timer later reported `nothing to close after the hold (menu assigned=True, open=False)`. The mechanism was **not established**, and it is written down rather than smoothed over because a reader comparing this check against Check 9 would otherwise see a difference and have to guess.
+
+What the same session measured, as discriminators:
+
+| restart | balloon before the menu | menu held its hold | run |
+|---|---|---|---|
+| yes | yes | **no** - dismissed immediately | `fd64ba64`, `96fb1e36` |
+| yes | no | yes | `04d85738` (menu t=40, balloon t=55), `924d2e9a` (menu t=60, balloon t=78), `622f2732` (menu t=40, balloon t=62) |
+| no | yes | yes | `22ddd46f` (balloon t=45, menu t=60, no restart) |
+| no | no | yes | `ac36a219` (menu t=10, no restart) |
+
+So the dismissal needs *both* a restart and a preceding balloon in this agent-shell session, and neither condition alone reproduces it. The archived interactive-session run with exactly the balloon-then-menu-post-restart ordering (Check 9, revision `4cd52db`) held the full 6 s. What is **not** in doubt: in every one of the runs above the menu *opened* at the recovered icon, and no run produced a misplaced popup, a failed open, or any observed link between recovery and the dismissal. This is recorded as an open observation for a human, not as a defect and not as a pass.
+
+### F1, unchanged
+
+The library's `Verbose` recovery line is still **not observable from the sample**, including in all four runs here - the sample's own startup line reports its listener attached to source `Trustsoft.NotifyIcon` at `SourceLevels.Verbose`, and no recovery trace line appears. That is finding F1 above, unchanged: the sample constructs its `TraceSource` by name and so never receives the library's static instance's events. The line's content remains proven by the seam test.
+
+### The instrument's own failure mode, recorded once more
+
+The first attempt of run 1 (`gsd_uat_exec 96fb1e36`) produced a complete capture and a probe exit of 0, but its exec is **timeout-labelled**: the Explorer it started inherited the harness's stdout pipe, so the harness never saw EOF even though the measurement had finished. Every primary claim in this check rests on an exec that exited 0, and the fix (detach the started Explorer's standard handles) is in the procedure above. It is recorded because a reader diffing exec exit codes should not have to guess why one of them is `timeout`.
+
+### Check 12 raw logs
+
+| Run | Probe capture | Operator log (wall clock, the exact commands) |
+|---|---|---|
+| restart 1 | `docs/uat-logs/S05/reverify-r1b-explorer-restart.txt` | `reverify-r1b-explorer-restart.ops.txt` |
+| restart 2 (menu before balloon) | `docs/uat-logs/S05/reverify-isolation-menu-before-balloon.txt` | `reverify-isolation-menu-before-balloon.ops.txt` |
+| restart 3 (late menu) | `docs/uat-logs/S05/reverify-r3-explorer-restart-late-menu.txt` | `reverify-r3-explorer-restart-late-menu.ops.txt` |
+| restart 4 (independent tray oracle) | `docs/uat-logs/S05/reverify-r4-explorer-restart-tray-oracle.txt` | `reverify-r4-explorer-restart-tray-oracle.ops.txt` |
+| restart 4 tray scans | `reverify-r4-tray-after-recovery.txt`, `reverify-r4-tray-impossible-needle-control.txt` | (in the operator log) |
+| controls, no restart | `reverify-control-menu-hold-no-restart.txt`, `reverify-control-balloon-then-menu-no-restart.txt` | (command lines in the captures) |
+
+## Check 13 - Display Scale and the two-monitor clause (C2): measured hardware, recorded deferral
+
+The second gap the validation recorded as C2 is the absence of any **two-monitor different-scale-factor** placement run in the milestone evidence. This check measures the machine's display configuration so the gap is a recorded fact rather than an omission.
+
+**Measured, from a PerMonitorV2-aware probe** (`SetProcessDpiAwarenessContext(-4)` before enumeration; `gsd_uat_exec 502a7157`):
+
+```
+machine: MINIBOOKX os=Microsoft Windows NT 10.0.26200.0 build=26200
+SM_CMONITORS=1  SM_CXSCREEN=1920  SM_CYSCREEN=1200
+monitor[0] hmon=0x10001 rect=(0,0)..(1920,1200) size=1920x1200 effectiveDpi=144 scale=150%
+MONITOR-COUNT=1
+```
+
+This is corroborated in-band by the sample's own startup block inside the same round's captures (`display configuration: monitors=1 virtualScreen=0,0 1920x1200 physical`; `monitor 0: device=\\.\DISPLAY1 primary=True rect=0,0 1920x1200 work=0,0 1920x1128 dpi=144 scale=1.5`) and by the independent tray inventory finding exactly one tray host. There is **no second monitor**, so a live mixed-scale run is physically impossible on this machine - a live 150 % session is the only Display Scale configuration reachable here, and every menu open in Check 12 measured that factor applied exactly once (`dpi=144 scale=1.5`).
+
+**Disposition.** Recorded as an accepted v1 limitation, not as a pass and not as a silent omission: requirement R014 is `deferred`, and decision **D047** records the choice. The substitute evidence the clause rests on already exists in the milestone - the pure `TrayIconPlacement` calculator proven by fixtures at 100/125/150/175/200 % plus a custom value, negative-origin monitors, taskbar-reserved work areas and an equality-asserted mixed-scale two-monitor pair, plus PerMonitorV2 declared in the sample manifest and verified out of process. The follow-up on suitably equipped hardware is one recorded sample run per scale pair (menu rectangle and rendered icon) together with the `WM_DPICHANGED` icon-size clause, which remains unimplemented in v1 and is tracked for M002/M003.
