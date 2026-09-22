@@ -90,6 +90,17 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
     private readonly HwndSource _hwndSource;
 
     /// <summary>
+    /// The seam the anchor's foreground claim is made through.
+    /// </summary>
+    /// <remarks>
+    /// The claim is the one call this class makes that a session can refuse, so it is routed
+    /// through <see cref="IShellApi"/> rather than a direct P/Invoke: a test scripts the refusal to
+    /// reproduce the hostile state deterministically (docs/TEST-ENVIRONMENT.md), and
+    /// <see cref="ShellApi"/> stays the only home of the entry point.
+    /// </remarks>
+    private readonly IShellApi _shell;
+
+    /// <summary>
     /// The laid-out 1x1 visual the menu is attached to. Held by a field so it outlives the layout
     /// pass that gives it its size and so <see cref="RootVisual"/> can hand out a stable instance.
     /// </summary>
@@ -99,8 +110,29 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Creates the anchor window, invisible, at the given physical screen position, claiming the
+    /// foreground through a fresh real <see cref="ShellApi"/>.
+    /// </summary>
+    /// <param name="physicalX">The left edge in physical screen pixels.</param>
+    /// <param name="physicalY">The top edge in physical screen pixels.</param>
+    /// <remarks>
+    /// The two-argument overload is for callers (tests measuring the real construction) that need
+    /// the real foreground call; the library's own menu path uses
+    /// <see cref="TrayMenuAnchorWindow(IShellApi, int, int)"/> so the claim is the session's and not
+    /// a test-local side channel.
+    /// </remarks>
+    internal TrayMenuAnchorWindow(int physicalX, int physicalY)
+        : this(new ShellApi(), physicalX, physicalY)
+    {
+    }
+
+    /// <summary>
     /// Creates the anchor window, invisible, at the given physical screen position.
     /// </summary>
+    /// <param name="shell">
+    /// The seam the foreground claim is made through. Passed by the menu path so a test can refuse
+    /// the claim exactly the way Windows refuses it.
+    /// </param>
     /// <param name="physicalX">
     /// The left edge in <b>physical screen pixels</b> - the same units
     /// <c>Shell_NotifyIconGetRect</c> reports an icon rectangle in. No DPI conversion happens here:
@@ -116,9 +148,10 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
     /// omissions is measured rather than stylistic. Zero parent makes the window top-level, which is
     /// what makes it a legal popup owner at all.
     /// </remarks>
-    internal TrayMenuAnchorWindow(int physicalX, int physicalY)
+    internal TrayMenuAnchorWindow(IShellApi shell, int physicalX, int physicalY)
     {
         _rootVisual = new Border { Width = AnchorSize, Height = AnchorSize };
+        _shell = shell ?? throw new ArgumentNullException(nameof(shell));
 
         var parameters = new HwndSourceParameters(WindowName)
         {
@@ -207,7 +240,7 @@ internal sealed class TrayMenuAnchorWindow : IDisposable
     /// <see langword="false"/> result as "the menu may not dismiss" rather than as an error.
     /// </para>
     /// </remarks>
-    internal bool MakeForeground() => Win32.SetForegroundWindow(_hwndSource.Handle);
+    internal bool MakeForeground() => _shell.SetForegroundWindow(_hwndSource.Handle);
 
     /// <summary>
     /// Destroys the anchor window. Safe to call more than once.

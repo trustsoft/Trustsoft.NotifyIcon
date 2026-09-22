@@ -101,6 +101,54 @@ internal sealed class ShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    public IntPtr GetForegroundWindow()
+    {
+        IntPtr result = GetForegroundWindowNative();
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public bool SetForegroundWindow(IntPtr hWnd)
+    {
+        bool result = SetForegroundWindowNative(hWnd);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IntPtr GetWindowOwner(IntPtr hWnd)
+    {
+        IntPtr result = GetWindowNative(hWnd, Win32.GW_OWNER);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IntPtr SetWindowOwner(IntPtr hWnd, IntPtr hWndOwner)
+    {
+        // One export, two accessors: SetWindowLongPtrW does not exist on 32-bit Windows and
+        // SetWindowLongW would truncate the result on 64-bit Windows. The index is negative, so the
+        // same numeric value selects the owner slot on both; only the entry point differs. The
+        // returned value is the *previous* owner, so a zero is normal and not a failure signal - the
+        // caller reads the owner back with GetWindowOwner rather than interpreting this.
+        IntPtr previous = IntPtr.Size == 8
+            ? SetWindowLongPtrWNative(hWnd, Win32.GWLP_HWNDPARENT, hWndOwner)
+            : new IntPtr(SetWindowLongWNative(hWnd, Win32.GWLP_HWNDPARENT, hWndOwner.ToInt32()));
+
+        CaptureLastError();
+        return previous;
+    }
+
+    /// <inheritdoc />
+    public uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId)
+    {
+        uint result = GetWindowThreadProcessIdNative(hWnd, out processId);
+        CaptureLastError();
+        return result;
+    }
+
+    /// <inheritdoc />
     public uint RegisterWindowMessage(string message)
     {
         uint result = RegisterWindowMessageW(message);
@@ -208,6 +256,55 @@ internal sealed class ShellApi : IShellApi
     /// </remarks>
     [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
     private static extern uint RegisterWindowMessageW(string lpString);
+
+    /// <remarks>
+    /// The desktop's foreground window. A single unsuffixed export with no parameters;
+    /// <c>ExactSpelling</c> keeps it from being probed. A result of <see cref="IntPtr.Zero"/> is
+    /// "no window holds the foreground", which is a reading rather than a failure.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "GetForegroundWindow", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr GetForegroundWindowNative();
+
+    /// <remarks>
+    /// <c>SetForegroundWindow</c> returns <c>BOOL</c>, and the false case is the foreground lock
+    /// refusing the process rather than an error. <c>ExactSpelling</c> names the single unsuffixed
+    /// export explicitly.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "SetForegroundWindow", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindowNative(IntPtr hWnd);
+
+    /// <remarks>
+    /// The <c>GetWindow</c> form used by the seam; only <c>GW_OWNER</c> (the owner relationship) is
+    /// ever requested, which is why the command is not a parameter on the interface member.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "GetWindow", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr GetWindowNative(IntPtr hWnd, uint uCmd);
+
+    /// <remarks>
+    /// The 64-bit accessor for the owner field. On 32-bit Windows this export does not exist and
+    /// the declaration is simply never resolved; <c>SetWindowLongW</c> below is the accessor used
+    /// there. Both take the same negative index and return the previous field value. This is the
+    /// write half of the export; <see cref="Win32.GetWindowLongPtr"/> keeps the read half for the
+    /// style assertions D013 assigns to that helper class.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr SetWindowLongPtrWNative(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    /// <remarks>
+    /// The 32-bit accessor for the same field. A 32-bit window handle fits the <c>LONG</c> slot
+    /// exactly, so no truncation is possible on the platform that uses this entry point.
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true, ExactSpelling = true)]
+    private static extern int SetWindowLongWNative(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    /// <remarks>
+    /// <c>user32.dll</c> exports one unsuffixed <c>GetWindowThreadProcessId</c>. The thread id is the
+    /// return value and the process id comes back through the out parameter; a zero return means the
+    /// call failed (a real thread id is never zero).
+    /// </remarks>
+    [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId", SetLastError = true, ExactSpelling = true)]
+    private static extern uint GetWindowThreadProcessIdNative(IntPtr hWnd, out uint processId);
 
     /// <remarks>
     /// Single unsuffixed export in <c>user32.dll</c>; named explicitly so it can never be probed

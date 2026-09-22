@@ -37,6 +37,29 @@ internal enum ShellOperation
     /// </summary>
     GetCursorPosition,
 
+    /// <summary><see cref="IShellApi.GetForegroundWindow"/>.</summary>
+    GetForegroundWindow,
+
+    /// <summary>
+    /// <see cref="IShellApi.SetForegroundWindow"/>. Its refusal is scriptable through
+    /// <see cref="FakeShellApi.SetForegroundWindowResult"/> - the hermetic hostile state in which the
+    /// popup is built ownerless - and it is not part of the one-shot failure machinery, because a
+    /// refused foreground claim is a legitimate reading rather than a failed call.
+    /// </summary>
+    SetForegroundWindow,
+
+    /// <summary><see cref="IShellApi.GetWindowOwner"/>.</summary>
+    GetWindowOwner,
+
+    /// <summary>
+    /// <see cref="IShellApi.SetWindowOwner"/>. The fake keeps a per-window owner table, so a test can
+    /// set an owner through the seam and read it back through the seam without a real window.
+    /// </summary>
+    SetWindowOwner,
+
+    /// <summary><see cref="IShellApi.GetWindowThreadProcessId"/>.</summary>
+    GetWindowThreadProcessId,
+
     /// <summary><see cref="IShellApi.CreateIconIndirect"/>.</summary>
     CreateIconIndirect,
 
@@ -143,6 +166,67 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
             $"result={result}; x={x}; y={y}",
             Environment.CurrentManagedThreadId);
 
+    /// <summary>Builds the record for a <see cref="IShellApi.GetForegroundWindow"/> call.</summary>
+    /// <param name="foregroundWindow">The window the call reported.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromGetForegroundWindow(IntPtr foregroundWindow) =>
+        new(
+            nameof(IShellApi.GetForegroundWindow),
+            0,
+            0,
+            $"foreground=0x{foregroundWindow.ToInt64():X}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.SetForegroundWindow"/> call.</summary>
+    /// <param name="hWnd">The window the claim named.</param>
+    /// <param name="result">Whether the claim was granted.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromSetForegroundWindow(IntPtr hWnd, bool result) =>
+        new(
+            nameof(IShellApi.SetForegroundWindow),
+            0,
+            0,
+            $"hwnd=0x{hWnd.ToInt64():X}; result={result}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.GetWindowOwner"/> call.</summary>
+    /// <param name="hWnd">The window whose owner was read.</param>
+    /// <param name="owner">The owner that was read.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromGetWindowOwner(IntPtr hWnd, IntPtr owner) =>
+        new(
+            nameof(IShellApi.GetWindowOwner),
+            0,
+            0,
+            $"hwnd=0x{hWnd.ToInt64():X}; owner=0x{owner.ToInt64():X}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.SetWindowOwner"/> call.</summary>
+    /// <param name="hWnd">The window whose owner was set.</param>
+    /// <param name="owner">The new owner.</param>
+    /// <param name="previous">The owner the fake replaced.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromSetWindowOwner(IntPtr hWnd, IntPtr owner, IntPtr previous) =>
+        new(
+            nameof(IShellApi.SetWindowOwner),
+            0,
+            0,
+            $"hwnd=0x{hWnd.ToInt64():X}; owner=0x{owner.ToInt64():X}; previous=0x{previous.ToInt64():X}",
+            Environment.CurrentManagedThreadId);
+
+    /// <summary>Builds the record for a <see cref="IShellApi.GetWindowThreadProcessId"/> call.</summary>
+    /// <param name="hWnd">The window that was asked about.</param>
+    /// <param name="threadId">The thread id the call returned.</param>
+    /// <param name="processId">The process id the call reported.</param>
+    /// <returns>The recorded call.</returns>
+    internal static ShellCall FromGetWindowThreadProcessId(IntPtr hWnd, uint threadId, uint processId) =>
+        new(
+            nameof(IShellApi.GetWindowThreadProcessId),
+            0,
+            0,
+            $"hwnd=0x{hWnd.ToInt64():X}; threadId={threadId}; processId={processId}",
+            Environment.CurrentManagedThreadId);
+
     /// <summary>Builds the record for a <see cref="IShellApi.RegisterWindowMessage"/> call.</summary>
     /// <param name="message">The message name that was requested.</param>
     /// <returns>The recorded call.</returns>
@@ -242,6 +326,18 @@ internal readonly record struct ShellCall(string Operation, uint Message, uint F
 /// straight to the shell.
 /// </para>
 /// <para>
+/// <b>The five window-manager members of S08 are scripted <em>or</em> real, never a silent success.</b>
+/// <see cref="IShellApi.GetForegroundWindow"/>, <see cref="IShellApi.SetForegroundWindow"/>,
+/// <see cref="IShellApi.GetWindowOwner"/>, <see cref="IShellApi.SetWindowOwner"/> and
+/// <see cref="IShellApi.GetWindowThreadProcessId"/> are window topology, not shell calls: they carry no
+/// notification-area state and a fake cannot answer them for a real window handle. Each performs the
+/// real call through <see cref="ShellApi"/> unless the test scripts it, because answering
+/// <see cref="IShellApi.SetForegroundWindow"/> with a bare <see langword="true"/> would change the
+/// library's delivered behaviour rather than replace a side effect - the anchor would report a
+/// foreground claim it never made, and the popup's owner would be measured against a claim that did
+/// not happen.
+/// </para>
+/// <para>
 /// <b>DIB sections are emulated, and deliberately not with real GDI objects.</b>
 /// <c>CreateDIBSection</c> allocates zero-filled unmanaged memory for the pixels and returns a
 /// distinct fake handle, and <c>DeleteObject</c> captures that memory's contents before
@@ -272,6 +368,16 @@ internal sealed class FakeShellApi : IShellApi
     private readonly List<string> _registeredMessages = [];
     private readonly List<DibSectionRequest> _dibSections = [];
     private readonly Dictionary<IntPtr, EmulatedDib> _emulatedDibs = [];
+    private readonly Dictionary<IntPtr, IntPtr> _windowOwners = [];
+
+    /// <summary>
+    /// The real implementation the window-manager members delegate to when they are not scripted.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ShellApi"/> without a notification-area call: only the five S08 window-topology
+    /// members use it, so the fake still never performs a real <c>Shell_NotifyIcon</c>.
+    /// </remarks>
+    private readonly ShellApi _real = new();
     private readonly Dictionary<ShellOperation, int> _remainingFailures = [];
     private readonly Dictionary<ShellOperation, int> _callCounts = [];
     private readonly Dictionary<(ShellOperation Operation, int CallNumber), bool> _ordinalFailures = [];
@@ -450,6 +556,62 @@ internal sealed class FakeShellApi : IShellApi
     /// </remarks>
     internal uint? IdentifierIdWriteBack { get; set; }
 
+    /// <summary>
+    /// Gets or sets the window <see cref="IShellApi.GetForegroundWindow"/> reports.
+    /// </summary>
+    /// <remarks>
+    /// The scriptable half of the hostile foreground state: a test sets this to a foreign window to
+    /// model the session where another process holds the foreground. <see langword="null"/> (the
+    /// default) performs the real reading, so a test that does not care about the foreground gets the
+    /// truth instead of a fabricated zero.
+    /// </remarks>
+    internal IntPtr? ForegroundWindowOverride { get; set; }
+
+    /// <summary>
+    /// Gets or sets the result <see cref="IShellApi.SetForegroundWindow"/> reports.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The refusal is the hermetic state the S08 measurement needs: the popup is then built
+    /// ownerless exactly as it is in the automation session the five failing tests recorded
+    /// (docs/TEST-ENVIRONMENT.md). It is deliberately not part of the one-shot failure machinery - a
+    /// refused claim is a reading the caller records, not a failed call it reports through
+    /// <see cref="GetLastError"/>.
+    /// </para>
+    /// <para>
+    /// <see langword="null"/> (the default) means "perform the real claim". That default is
+    /// load-bearing: the library's delivered behaviour is that the anchor really is made foreground,
+    /// and returning a bare <see langword="true"/> without the call would silently change what the
+    /// menu path proves.
+    /// </para>
+    /// </remarks>
+    internal bool? SetForegroundWindowResult { get; set; }
+
+    /// <summary>
+    /// Gets the result the most recent <see cref="IShellApi.SetForegroundWindow"/> call reported, real
+    /// or scripted.
+    /// </summary>
+    /// <remarks>
+    /// The evidence a probe wants: it says what the library's foreground claim actually returned,
+    /// rather than restating the scripted knob.
+    /// </remarks>
+    internal bool? LastSetForegroundWindowResult { get; private set; }
+
+    /// <summary>
+    /// Gets or sets the thread id <see cref="IShellApi.GetWindowThreadProcessId"/> returns.
+    /// </summary>
+    /// <remarks>
+    /// <see langword="null"/> (the default) performs the real call. When set it is reported as given,
+    /// including <c>0</c>, which is the call's own failure value.
+    /// </remarks>
+    internal uint? WindowThreadIdOverride { get; set; }
+
+    /// <summary>
+    /// Gets or sets the process id <see cref="IShellApi.GetWindowThreadProcessId"/> reports.
+    /// </summary>
+    /// <remarks><see langword="null"/> (the default) performs the real call.</remarks>
+    internal uint? WindowProcessIdOverride { get; set; }
+
     /// <summary>Scripts the next call to one operation to fail, once.</summary>
     /// <param name="operation">The operation that should fail.</param>
     /// <remarks>
@@ -557,6 +719,77 @@ internal sealed class FakeShellApi : IShellApi
         y = CursorPositionY;
         _calls.Add(ShellCall.FromGetCursorPosition(x, y, result: true));
         return true;
+    }
+
+    /// <inheritdoc />
+    public IntPtr GetForegroundWindow()
+    {
+        IntPtr foreground = ForegroundWindowOverride ?? _real.GetForegroundWindow();
+        _calls.Add(ShellCall.FromGetForegroundWindow(foreground));
+        _lastError = 0;
+        return foreground;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A refused claim is a successful measurement of a refusal, so it clears the reported error
+    /// like any other reading rather than reporting one: the caller records the boolean in its trace
+    /// line and carries on, and the owner repair is what keeps the menu dismissable. An unscripted
+    /// call performs the real claim and reports its real result.
+    /// </remarks>
+    public bool SetForegroundWindow(IntPtr hWnd)
+    {
+        bool result = SetForegroundWindowResult ?? _real.SetForegroundWindow(hWnd);
+        LastSetForegroundWindowResult = result;
+        _calls.Add(ShellCall.FromSetForegroundWindow(hWnd, result));
+        _lastError = 0;
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A scripted owner wins; otherwise the real owner of the handle is read, because a fake cannot
+    /// invent the owner of a real window.
+    /// </remarks>
+    public IntPtr GetWindowOwner(IntPtr hWnd)
+    {
+        IntPtr owner = _windowOwners.TryGetValue(hWnd, out IntPtr scripted) ? scripted : _real.GetWindowOwner(hWnd);
+        _calls.Add(ShellCall.FromGetWindowOwner(hWnd, owner));
+        _lastError = 0;
+        return owner;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The real owner write is performed (a real popup window is the only thing an owner can be set
+    /// on), and the new owner is remembered so <see cref="GetWindowOwner"/> can report it and the
+    /// recorded call carries both the new owner and the one it replaced.
+    /// </remarks>
+    public IntPtr SetWindowOwner(IntPtr hWnd, IntPtr hWndOwner)
+    {
+        IntPtr previous = _real.SetWindowOwner(hWnd, hWndOwner);
+        _windowOwners[hWnd] = hWndOwner;
+        _calls.Add(ShellCall.FromSetWindowOwner(hWnd, hWndOwner, previous));
+        _lastError = 0;
+        return previous;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The real call is always made (it is read-only and touches no notification-area state), and a
+    /// scripted thread or process id overrides the half it names.
+    /// </remarks>
+    public uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId)
+    {
+        uint realThreadId = _real.GetWindowThreadProcessId(hWnd, out uint realProcessId);
+
+        uint threadId = WindowThreadIdOverride ?? realThreadId;
+
+        processId = WindowProcessIdOverride ?? realProcessId;
+
+        _calls.Add(ShellCall.FromGetWindowThreadProcessId(hWnd, threadId, processId));
+        _lastError = 0;
+        return threadId;
     }
 
     /// <inheritdoc />

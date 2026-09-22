@@ -2179,7 +2179,7 @@ public class TrayIcon : FrameworkElement, IDisposable
             int anchorX = (int)Math.Round(offset.X * scale, MidpointRounding.AwayFromZero);
             int anchorY = (int)Math.Round(offset.Y * scale, MidpointRounding.AwayFromZero);
 
-            anchor = new TrayMenuAnchorWindow(anchorX, anchorY);
+            anchor = new TrayMenuAnchorWindow(_shell, anchorX, anchorY);
 
             // The foreground call is load-bearing rather than etiquette: measured, the identical
             // anchor with this call omitted produces an ownerless popup that an outside click does

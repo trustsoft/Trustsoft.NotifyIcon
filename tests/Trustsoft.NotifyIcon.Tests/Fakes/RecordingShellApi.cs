@@ -98,6 +98,61 @@ internal sealed class RecordingShellApi : IShellApi
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after delegation, like <see cref="GetCursorPosition"/>, because the line carries the
+    /// reading the call produced - including an empty foreground, which is a reading rather than a
+    /// failure.
+    /// </remarks>
+    public IntPtr GetForegroundWindow()
+    {
+        IntPtr result = _inner.GetForegroundWindow();
+        _calls.Add(ShellCall.FromGetForegroundWindow(result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after delegation because the line carries the granted or refused result, and a
+    /// refusal is a normal outcome rather than an exception. This is also the probe that proves the
+    /// real <c>SetForegroundWindow</c> export resolves and is not marshalled as a byte BOOL.
+    /// </remarks>
+    public bool SetForegroundWindow(IntPtr hWnd)
+    {
+        bool result = _inner.SetForegroundWindow(hWnd);
+        _calls.Add(ShellCall.FromSetForegroundWindow(hWnd, result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    public IntPtr GetWindowOwner(IntPtr hWnd)
+    {
+        IntPtr result = _inner.GetWindowOwner(hWnd);
+        _calls.Add(ShellCall.FromGetWindowOwner(hWnd, result));
+        return result;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Recorded after delegation, and it is the strongest real-signature evidence for the owner
+    /// write: the previous owner the export reports is recorded next to the handle the call named, so
+    /// a value that never came back from the real call is visible in the log.
+    /// </remarks>
+    public IntPtr SetWindowOwner(IntPtr hWnd, IntPtr hWndOwner)
+    {
+        IntPtr previous = _inner.SetWindowOwner(hWnd, hWndOwner);
+        _calls.Add(ShellCall.FromSetWindowOwner(hWnd, hWndOwner, previous));
+        return previous;
+    }
+
+    /// <inheritdoc />
+    public uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId)
+    {
+        uint result = _inner.GetWindowThreadProcessId(hWnd, out processId);
+        _calls.Add(ShellCall.FromGetWindowThreadProcessId(hWnd, result, processId));
+        return result;
+    }
+
+    /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
     {
         _calls.Add(ShellCall.FromCreateIconIndirect(ref iconInfo));

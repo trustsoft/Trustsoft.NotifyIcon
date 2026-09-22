@@ -164,6 +164,137 @@ internal interface IShellApi
     bool GetCursorPosition(out int x, out int y);
 
     /// <summary>
+    /// Calls <c>GetForegroundWindow</c> to read the desktop's foreground window.
+    /// </summary>
+    /// <returns>The foreground window handle, or <see cref="IntPtr.Zero"/> when no window is
+    /// foreground (which is not an error).</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the library's own runtime needs this on the seam.</b> The popup's owner and its
+    /// outside-click dismissal are decided by the foreground relationship at the instant the popup
+    /// window is built (measured, finding F5): the anchor window only owns the popup when it is
+    /// connected to the foreground window, and in a session where Windows refuses the foreground
+    /// claim the popup is built ownerless and an outside click leaves it open. Reading the
+    /// foreground window through the seam is what lets a test script the hostile state
+    /// deterministically instead of depending on whichever window happens to be foreground on the
+    /// machine running the suite.
+    /// </para>
+    /// <para>
+    /// <b>It is not a shell call.</b> Neither <c>shell32</c> nor the icon state is involved: this is
+    /// a plain window-manager query, and it joined the seam because the menu path's behaviour
+    /// depends on its answer and that answer has to be scriptable.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (the menu-owner mechanism measurement and the hostile-state
+    /// probe). The value is a raw reading: an <see cref="IntPtr.Zero"/> result means "nobody holds
+    /// the foreground", not "the call failed".
+    /// </para>
+    /// </remarks>
+    IntPtr GetForegroundWindow();
+
+    /// <summary>
+    /// Calls <c>SetForegroundWindow</c> to make <paramref name="hWnd"/> the foreground window.
+    /// </summary>
+    /// <param name="hWnd">The window handle.</param>
+    /// <returns>
+    /// <see langword="true"/> when Windows granted the request; <see langword="false"/> when it
+    /// refused it, which is a legitimate and expected outcome rather than an error.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The refusal is load-bearing and must be injectable.</b> Windows grants the foreground
+    /// transition only to the process that received the last input event (among other conditions),
+    /// so a menu opened from an injected message - or from a background automation session - is
+    /// refused the claim. The same binary is therefore green in one session and ownerless in
+    /// another (docs/TEST-ENVIRONMENT.md), which is exactly why the call sits on the seam: a
+    /// scripted refusal turns "green on a good day" into a contract.
+    /// </para>
+    /// <para>
+    /// <b>A <see langword="false"/> result is not an error and must not be raised.</b> The caller
+    /// records it (the open trace line) and continues; the owner repair is what keeps the menu
+    /// dismissable after the refusal.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (<see cref="TrayMenuAnchorWindow.MakeForeground"/>).
+    /// </para>
+    /// </remarks>
+    bool SetForegroundWindow(IntPtr hWnd);
+
+    /// <summary>
+    /// Calls <c>GetWindow</c> with <c>GW_OWNER</c> to read the owner of a window.
+    /// </summary>
+    /// <param name="hWnd">The window handle.</param>
+    /// <returns>The owner window handle, or <see cref="IntPtr.Zero"/> when the window has none
+    /// (an ownerless popup) or the call failed.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>This is the measurement at the centre of the dismissal contract.</b> A menu popup with no
+    /// owner is never dismissed by an outside click, and an ownerless popup is visually
+    /// indistinguishable from a correct one - which is why the value is read and asserted instead
+    /// of the appearance. Reading it through the seam is what lets the probe verify a repair the
+    /// library applied to the popup it opened, and what lets a scripted fake model a popup whose
+    /// owner was lost to WPF's own construction.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (the owner measurement and the owner-determinism assertions).
+    /// </para>
+    /// </remarks>
+    IntPtr GetWindowOwner(IntPtr hWnd);
+
+    /// <summary>
+    /// Calls <c>SetWindowLongPtr</c> with <c>GWLP_HWNDPARENT</c> to set a window's owner.
+    /// </summary>
+    /// <param name="hWnd">The window handle whose owner should be set - the menu popup.</param>
+    /// <param name="hWndOwner">The new owner window handle - the library's anchor window.</param>
+    /// <returns>
+    /// The <em>previous</em> owner, as <c>SetWindowLongPtr</c> reports it. A return of
+    /// <see cref="IntPtr.Zero"/> is ambiguous by design (it means either "there was no previous
+    /// owner" or "the call failed"); the caller reads the owner back with
+    /// <see cref="GetWindowOwner"/> rather than interpreting this value as a status.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the library sets the owner itself.</b> WPF decides the popup's owner inside
+    /// <c>Popup.BuildWindow</c> from the foreground relationship at the instant the popup window is
+    /// created, which makes the delivered owner flip with the environment. Setting the owner after
+    /// the popup exists (once the popup window has been resolved from the menu's own presentation
+    /// source) makes the value the library's own and turns the S03 "the anchor or absent" clause
+    /// into the equality D043 named as the one direction it may be tightened.
+    /// </para>
+    /// <para>
+    /// <b><c>GWLP_HWNDPARENT</c> sets the owner, not a child parent.</b> For a top-level popup it is
+    /// the documented owner slot, and it is what makes the OS route an outside click's activation
+    /// change through the owner relationship the dismissal depends on.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (the shipped owner repair).
+    /// </para>
+    /// </remarks>
+    IntPtr SetWindowOwner(IntPtr hWnd, IntPtr hWndOwner);
+
+    /// <summary>
+    /// Calls <c>GetWindowThreadProcessId</c> to read the thread and process that created a window.
+    /// </summary>
+    /// <param name="hWnd">The window handle.</param>
+    /// <param name="processId">Receives the process id that created the window.</param>
+    /// <returns>The thread id that created the window, or <c>0</c> when the call failed.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Why it is on the seam.</b> It is window topology, not a shell call, but the menu path's
+    /// foreground fallback sequence needs the foreground window's thread to attach this thread's
+    /// input queue to (the documented way to make a <c>SetForegroundWindow</c> succeed that would
+    /// otherwise be refused), and the owner-enumeration helper needs the process id to tell this
+    /// process's windows from another process's. Both are decisions the library's behaviour turns
+    /// on, so both go through the scriptable seam rather than through a test-only helper.
+    /// </para>
+    /// <para>
+    /// <b>Consumed by M001/S08</b> (the attach-thread foreground variant and the window
+    /// enumeration).
+    /// </para>
+    /// </remarks>
+    uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    /// <summary>
     /// Calls <c>RegisterWindowMessageW</c> to obtain a session-unique message id for the given
     /// message name.
     /// </summary>

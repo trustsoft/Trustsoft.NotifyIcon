@@ -12,15 +12,20 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// <para>
 /// Deliberately minimal: one entry per call a task actually makes, no convenience wrappers and
 /// no general-purpose Win32 surface. These calls are used for assertions and diagnostics, not
-/// for the icon lifecycle, so they are not part of the test double and are not scriptable.
+/// for the icon lifecycle, so they are not part of the test double and are not scriptable - with
+/// the three exceptions that delegate to <see cref="IShellApi"/>, which are on the seam precisely
+/// because the menu path's behaviour turns on their answers.
 /// </para>
 /// <para>
-/// <b>Last error is not captured here.</b> Unlike <see cref="ShellApi"/>, this class does not
-/// cache the Win32 error, because no caller branches on it: each member is an assertion helper
-/// whose return value is the evidence. Do not call <see cref="IShellApi.GetLastError"/> expecting
-/// to see an error from a call made here - the seam's value belongs to the seam's own calls.
-/// Where a failure code is genuinely needed, capture
-/// <see cref="Marshal.GetLastPInvokeError"/> as the first statement after the call.
+/// <b>Last error is not captured by this class.</b> Unlike <see cref="ShellApi"/>, no member that
+/// declares its own P/Invoke caches the Win32 error, because no caller branches on it: each member
+/// is an assertion helper whose return value is the evidence. <see cref="GetForegroundWindow"/>,
+/// <see cref="GetWindowOwner"/> and the <c>GetWindowThreadProcessId</c> step of
+/// <see cref="GetVisibleTopLevelWindowsOfProcess"/> delegate to <see cref="IShellApi"/> and
+/// therefore <em>do</em> move the seam's thread-static last-error slot as a side effect of the
+/// seam's own capture; that is one more reason not to read
+/// <see cref="IShellApi.GetLastError"/> after a call made here. Where a failure code is genuinely
+/// needed, capture <see cref="Marshal.GetLastPInvokeError"/> as the first statement after the call.
 /// </para>
 /// <para>
 /// <b>Consumers:</b> the host-window tests use <see cref="GetAncestor"/> with
@@ -33,20 +38,41 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// <see cref="IShellApi.GetGuiResources"/> for the R007 handle-count evidence.
 /// </para>
 /// <para>
-/// <b>The menu-anchor consumers (S03).</b>
+/// <b>The menu-anchor consumers (S03, and the S08 owner measurement).</b>
 /// <see cref="TrayMenuAnchorWindow"/> itself uses <see cref="WS_POPUP"/> for the window it creates,
-/// <see cref="SetWindowPos"/> to move that window and <see cref="SetForegroundWindow"/> to give it
-/// the activation relationship the shell routes a menu dismissal through. The dismissal proof in
-/// the test suite uses <see cref="GetWindow"/> with <see cref="GW_OWNER"/> to read what owns the
-/// popup, <see cref="GetWindowRect"/> to tell the popup from the zero-sized host and the 1x1
-/// anchor, <see cref="GetVisibleTopLevelWindowsOfProcess"/> to enumerate the process's windows,
+/// <see cref="SetWindowPos"/> to move that window and <see cref="IShellApi.SetForegroundWindow"/> -
+/// through the seam, because the refusal is what S08 has to script - to give it the activation
+/// relationship the shell routes a menu dismissal through. The dismissal proof in the test suite
+/// uses <see cref="GetWindowOwner"/> to read what owns the popup, <see cref="GetWindowRect"/> to
+/// tell the popup from the zero-sized host and the 1x1 anchor,
+/// <see cref="GetVisibleTopLevelWindowsOfProcess"/> to enumerate the process's windows,
 /// <see cref="GetForegroundWindow"/> to name the window an injected click activated when a check
 /// fails, and <see cref="WS_VISIBLE"/> plus <see cref="WS_EX_NOACTIVATE"/> as negative assertions
 /// on the anchor's style. Nothing outside those uses is declared here.
 /// </para>
+/// <para>
+/// <b>Three members are delegations to the seam rather than local declarations.</b>
+/// <see cref="GetForegroundWindow"/>, <see cref="GetWindowOwner"/> and the
+/// <c>GetWindowThreadProcessId</c> step of <see cref="GetVisibleTopLevelWindowsOfProcess"/> call
+/// <see cref="IShellApi"/> so that <see cref="ShellApi"/> is the single home of those entry points
+/// (D013's single-file rule). They stay here as the assertion helpers D013 assigns to this class,
+/// and they are the same OS calls they were before - the change is the indirection, which is what
+/// lets a test script the reading.
+/// </para>
 /// </remarks>
 internal static class Win32
 {
+    /// <summary>
+    /// The seam these test-facing helpers delegate their scriptable calls to.
+    /// </summary>
+    /// <remarks>
+    /// One stateless instance: <see cref="ShellApi"/> holds no per-instance state (its only field
+    /// is a thread-static last-error slot), so sharing one keeps the declarations in
+    /// <see cref="ShellApi"/> the only home of these entry points without making the helpers
+    /// allocate.
+    /// </remarks>
+    private static readonly ShellApi Seam = new();
+
     /// <summary>
     /// <c>GA_ROOT</c> (winuser.h): retrieve the root window of the specified window's ancestry.
     /// </summary>
@@ -63,6 +89,19 @@ internal static class Win32
 
     /// <summary><c>GWL_EXSTYLE</c> (winuser.h): the extended window style bits.</summary>
     internal const int GWL_EXSTYLE = -20;
+
+    /// <summary>
+    /// <c>GWLP_HWNDPARENT</c> (winuser.h): the window field that holds a window's <em>owner</em>
+    /// for a top-level popup.
+    /// </summary>
+    /// <remarks>
+    /// The index is negative, so it is the same numeric value on 32-bit and 64-bit Windows; only
+    /// the accessor differs (<c>SetWindowLongPtrW</c> versus <c>SetWindowLongW</c>), which
+    /// <see cref="ShellApi.SetWindowOwner"/> selects by process bitness. It is passed to
+    /// <see cref="IShellApi.SetWindowOwner"/> and is the owner slot an outside click's activation
+    /// change is routed through.
+    /// </remarks>
+    internal const int GWLP_HWNDPARENT = -8;
 
     /// <summary>
     /// <c>WS_EX_TOOLWINDOW</c> (winuser.h): the window is a tool window - it does not appear in
@@ -113,10 +152,14 @@ internal static class Win32
     internal const long WS_VISIBLE = 0x10000000L;
 
     /// <summary>
-    /// <c>GW_OWNER</c> (winuser.h): the <see cref="GetWindow"/> command that returns a window's
+    /// <c>GW_OWNER</c> (winuser.h): the <c>GetWindow</c> command that returns a window's
     /// <em>owner</em> - distinct from its parent, and the value that decides whether a menu popup
     /// participates in the activation relationship that dismisses it.
     /// </summary>
+    /// <remarks>
+    /// The numeric command is still needed where the relationship is read as an assertion, and it
+    /// is what <see cref="IShellApi.GetWindowOwner"/> is defined to ask for.
+    /// </remarks>
     internal const uint GW_OWNER = 4;
 
     /// <summary>
@@ -229,19 +272,21 @@ internal static class Win32
     internal static IntPtr GetCurrentProcess() => GetCurrentProcessNative();
 
     /// <summary>
-    /// Returns a window's owner, selected by <paramref name="uCmd"/> (normally
-    /// <see cref="GW_OWNER"/>), or <see cref="IntPtr.Zero"/> when the window has none.
+    /// Returns a window's owner (its <c>GW_OWNER</c>), or <see cref="IntPtr.Zero"/> when the window
+    /// has none.
     /// </summary>
     /// <param name="hWnd">The window handle.</param>
-    /// <param name="uCmd">The relationship to retrieve, normally <see cref="GW_OWNER"/>.</param>
-    /// <returns>The related window handle, or <see cref="IntPtr.Zero"/>.</returns>
+    /// <returns>The owner window handle, or <see cref="IntPtr.Zero"/>.</returns>
     /// <remarks>
     /// This is the measurement at the centre of R003: a menu popup with no owner never dismisses on
-    /// an outside click, so the dismissal proof reads the popup's <see cref="GW_OWNER"/> and asserts
-    /// it is the anchor window. An ownerless popup is visually indistinguishable from a correct one,
-    /// which is exactly why the value is asserted instead of the appearance.
+    /// an outside click, so the dismissal proof reads the popup's <c>GW_OWNER</c> and asserts it is
+    /// the anchor window. An ownerless popup is visually indistinguishable from a correct one, which
+    /// is exactly why the value is asserted instead of the appearance. It delegates to
+    /// <see cref="IShellApi.GetWindowOwner"/> so the entry point has one home; only the
+    /// <c>GW_OWNER</c> relationship is ever asked for, which is why the command is no longer a
+    /// parameter.
     /// </remarks>
-    internal static IntPtr GetWindow(IntPtr hWnd, uint uCmd) => GetWindowNative(hWnd, uCmd);
+    internal static IntPtr GetWindowOwner(IntPtr hWnd) => Seam.GetWindowOwner(hWnd);
 
     /// <summary>
     /// Reads a window's screen rectangle in physical pixels.
@@ -305,7 +350,7 @@ internal static class Win32
 
         EnumWindowsCallback callback = (hWnd, _) =>
         {
-            if (GetWindowThreadProcessIdNative(hWnd, out uint windowProcessId) != 0
+            if (Seam.GetWindowThreadProcessId(hWnd, out uint windowProcessId) != 0
                 && windowProcessId == processId
                 && IsWindowVisibleNative(hWnd))
             {
@@ -327,24 +372,11 @@ internal static class Win32
     /// <remarks>
     /// Diagnostics only: when an injected outside click fails to dismiss the menu, the foreground
     /// window at that moment names where the click actually landed, which is the difference between
-    /// "the popup was not dismissable" and "the click hit something that swallowed it".
+    /// "the popup was not dismissable" and "the click hit something that swallowed it". It delegates
+    /// to <see cref="IShellApi.GetForegroundWindow"/> so the entry point has one home - and so a test
+    /// that scripts the seam can make this reading deterministic.
     /// </remarks>
-    internal static IntPtr GetForegroundWindow() => GetForegroundWindowNative();
-
-    /// <summary>
-    /// Brings the given window to the foreground.
-    /// </summary>
-    /// <param name="hWnd">The window handle.</param>
-    /// <returns><see langword="true"/> when the window was made foreground.</returns>
-    /// <remarks>
-    /// <see cref="TrayMenuAnchorWindow.MakeForeground"/> wraps this, and the measured reason is
-    /// decisive: the same anchor window with the same placement target produced an <em>ownerless</em>
-    /// popup that never dismissed when this call was omitted, so the activation relationship it
-    /// establishes is load-bearing for R003 rather than etiquette. The return value is surfaced
-    /// rather than ignored because Windows may refuse the call, and a caller deciding whether the
-    /// menu can be trusted to dismiss wants to know that it did.
-    /// </remarks>
-    internal static bool SetForegroundWindow(IntPtr hWnd) => SetForegroundWindowNative(hWnd);
+    internal static IntPtr GetForegroundWindow() => Seam.GetForegroundWindow();
 
     /// <summary>
     /// Moves a window to a new position, honouring the given <c>SWP_*</c> flags.
@@ -391,22 +423,12 @@ internal static class Win32
     [DllImport("user32.dll", EntryPoint = "SendMessageW", SetLastError = true, ExactSpelling = true)]
     private static extern IntPtr SendMessageWNative(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", EntryPoint = "GetWindow", SetLastError = true, ExactSpelling = true)]
-    private static extern IntPtr GetWindowNative(IntPtr hWnd, uint uCmd);
-
     [DllImport("user32.dll", EntryPoint = "GetWindowRect", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRectNative(IntPtr hWnd, out NativeRect rectangle);
 
     [DllImport("user32.dll", EntryPoint = "GetClassNameW", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int GetClassNameNative(IntPtr hWnd, StringBuilder className, int maxCount);
-
-    [DllImport("user32.dll", EntryPoint = "GetForegroundWindow", SetLastError = true, ExactSpelling = true)]
-    private static extern IntPtr GetForegroundWindowNative();
-
-    [DllImport("user32.dll", EntryPoint = "SetForegroundWindow", SetLastError = true, ExactSpelling = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindowNative(IntPtr hWnd);
 
     [DllImport("user32.dll", EntryPoint = "SetWindowPos", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -418,9 +440,6 @@ internal static class Win32
         int width,
         int height,
         uint flags);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId", SetLastError = true, ExactSpelling = true)]
-    private static extern uint GetWindowThreadProcessIdNative(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll", EntryPoint = "EnumWindows", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

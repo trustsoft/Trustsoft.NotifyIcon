@@ -71,13 +71,32 @@ internal sealed class GdiShellApi : IShellApi
         _real.ShellNotifyIconGetRect(ref identifier, out rectangle);
 
     /// <inheritdoc />
-    /// <remarks>
-    /// Delegated to the real export: reading the pointer position touches no notification-area state
-    /// and creates no visible artifact, so delegating keeps the real call on the code path a menu
-    /// placement actually uses. No test in this class is about the cursor - the placement fallback is
-    /// scripted through <see cref="FakeShellApi"/> - so the real value is the honest default.
-    /// </remarks>
     public bool GetCursorPosition(out int x, out int y) => _real.GetCursorPosition(out x, out y);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Delegated to the real export: reading the foreground window touches no notification-area state
+    /// and creates no visible artifact. It is the real counterpart of the scripted hostile reading a
+    /// <see cref="FakeShellApi"/> provides.
+    /// </remarks>
+    public IntPtr GetForegroundWindow() => _real.GetForegroundWindow();
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Delegated to the real export: the claim is a window-manager call that registers no icon, and a
+    /// refusal is a reading rather than an error.
+    /// </remarks>
+    public bool SetForegroundWindow(IntPtr hWnd) => _real.SetForegroundWindow(hWnd);
+
+    /// <inheritdoc />
+    public IntPtr GetWindowOwner(IntPtr hWnd) => _real.GetWindowOwner(hWnd);
+
+    /// <inheritdoc />
+    public IntPtr SetWindowOwner(IntPtr hWnd, IntPtr hWndOwner) => _real.SetWindowOwner(hWnd, hWndOwner);
+
+    /// <inheritdoc />
+    public uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId) =>
+        _real.GetWindowThreadProcessId(hWnd, out processId);
 
     /// <inheritdoc />
     public IntPtr CreateIconIndirect(ref ICONINFO iconInfo)
