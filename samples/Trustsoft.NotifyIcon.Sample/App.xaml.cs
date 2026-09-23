@@ -111,6 +111,21 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// that <c>Show</c> succeeds for an identity that was never registered.
 /// </para>
 /// <para>
+/// <b>Image demonstration (S04).</b> <c>--toast-image</c> gives every show a
+/// <see cref="ToastImage"/> whose <see cref="ToastImage.Source"/> is one of this sample's frozen
+/// vector frames, so the run drives the rasterization path a unit test cannot (a
+/// <see cref="DrawingImage"/> needs a pumping dispatcher - MEM040): the library persists the frame as
+/// a PNG in its own temp folder, hands the shell an absolute <c>file:///</c> reference and deletes
+/// the file when the show is torn down. <c>--toast-image-reference &lt;uri&gt;</c> is the S02 string
+/// path, so one capture can contrast a reference the consumer wrote with one the library resolved.
+/// Every public show also reports the notification setting the platform returned for this identity,
+/// replacing its accepted wording when that setting says the toast will not be shown; every error
+/// line names the failure taxonomy class beside the code; and the run prints the library's temp
+/// folder after teardown, which is a reading this file takes rather than a claim it repeats. Passing
+/// both image switches is a usage error, and so is <c>--toast-image</c> with the
+/// <c>--toast-skip-register</c> control (the seam path never resolves a source).
+/// </para>
+/// <para>
 /// <b>Raw callback trace (S02).</b> The sample prints the shell's undecoded callback messages next
 /// to the decoded events, because the <c>NOTIFYICON_VERSION_4</c> encoding is documented but the
 /// per-interaction <em>sequence</em> is not. The instrument is a read-only <c>HwndSource</c> hook:
@@ -310,7 +325,7 @@ public partial class App : Application
     private const string SampleUsage =
         "[sample] usage: Trustsoft.NotifyIcon.Sample [--xaml] [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] "
         + "[--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]] "
-        + "[--toast] [--toast-aumid <id>] [--toast-severity Default|Reminder|Alarm|Urgent] [--toast-skip-register] [--toast-after [seconds]] [--toast-repeat [seconds]] [--toast-buttons] [--toast-dispose-after [seconds]]";
+        + "[--toast] [--toast-aumid <id>] [--toast-severity Default|Reminder|Alarm|Urgent] [--toast-skip-register] [--toast-image] [--toast-image-reference <uri>] [--toast-after [seconds]] [--toast-repeat [seconds]] [--toast-buttons] [--toast-dispose-after [seconds]]";
 
     /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>: the pseudo-handle the manifest asks for.</summary>
     /// <remarks>
@@ -509,6 +524,49 @@ public partial class App : Application
     /// delivered <c>sample-button-1</c> is <c>unknown</c>, because this run never sent it.
     /// </remarks>
     private bool _toastButtons;
+
+    /// <summary>
+    /// Whether every show in this run carries an image built from one of the sample's own frozen
+    /// vector frames (<c>--toast-image</c>), so <see cref="ToastImage.Source"/> is set and the run
+    /// drives the library's rasterize-and-persist path live.
+    /// </summary>
+    /// <remarks>
+    /// A flag rather than a value, and off by default so a plain <c>--toast</c> capture stays
+    /// comparable with the S01-S03 captures: the unit suite deliberately never rasterizes a
+    /// <see cref="DrawingImage"/> (MEM040 - it needs a pumping dispatcher), so this switch is the
+    /// only place that path is exercised end to end.
+    /// </remarks>
+    private bool _toastImage;
+
+    /// <summary>
+    /// The pre-formed image reference every show in this run carries
+    /// (<c>--toast-image-reference</c>), or <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// The S02 string path, kept beside <see cref="_toastImage"/> so one capture can contrast a
+    /// reference the consumer wrote with one the library resolved from a source. Exactly one of the
+    /// two switches may be given; the parser rejects both together.
+    /// </remarks>
+    private string? _toastImageReference;
+
+    /// <summary>Shows whose content carried an image <em>source</em>, for the totals.</summary>
+    /// <remarks>
+    /// Counted when the content is built, so the number says what this run asked the library to
+    /// resolve - not what the shell accepted. A source-bearing show that was refused still counted.
+    /// </remarks>
+    private int _toastImageShowCount;
+
+    /// <summary>
+    /// The name of the last notification setting a public show reported, for the totals line; null
+    /// until a public show has read one.
+    /// </summary>
+    /// <remarks>
+    /// Recorded from the notifier's own <see cref="ToastNotifier.NotificationSetting"/> when the
+    /// setting line is printed, so the totals report the same reading the per-show line did. It stays
+    /// null for the <c>--toast-skip-register</c> control, which shows through the seam and never
+    /// reads a setting through the notifier.
+    /// </remarks>
+    private string? _toastLastSettingName;
 
     /// <summary>
     /// Every show this run created and has not disposed; all of them are disposed at shutdown.
@@ -920,6 +978,8 @@ public partial class App : Application
         _toastIdentity = new ToastIdentity(_toastApi);
         _toastSeverity = ToToastSeverity(arguments.ToastSeverityKeyword);
         _toastButtons = arguments.ToastButtons;
+        _toastImage = arguments.ToastImage;
+        _toastImageReference = arguments.ToastImageReference;
 
         // Before the notifier exists, so the first show's registration and show steps are all captured.
         AttachLibraryInternalTraceListener();
@@ -1092,16 +1152,48 @@ public partial class App : Application
             content.Buttons.Add(new ToastButton { Text = ToastButton2Text, Arguments = ToastButton2Argument });
         }
 
+        if (_toastImage || _toastImageReference is not null)
+        {
+            // S04's image half: the same ToastImage on both paths, but the two switches reach the
+            // library through different members - a typed WPF source it must persist, or a finished
+            // reference the payload builder writes unchanged - so one capture can contrast a
+            // resolved reference with a pre-formed one.
+            var image = new ToastImage { Placement = ToastImagePlacement.AppLogoOverride };
+
+            if (_toastImage)
+            {
+                // The sample's frozen vector frame, so this run drives the rasterization path live.
+                // The unit suite deliberately never does: a DrawingImage needs a pumping dispatcher
+                // (MEM040).
+                image.Source = Frames[0];
+                _toastImageShowCount++;
+            }
+            else
+            {
+                image.Reference = _toastImageReference!;
+            }
+
+            content.Image = image;
+        }
+
         // The exact content the consumer built, before either path is chosen: this is the line the
-        // XML contract and the live run are compared through. The buttons fragment is written only when
-        // the flag was set, so a plain --toast content line stays byte-comparable with S01 and S02.
+        // XML contract and the live run are compared through. The buttons and image fragments are
+        // written only when the matching switch was set, so a plain --toast content line stays
+        // byte-comparable with S01 and S02.
         string buttonsReading = _toastButtons
             ? $" buttons=[{ToastButton1Argument},{ToastButton2Argument}]"
             : string.Empty;
 
+        string imageReading = content.Image switch
+        {
+            { Source: not null } image => $" image=source(frame=Frames[0], placement={image.Placement})",
+            { } image => $" image=reference('{image.Reference}')",
+            _ => string.Empty,
+        };
+
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"[sample] toast content: title='{content.Title}' body='{content.Body}' severity={content.Severity} launch='{content.Launch}'{buttonsReading}"));
+            $"[sample] toast content: title='{content.Title}' body='{content.Body}' severity={content.Severity} launch='{content.Launch}'{buttonsReading}{imageReading}"));
 
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
@@ -1125,15 +1217,38 @@ public partial class App : Application
                 Console.Error.WriteLine(string.Create(
                     CultureInfo.InvariantCulture,
                     $"[sample] toast show #{_toastShowCount}: REFUSED operation='{exception.Operation}' code=0x{exception.ErrorCode:X8} - the shell did not accept a toast for identity='{_toastAppUserModelId}'"));
+
+                // A refused show never reached the platform's setting step, so this reads
+                // "(not read)" rather than claiming Enabled: null means no show read a setting, which
+                // is exactly the distinction the property is nullable for.
+                ReportToastSetting(notifier.NotificationSetting);
                 Console.Out.Flush();
                 return;
             }
 
             _toastShowAcceptedCount++;
 
-            Console.WriteLine(string.Create(
-                CultureInfo.InvariantCulture,
-                $"[sample] toast show #{_toastShowCount}: the shell accepted it (ToastNotifier.Show returned; S_OK inside it is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history '{_toastAppUserModelId}'"));
+            // The platform's setting is an outcome, not a failure. On a machine whose user switched
+            // this application's notifications off, Show still returns S_OK and the failure arrives
+            // asynchronously on the notification's Failed callback (WPN_E_NOTIFICATION_DISABLED,
+            // which reaches ToastError) - so a non-Enabled value replaces the accepted wording here
+            // and the run never reads as a successful delivery. See docs/TOAST-MEASUREMENT.md.
+            ToastNotificationSetting? setting = notifier.NotificationSetting;
+
+            if (setting is null or ToastNotificationSetting.Enabled)
+            {
+                Console.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"[sample] toast show #{_toastShowCount}: the shell accepted it (ToastNotifier.Show returned; S_OK inside it is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history '{_toastAppUserModelId}'"));
+            }
+            else
+            {
+                Console.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"[sample] toast show #{_toastShowCount}: the shell accepted the show, but the documented outcome is that it will not be shown - the platform reports setting={setting} ({(int)setting.Value}) for this identity, which means the shell will not show this application's toasts; S_OK is acceptance, not visibility, and delivery is judged out of process with scripts/probe-toast --history '{_toastAppUserModelId}'"));
+            }
+
+            ReportToastSetting(setting);
 
             if (_toastShowCount == 1)
             {
@@ -1208,6 +1323,105 @@ public partial class App : Application
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"[sample] toast registration read-back (fresh shell link): success={readBack.Success} operation='{readBack.Operation}' code=0x{readBack.Code:X8} value='{readBack.AppUserModelId ?? "(null)"}' matchesExpected={matches}"));
+    }
+
+    /// <summary>
+    /// Prints the notification setting the last public show read, as the documented outcome of that
+    /// show rather than as a failure.
+    /// </summary>
+    /// <param name="setting">
+    /// The notifier's <see cref="ToastNotifier.NotificationSetting"/> after the show, or
+    /// <see langword="null"/> when no show in this run reached the platform's setting step.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>The value is the platform's, and the sample only reports it.</b> The library reads the
+    /// setting as part of the measured show sequence and publishes it as an outcome; a disabled value
+    /// is never raised on <see cref="ToastNotifier.ToastError"/> and never makes <c>Show</c> throw.
+    /// The shell's own asynchronous failure for that state still arrives on the error channel, and
+    /// the run's accepted-wording replacement is what stops a disabled run from reading as a
+    /// successful delivery in the capture.
+    /// </para>
+    /// <para>
+    /// <b>Null means "not read", never "enabled".</b> A show that failed before the setting step (a
+    /// refused registration, or an image the library could not resolve) leaves the property null, so
+    /// the line says so instead of guessing.
+    /// </para>
+    /// </remarks>
+    private void ReportToastSetting(ToastNotificationSetting? setting)
+    {
+        if (setting is null)
+        {
+            Console.WriteLine("[sample] toast setting: (not read) - no public show in this run reached the platform's setting step, so this run says nothing about whether the shell will show the toast.");
+            Console.Out.Flush();
+            return;
+        }
+
+        string meaning = setting switch
+        {
+            ToastNotificationSetting.Enabled =>
+                "the shell will show this application's toasts",
+            ToastNotificationSetting.DisabledForApplication =>
+                "the shell will not show this application's toasts, because notifications are disabled for this application",
+            ToastNotificationSetting.DisabledForUser =>
+                "the shell will not show this application's toasts, because notifications are disabled for the user",
+            ToastNotificationSetting.DisabledByGroupPolicy =>
+                "the shell will not show this application's toasts, because notifications are disabled by group policy",
+            ToastNotificationSetting.DisabledByManifest =>
+                "the shell will not show this application's toasts, because the application's manifest disables them",
+            _ => "the shell will not show this application's toasts",
+        };
+
+        // The name the totals repeat. Recorded here rather than read back from the notifier at
+        // shutdown, so the totals quote the exact reading the per-show line printed.
+        _toastLastSettingName = setting.Value.ToString();
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast setting: {setting} ({(int)setting.Value}) - {meaning}."));
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Counts the <c>toast-*.png</c> files left in the library's temp folder after teardown.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The reading the library cannot make for itself.</b> The trace says which file was created
+    /// and which file was deleted; this count is the folder's own state afterwards, taken after the
+    /// noshown shows have been disposed, so "present while live, gone after teardown" is measured
+    /// rather than inferred from the library's own lines.
+    /// </para>
+    /// <para>
+    /// <b>The count is the folder's, not this run's.</b> The folder is shared (it is fixed, and the
+    /// library deliberately never sweeps it), so a process killed before its own teardown can leave
+    /// one orphan file behind and that orphan would be counted here. A caller that wants the number
+    /// to be this run's alone starts from an empty folder - <c>run-image-demo.ps1</c> does exactly
+    /// that and says so in its output.
+    /// </para>
+    /// </remarks>
+    private void ReportToastImageTempFolder()
+    {
+        // The library's own folder constant, reached through the sample's InternalsVisibleTo grant:
+        // hard-coding the name here is what would let the two drift apart.
+        string folder = ToastImageFile.DefaultFolder;
+        int count;
+
+        try
+        {
+            count = System.IO.Directory.Exists(folder) ? System.IO.Directory.GetFiles(folder, "toast-*.png").Length : 0;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast image temp folder: '{folder}' could not be read: {exception.GetType().Name}: {exception.Message.ReplaceLineEndings(" ")}"));
+            return;
+        }
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast image temp folder: {count} file(s) after teardown (0 is the lifetime rule) - folder='{folder}'"));
     }
 
     /// <summary>
@@ -1338,7 +1552,7 @@ public partial class App : Application
 
         Console.Error.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
-            $"[sample] toast error: operation='{e.Operation}' code=0x{e.ErrorCode:X8} exception='{DescribeToastException(e.Exception)}' (non-fatal)"));
+            $"[sample] toast error: operation='{e.Operation}' code=0x{e.ErrorCode:X8} taxonomy={ToastFailureTaxonomy.NameOf(e.ErrorCode)} exception='{DescribeToastException(e.Exception)}' (non-fatal)"));
         Console.Out.Flush();
     }
 
@@ -1441,6 +1655,11 @@ public partial class App : Application
                 CultureInfo.InvariantCulture,
                 $"[sample] toast teardown: {_toastShowAcceptedCount} show(s) unsubscribed and released - no activation subscription outlives the process."));
         }
+
+        // After the disposal above, so the reading is the unwind path's result and not the show
+        // path's: the library deletes the temp file in the same single unwind path a failure and a
+        // disposal both take, and this count is what proves it did.
+        ReportToastImageTempFolder();
 
         // The post-teardown window starts here. Everything counted up to this point is pre-teardown,
         // and the remaining wall time of a --toast-dispose-after run is the silence DetachObservers
@@ -2306,6 +2525,8 @@ public partial class App : Application
         string? toastAppUserModelId = null;
         string? toastSeverityKeyword = null;
         bool toastSkipRegister = false;
+        bool toastImage = false;
+        string? toastImageReference = null;
         TimeSpan? toastAfter = null;
         TimeSpan? toastRepeat = null;
         bool toastButtons = false;
@@ -2480,6 +2701,34 @@ public partial class App : Application
                     toastSkipRegister = true;
                     break;
 
+                case "--toast-image":
+                    // A flag, like --toast-buttons: the content is the sample's own, so a '=value'
+                    // spelling would be swallowed silently.
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --toast-image.";
+                        return false;
+                    }
+
+                    toastImage = true;
+                    break;
+
+                case "--toast-image-reference":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? toastImageReferenceValue))
+                    {
+                        error = $"[sample] '{argument}' needs a reference: use --toast-image-reference <uri> or --toast-image-reference=<uri>.";
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(toastImageReferenceValue))
+                    {
+                        error = "[sample] '--toast-image-reference' needs a non-empty reference.";
+                        return false;
+                    }
+
+                    toastImageReference = toastImageReferenceValue;
+                    break;
+
                 case "--toast-buttons":
                     // A flag, like --toast and the balloon behaviour switches: the two-button content is
                     // the sample's own, so a '=value' spelling would be swallowed silently.
@@ -2556,15 +2805,33 @@ public partial class App : Application
             }
         }
 
-        // The toast switches select behaviour inside the demonstration, so one of them without
-        // --toast would be a switch that does nothing - the one failure mode this parser refuses.
-        if (!toast && (toastAppUserModelId is not null || toastSeverityKeyword is not null || toastSkipRegister || toastAfter is not null || toastRepeat is not null || toastButtons || toastDisposeAfter is not null))
+        // Two spellings of the same image: accepting both would silently pick one, which is exactly
+        // what this parser refuses to do.
+        if (toastImage && toastImageReference is not null)
         {
-            error = "[sample] --toast-aumid, --toast-severity, --toast-skip-register, --toast-after, --toast-repeat, --toast-buttons and --toast-dispose-after only apply to the toast demonstration: add --toast.";
+            error = "[sample] --toast-image and --toast-image-reference are two spellings of the same image: pass one of them, not both.";
             return false;
         }
 
-        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter, declarative, toast, toastAppUserModelId, toastSeverityKeyword ?? DefaultToastSeverityKeyword, toastSkipRegister, toastAfter, toastRepeat, toastButtons, toastDisposeAfter);
+        // An ImageSource is resolved by the notifier's per-show step, and the negative control drives
+        // the internal seam directly instead - so this combination could only ever produce a payload
+        // whose image element has an empty src. The control's verdict is the absence of an activation
+        // and an image has nothing to do with it, so a usage error is the honest answer.
+        if (toastImage && toastSkipRegister)
+        {
+            error = "[sample] --toast-image needs the public notifier (--toast-skip-register drives the internal seam, which never resolves a ToastImage.Source): use --toast-image-reference with the control, or drop --toast-skip-register.";
+            return false;
+        }
+
+        // The toast switches select behaviour inside the demonstration, so one of them without
+        // --toast would be a switch that does nothing - the one failure mode this parser refuses.
+        if (!toast && (toastAppUserModelId is not null || toastSeverityKeyword is not null || toastSkipRegister || toastImage || toastImageReference is not null || toastAfter is not null || toastRepeat is not null || toastButtons || toastDisposeAfter is not null))
+        {
+            error = "[sample] --toast-aumid, --toast-severity, --toast-skip-register, --toast-image, --toast-image-reference, --toast-after, --toast-repeat, --toast-buttons and --toast-dispose-after only apply to the toast demonstration: add --toast.";
+            return false;
+        }
+
+        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter, declarative, toast, toastAppUserModelId, toastSeverityKeyword ?? DefaultToastSeverityKeyword, toastSkipRegister, toastImage, toastImageReference, toastAfter, toastRepeat, toastButtons, toastDisposeAfter);
         return true;
     }
 
@@ -3071,7 +3338,7 @@ public partial class App : Application
             // compared with the M001-era captures that quote the totals line verbatim.
             Console.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
-                $"[sample] toast totals: shows={_toastShowCount}, accepted={_toastShowAcceptedCount}, activations={_toastActivationCount} (last arguments='{_toastLastActivationArguments ?? "(none)"}'), dismissals={_toastDismissedCount}, failures={_toastFailedCount}, errors={_toastErrorCount}, refused={_toastRefusedCount}, libraryTrace={_libraryInternalTraceLineCount}, registered={_toastRegistered}, identity='{_toastAppUserModelId}'."));
+                $"[sample] toast totals: shows={_toastShowCount}, accepted={_toastShowAcceptedCount}, activations={_toastActivationCount} (last arguments='{_toastLastActivationArguments ?? "(none)"}'), dismissals={_toastDismissedCount}, failures={_toastFailedCount}, errors={_toastErrorCount}, refused={_toastRefusedCount}, image={_toastImageShowCount}, setting={_toastLastSettingName ?? "(none)"}, libraryTrace={_libraryInternalTraceLineCount}, registered={_toastRegistered}, identity='{_toastAppUserModelId}'."));
         }
 
         // Flushed by hand rather than left to the process exit path: the whole point of the raw
@@ -3198,6 +3465,16 @@ public partial class App : Application
     /// Whether the demonstration never creates the shortcut (<c>--toast-skip-register</c>) - the
     /// negative control, which runs the same show path with an identity that was never registered.
     /// </param>
+    /// <param name="ToastImage">
+    /// Whether every show in this run carries an image whose <see cref="ToastImage.Source"/> is one of
+    /// the sample's frozen vector frames (<c>--toast-image</c>), which drives the library's
+    /// rasterize-and-persist path live. Mutually exclusive with <paramref name="ToastImageReference"/>.
+    /// </param>
+    /// <param name="ToastImageReference">
+    /// The pre-formed image reference every show in this run carries
+    /// (<c>--toast-image-reference</c>), or <see langword="null"/>. The S02 string path, kept so one
+    /// capture can contrast a reference the consumer wrote with one the library resolved.
+    /// </param>
     /// <param name="ToastAfter">
     /// The delay after which the demonstration shows its first toast, or <see langword="null"/> when
     /// <c>--toast-after</c> was not given (the first show then uses the default delay).
@@ -3229,6 +3506,8 @@ public partial class App : Application
         string? ToastAppUserModelId,
         string ToastSeverityKeyword,
         bool ToastSkipRegister,
+        bool ToastImage,
+        string? ToastImageReference,
         TimeSpan? ToastAfter,
         TimeSpan? ToastRepeat,
         bool ToastButtons,
