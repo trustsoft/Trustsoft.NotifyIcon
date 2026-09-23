@@ -503,4 +503,425 @@ control run can be judged clean or contaminated from its own capture.
 - `scripts/probe-toast/click-toast-body.ps1` - the banner body-click instrument (work-area geometry, `SendInput`, pre/post screen diff).
 - `src/Trustsoft.NotifyIcon/Properties/AssemblyInfo.cs` - the `InternalsVisibleTo("Trustsoft.NotifyIcon.Sample")` grant and its removal condition.
 
+---
 
+## S02: the toast content model and the XML payload, measured live
+
+Scope: M002/S02/T07. S02 gave the toast subsystem its public content vocabulary
+(`ToastContent`, `ToastSeverity`, `ToastSound`, `ToastButton`, `ToastImage`,
+`ToastImagePlacement`) and its exact payload: a consumer builds a `ToastContent` and shows it
+through the public `ToastNotifier.Show`, and the three fields that are *not* toast XML (`Tag`,
+`Group`, `Expiry`) are applied through the notification object's own properties instead.
+
+This section is the contract the rest of the milestone reads before building on the toast path:
+S03 (actions, events, the non-fatal error channel), S04 (images from an `ImageSource`) and S05 (the
+consumer proof). Every claim below is one of exactly three kinds, and says which one it is:
+
+1. a **byte-exact string** pinned by a test (`ToastPayloadContractTests`),
+2. an **HRESULT or line measured on this machine in this task** (quoted verbatim from the capture),
+3. a **schema/IDL reading**, named as such and not presented as a measurement.
+
+Nothing here promises a *visible* shell effect. S02's demo is "a consumer builds a toast with
+title, body and severity and shows it, and the contract tests pin the XML for every content
+shape" - that is the whole of what was shown live, and item 5 records the shell rule that stops
+"severity" from meaning "the user will notice".
+
+### 1. The exact XML, shape by shape
+
+Pinned one test per shape by `tests/Trustsoft.NotifyIcon.Tests/ToastPayloadContractTests.cs`, each
+an `Assert.Equal` on the **whole document string** - not a parsed tree, because the measured
+`IXmlDocumentIO.LoadXml` acceptance (Contract 2) is of this exact string, and a parse-and-compare
+would accept a re-serialization the shell never sees.
+
+| # | Content shape | Exact generated XML |
+| --- | --- | --- |
+| 1 | title only | `<toast><visual><binding template="ToastGeneric"><text>Title</text></binding></visual></toast>` |
+| 2 | title + body | `<toast><visual><binding template="ToastGeneric"><text>Title</text><text>Body</text></binding></visual></toast>` |
+| 3 | launch argument | `<toast launch="sample-toast-1"><visual><binding template="ToastGeneric"><text>Title</text></binding></visual></toast>` |
+| 4 | severity to scenario | `<toast scenario="reminder"><visual><binding template="ToastGeneric"><text>Title</text></binding></visual></toast>` (`reminder` / `alarm` / `urgent`, lowercase; **no attribute** for `Default`) |
+| 5 | image | `<toast><visual><binding template="ToastGeneric"><text>Title</text><image src="file:///C:/images/logo.png" placement="appLogoOverride"/></binding></visual></toast>` (and `placement="hero"`; `hint-crop="circle"` appended only when requested) |
+| 6 | silent sound | `<toast><visual><binding template="ToastGeneric"><text>Title</text></binding></visual><audio silent="true"/></toast>` |
+| 7 | action buttons | `<toast><visual><binding template="ToastGeneric"><text>Title</text></binding></visual><actions><action content="Yes" arguments="yes"/><action content="No" arguments="no"/></actions></toast>` |
+
+**The combined payload, quoted verbatim from the contract test** (content: title `Title`, body
+`Body`, launch `launch-arg`, severity `Urgent`, a hero image with the circle crop, silent sound, one
+`Ok`/`ok` button, and tag/group/expiry set):
+
+```xml
+<toast launch="launch-arg" scenario="urgent"><visual><binding template="ToastGeneric"><text>Title</text><text>Body</text><image src="file:///img.png" placement="hero" hint-crop="circle"/></binding></visual><audio silent="true"/><actions><action content="Ok" arguments="ok"/></actions></toast>
+```
+
+**Attribute order is this library's pinned choice, not a schema requirement.** XML attribute order
+carries no meaning, and the schema does not fix one; the order above - `launch` then `scenario` on
+`<toast>`, and `src`, `placement`, `hint-crop` on `<image>` (which is the schema's own *syntax*
+order for that element) - is what `ToastPayload` writes and what the tests pin. Any reordering is
+now a deliberate edit to a test rather than a silent drift.
+
+The rules that ride along with those shapes, each with its own test:
+
+- **Empty means absent.** An absent or empty body, launch argument or button list omits its element
+  or attribute entirely rather than emitting an empty one (an empty second `<text>` would render as
+  a blank line).
+- **A null title is an empty first line, never a missing element** - the binding always has a first
+  `<text>`.
+- **`Default` writes nothing**: no `scenario` attribute (there is no schema value for "default"), no
+  `<audio>` element ("default" is the absence of a request, not a request for a specific sound).
+- **Exactly one escaping path** (`EscapeText` for text nodes: `&`, `<`, `>`; `EscapeAttribute` adds
+  `"`), so a caller-supplied value can only ever produce well-formed XML.
+- **The image reference is escaped but never rewritten**: `https://example.com/a?x=1&y=2` renders as
+  `src="https://example.com/a?x=1&amp;y=2"` - the `&` is XML-escaped, and no `%3F`/`%26`
+  percent-encoding appears. The builder is not the layer that decides where the bytes live.
+
+### 2. Finding: tag, group and expiry are not toast XML at all
+
+This is S02's single biggest trap and the reason the show path grew four interop steps instead of a
+few more lines of XML.
+
+**Authority (local SDK IDL, the same source S01 used):**
+`C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\winrt\windows.ui.notifications.idl`.
+
+| Interface | Where | Member used |
+| --- | --- | --- |
+| `IToastNotification` | lines 1263-1274, **slot 7** | `put_ExpirationTime(IReference<DateTime>*)` (slot 6 is `get_Content`, slot 8 `get_ExpirationTime` - propput precedes propget) |
+| `IToastNotification2`, uuid **`9DFB9FD1-143A-490E-90BF-B9FBA7132DE7`** | lines 1276-1287, **slots 6 and 8** | `put_Tag(HSTRING)` and `put_Group(HSTRING)` (slot 7/9 are the getters, 10/11 `SuppressPopup`, not in D056) |
+
+The `<toast>` element's own schema has five attributes (`launch`, `duration`, `displayTimestamp`,
+`scenario`, `useButtonStyle`) and no place for a tag, a group or an expiry. The three fields are
+properties **of the notification object the shell is handed**, applied after
+`CreateToastNotification` and before `Show`.
+
+**Consequence, stated plainly:** a string-only design - one that builds the document and stops -
+**passes every XML test in item 1 while silently dropping three of D056's nine fields**. That is why
+`ToastPayloadContractTests` contains an explicit *absence* assertion
+(`Tag_group_and_expiry_produce_no_xml_at_all`): the document for content carrying
+`Tag="orange-tag-value"`, `Group="orange-group-value"` and `Expiry=UnixEpoch` must be
+**byte-identical** to the document for content carrying none of them. The live property probe below
+shows the same thing from the other side: its content carries all three, and the `LoadXml` line it
+produced contains only `<toast launch="s02-live-activation">`.
+
+### 3. The expiry path: the library boxes its own `IReference<DateTime>`
+
+Windows wants an `IReference<DateTime>` (a boxed `Windows.Foundation.DateTime`, i.e. a single
+`INT64` of 100 ns ticks since **1601-01-01**), and the library does not hand-roll that box:
+
+- Activation class **`Windows.Foundation.PropertyValue`**, interface `IPropertyValueStatics`, uuid
+  **`629BDBC8-D932-4FF4-96B9-8D96C5C1E858`** (`windows.foundation.idl:677-759`), **`CreateDateTime` at
+slot 21** (the 16th method from slot 6: CreateEmpty, UInt8, Int16, UInt16, Int32, UInt32, Int64,
+UInt64, Single, Double, Char16, Boolean, String, Inspectable, Guid, DateTime). Its out parameter is
+`IInspectable*`, so through the seam it is an `IntPtr`.
+- The conversion is `UniversalTime = dto.UtcTicks - 504911232000000000` (in code the constant is
+written `504_911_232_000_000_000L`; it is the 584 388 days from 0001-01-01 to 1601-01-01 in 100 ns
+ticks), measured by `ToastShow.ToWinRtUniversalTime`.
+- **The checkable value for the epoch:** `116444736000000000` is 1970-01-01T00:00:00Z in that
+  counting, and `ToastApiContractTests.ToWinRtUniversalTime_maps_the_1601_epoch_and_round_trips_a_tick`
+  pins it (`DateTimeOffset.UnixEpoch` -> `116444736000000000`), plus the tick-resolution property
+  that subtracts exactly 1 tick per tick. A wrong epoch constant would set a nonsensical expiry
+  instead of erroring, which is what makes this worth a test.
+- **Independently re-checked in this task** against the live value: the probe's expiry
+  `2031-02-03T04:05:06.0000000-05:00` is 1927875906 Unix seconds, and
+  `116444736000000000 + 1927875906 * 10^7 = 135723495060000000` - exactly the `universalTime` the
+  live run printed (item 4.2).
+- The statics factory is acquired and released **inside** `CreateDateTimePropertyValue` (an
+  implementation detail of that member, which hands out no handle of its own); the boxed property
+  value is tracked by `ToastShow` so it is released exactly once, on teardown or during the failure
+  unwinding.
+
+### 4. The live capture, verbatim
+
+Two runs carry item 4, because S02's four property steps are **conditional** (T03's decision: each
+runs only when its field is present). The *sample's* demo content is title, body, launch and
+severity - so it never touches `put_Tag`/`put_Group`/`put_ExpirationTime` and its capture cannot
+contain those lines. The second run is a live probe over content that *does* set tag, group and
+expiry; it exists precisely to measure what the sample cannot. Both runs were performed in this
+task, and both blocks below are the raw output.
+
+Reproduce with (from the repository root; the `export`s only matter because `gsd_exec`'s sandbox
+strips Windows environment variables - a normal shell already has them):
+
+```text
+export APPDATA='C:\Users\Maxim\AppData\Roaming'; export ProgramData='C:\ProgramData'
+export LOCALAPPDATA='C:\Users\Maxim\AppData\Local'; export DOTNET_CLI_HOME='C:\Users\Maxim'
+
+dotnet build Trustsoft.NotifyIcon.sln -c Release
+
+# 4.1 the S02 demo: title + body + severity through the public ToastNotifier
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe \
+    --toast --toast-after 2 --toast-severity Reminder --run-seconds 12
+
+# 4.3 windowless and alive, from a second process, while the sample runs
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/probe-toast/observe-sample.ps1 -Seconds 14
+
+# 4.2 the four non-XML steps, live (content that sets tag, group and expiry)
+dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build \
+    --filter "FullyQualifiedName~ToastApiLiveProbeTests.The_show_path_applies_tag_group_and_expiry" \
+    --logger "console;verbosity=detailed"
+
+# 4.4 the whole suite
+dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build
+```
+
+#### 4.1 The S02 demo (public `ToastNotifier`, `severity=Reminder`)
+
+The tray/balloon bootstrap lines the sample prints before the toast block are omitted here (they are
+unchanged from T05's capture); everything from the toast trace attachment to the toast totals line
+is verbatim:
+
+```text
+[sample] toast library trace: the library's own source 'Trustsoft.NotifyIcon' was raised to Verbose through the sample's InternalsVisibleTo grant, so its per-step toast lines - including the exact XML handed to LoadXml - print below as [trace] lines.
+[sample] toast demonstration: identity='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk' register=True severity=Reminder repeat=off - the shows go through the public ToastNotifier, which registers the identity on its first show; the sample's InternalsVisibleTo grant survives this slice for the fresh-link read-back, the --toast-skip-register control and the Verbose trace attachment, none of which has a public equivalent (S05's consumer proof retires it).
+[sample] toast show scheduled: first show after 2s (--toast-after); the toast's launch argument is 'sample-toast-N', so the activation a click delivers names the show it came from.
+[sample] toast content: title='Trustsoft.NotifyIcon sample toast' body='Click this banner's body: the sample prints the activation it receives.' severity=Reminder launch='sample-toast-1'
+[sample] toast show #1: asking the shell for identity='Trustsoft.NotifyIcon.Sample' launch='sample-toast-1' title='Trustsoft.NotifyIcon sample toast'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: register attempt override='(default)'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register attempt aumid='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register succeeded aumid='Trustsoft.NotifyIcon.Sample'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: registered aumid='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: show title='Trustsoft.NotifyIcon sample toast' severity=Reminder launch='sample-toast-1' aumid='Trustsoft.NotifyIcon.Sample'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: begin aumid='Trustsoft.NotifyIcon.Sample' title='Trustsoft.NotifyIcon sample toast' launch='sample-toast-1'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotificationManager -> IToastNotificationManagerStatics) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotification -> IToastNotificationFactory) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoActivateInstance(Windows.Data.Xml.Dom.XmlDocument) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: CreateToastNotifierWithId('Trustsoft.NotifyIcon.Sample') hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: GetNotifierSetting hr=0x00000000 setting=0
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: LoadXml hr=0x00000000 xml=<toast launch="sample-toast-1" scenario="reminder"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon sample toast</text><text>Click this banner's body: the sample prints the activation it receives.</text></binding></visual></toast>
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: subscribed activated=0x85B6E594F17564D0 dismissed=0x6B7C57A2213E2FE9 failed=0x47565F3B5AD41F
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+[sample] toast show #1: the shell accepted it (ToastNotifier.Show returned; S_OK inside it is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history 'Trustsoft.NotifyIcon.Sample'
+[sample] toast registration read-back (fresh shell link): success=True operation='' code=0x00000000 value='Trustsoft.NotifyIcon.Sample' matchesExpected=True
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: dispose liveShows=1 createdShortcut=True
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: dispose
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeActivated(0x85B6E594F17564D0) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeDismissed(0x6B7C57A2213E2FE9) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeFailed(0x47565F3B5AD41F) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: remove succeeded shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: remove shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk' removed=True operation='' code=0
+[sample] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+[sample] toast unregistration: Dispose removed the shortcut this run registered; read-back after dispose success=False operation='OpenShellLink' code=0x80070002 (a failure at OpenShellLink is the shortcut being gone)
+[sample] tray icon disposed - it must have left the notification area.
+[sample] totals: raw callback lines=0, pump-observed private-range messages=0, library trace lines=0, clicks=0, cancelled by a Preview handler=0, balloon show requests=0 (self=0), balloon clicked deliveries=0, balloon preview deliveries=0, menu opens=0, menu dismissals=0.
+[sample] toast totals: shows=1, accepted=1, activations=0 (last arguments='(none)'), dismissals=0, failures=0, refused=0, libraryTrace=24, registered=True, identity='Trustsoft.NotifyIcon.Sample'.
+```
+
+What this run is evidence for, and what it is not:
+
+- The **content the consumer built** (`title`, `body`, `severity=Reminder`, `launch='sample-toast-1'`)
+  is printed by the sample, and the **document the shell received** carries the same title and body
+  text and the severity's own scenario name (`scenario="reminder"`, lowercase). That is S02's stated
+  demo, measured.
+- Registration happened **inside** the first `Show` (D060: register-on-first-show) and is proven by
+  the fresh-link read-back that prints after it: `value='Trustsoft.NotifyIcon.Sample'`,
+  `matchesExpected=True`.
+- Acceptance is `Show hr=0x00000000`, which means *accepted*, not *seen* (Contract 2 / the negative
+  control). No activation and no dismissal arrived in this 12 s run, so this capture says nothing
+  about what the banner did - and is not quoted as if it did.
+- Teardown is the same story as T03/T05: `Dispose` removed the shortcut, and the read-back after
+  disposal fails at `OpenShellLink` with **`0x80070002`** (`ERROR_FILE_NOT_FOUND`), which is the
+  shortcut being gone.
+- `libraryTrace=24` and the tray totals' `library trace lines=0` in the *same* capture are the
+  measured finding F2 of `docs/UAT-S02.md`: the documented consumer spelling (attaching a listener to
+a same-named `TraceSource`) receives nothing while the library's own source sits at `Warning`; the
+  capture is only verbose because the sample reaches the library's own source through its internals
+  grant.
+
+#### 4.2 The four non-XML steps, live
+
+Run under `--filter "FullyQualifiedName~ToastApiLiveProbeTests.The_show_path_applies_tag_group_and_expiry"
+--logger "console;verbosity=detailed"` (the test is the additive S02 probe added in this task); the
+result line was `Passed! - Failed: 0, Passed: 1, Skipped: 0, Total: 1`. Content: title
+`Trustsoft.NotifyIcon S02 live probe`, body, launch `s02-live-activation`, `Tag="s02-live-tag"`,
+`Group="s02-live-group"`, `Expiry=2031-02-03T04:05:06-05:00`.
+
+```text
+[live] s02: machine=MINIBOOKX; os=Microsoft Windows NT 10.0.26200.0; shortcut=C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.S02.LiveProbe.lnk
+[live] s02: register aumid='Trustsoft.NotifyIcon.S02.LiveProbe' success=True operation='' code=0x00000000
+[live] s02: show success=True operation='' code=0x00000000 setting=0 aumid='Trustsoft.NotifyIcon.S02.LiveProbe'
+[live] s02: expiry='2031-02-03T04:05:06.0000000-05:00' expectedUniversalTime=135723495060000000
+[live] s02 trace: toast identity: register attempt aumid='Trustsoft.NotifyIcon.S02.LiveProbe' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.S02.LiveProbe.lnk'
+[live] s02 trace: toast identity: register succeeded aumid='Trustsoft.NotifyIcon.S02.LiveProbe'
+[live] s02 trace: toast show: begin aumid='Trustsoft.NotifyIcon.S02.LiveProbe' title='Trustsoft.NotifyIcon S02 live probe' launch='s02-live-activation'
+[live] s02 trace: toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+[live] s02 trace: toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotificationManager -> IToastNotificationManagerStatics) hr=0x00000000
+[live] s02 trace: toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+[live] s02 trace: toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotification -> IToastNotificationFactory) hr=0x00000000
+[live] s02 trace: toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+[live] s02 trace: toast: RoActivateInstance(Windows.Data.Xml.Dom.XmlDocument) hr=0x00000000
+[live] s02 trace: toast: CreateToastNotifierWithId('Trustsoft.NotifyIcon.S02.LiveProbe') hr=0x00000000
+[live] s02 trace: toast show: GetNotifierSetting hr=0x80070490 setting=0 (E_NOT_FOUND on first use is benign)
+[live] s02 trace: toast show: LoadXml hr=0x00000000 xml=<toast launch="s02-live-activation"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon S02 live probe</text><text>Tag, group and expiry are notification-object properties, not toast XML.</text></binding></visual></toast>
+[live] s02 trace: toast: put_Tag('s02-live-tag') hr=0x00000000
+[live] s02 trace: toast show: SetNotificationTag(put_Tag) hr=0x00000000 tag='s02-live-tag'
+[live] s02 trace: toast: put_Group('s02-live-group') hr=0x00000000
+[live] s02 trace: toast show: SetNotificationGroup(put_Group) hr=0x00000000 group='s02-live-group'
+[live] s02 trace: toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+[live] s02 trace: toast: PropertyValue.CreateDateTime(universalTime=135723495060000000) hr=0x00000000
+[live] s02 trace: toast show: CreateDateTimePropertyValue(CreateDateTime) hr=0x00000000 universalTime=135723495060000000
+[live] s02 trace: toast show: SetNotificationExpirationTime(put_ExpirationTime) hr=0x00000000 expiry='2031-02-03T04:05:06.0000000-05:00'
+[live] s02 trace: toast show: subscribed activated=0xF35AEAEC605F670E dismissed=0x25ABE972FE0174F4 failed=0x54C807F415C70C7B
+[live] s02 trace: toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+[live] s02 trace: toast show: dispose
+[live] s02 trace: toast show: UnsubscribeActivated(0xF35AEAEC605F670E) hr=0x00000000
+[live] s02 trace: toast show: UnsubscribeDismissed(0x25ABE972FE0174F4) hr=0x00000000
+[live] s02 trace: toast show: UnsubscribeFailed(0x54C807F415C70C7B) hr=0x00000000
+[live] s02: remove success=True operation='' code=0x00000000
+```
+
+Three things this capture settles that no fake can:
+
+1. **The four steps ran in the library's fixed order after `CreateToastNotification` and before the
+   subscribes**, each returning `S_OK` against the real notification object:
+   `put_Tag` (and `SetNotificationTag`) - `put_Group` (and `SetNotificationGroup`) -
+   `CreateDateTime` (and `CreateDateTimePropertyValue`) - `put_ExpirationTime`
+   (and `SetNotificationExpirationTime`). A wrong vtable slot, a wrong GUID or an unboxable
+   `IReference<DateTime>` would have surfaced here as a non-zero HRESULT.
+2. **The document really does not carry them**: the `LoadXml` line for content that sets all three
+   fields is `<toast launch="s02-live-activation">` - no tag, group or expiry. Item 2's finding,
+   measured live.
+3. **The shell accepted the boxed expiry**: `CreateDateTime(universalTime=135723495060000000)` and
+   `put_ExpirationTime` both `S_OK` for a concrete future instant (independently re-derived in
+   item 3).
+
+#### 4.3 Windowless and alive, from outside the process
+
+`scripts/probe-toast/observe-sample.ps1 -Seconds 14`, started as a **separate process** immediately
+before the 4.1 sample run:
+
+```text
+observer: start 19:01:51.996 watching process name 'Trustsoft.NotifyIcon.Sample' for 14s
+observer: t+0s pid=11376 alive=True workingSet=76MB windows=8 visible=0
+observer: t+1s pid=11376 alive=True workingSet=155MB windows=8 visible=0
+observer: t+2s pid=11376 alive=True workingSet=156MB windows=8 visible=0
+observer: t+3s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+4s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+5s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+6s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+7s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+8s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+9s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+10s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+11s pid=11376 alive=True workingSet=168MB windows=8 visible=0
+observer: t+12s pid=11376 alive=True workingSet=168MB windows=6 visible=0
+observer: t+13s no process named 'Trustsoft.NotifyIcon.Sample' is running
+observer: complete at 19:02:06.422
+```
+
+**One pid** (`11376`) for the whole lifetime, `alive=True` on every sample of the run, and
+**`visible=0`** throughout: the process that showed the toast owned 8 (later 6) top-level windows and
+not one of them was visible. The exit condition "the process stays alive with no window while it
+shows a toast" is therefore a reading taken from another process, not a claim the sample makes about
+itself - exactly as in T05.
+
+#### 4.4 The test sweep
+
+`dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build`:
+
+```text
+Passed!  - Failed:     0, Passed:   552, Skipped:     0, Total:   552, Duration: 1 m 18 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+```
+
+- **552 passed / 0 failed**, whole assembly, no filter - so the live probes
+  (`ToastApiLiveProbeTests`, `ToastIdentityLiveProbeTests`) ran live inside it, as they did in T06's
+  551.
+- The toast/pin subset (`--filter "FullyQualifiedName~Toast|FullyQualifiedName~PackagePurity"`):
+  **148 passed / 0 failed**. The complement (`--filter "FullyQualifiedName!~Toast"`, i.e. the M001
+  classes): **416 passed / 0 failed**. 148 + 416 = 564 counts the 12 `PackagePurity` tests twice,
+  which is the 552 total.
+- **No M001 regression**: the M001 suites are the 416-test complement and they are all green; the
+  only test-count change from T06's sweep is the one live probe this task added.
+- Honest note on the one intermediate failure seen in this task: the first sweep after adding the
+  probe failed `NotifyIconTraceTests.Source_is_named_and_defaults_to_warning_level`
+  (`Expected: Warning / Actual: Verbose`). It was **not** a product regression - see 4.5 - and the
+  re-run above is green.
+
+#### 4.5 Instrument gotcha this task exposed: a live probe must join the trace collection
+
+`NotifyIconTrace.Source` is process-wide and its switch level is raised to `Verbose` by the live
+probes for the duration of a show. Each probe restores the level it read at entry - so **two probes
+raising it in parallel can restore `Verbose` over each other and leave the whole run's source level
+raised**, which is exactly what `NotifyIconTraceTests` asserts against. The existing convention
+(`TraceChannelCollection`, `DisableParallelization = true`, documented in `BalloonCallbackTests`)
+is that every class which raises the level joins that collection; `ToastApiLiveProbeTests` had
+missed it. It now carries `[Collection(TraceChannelCollection.Name)]`, which serializes the live
+probes with each other and with the other switch-mutating classes - the sweep above is the proof
+that the failure is gone. **Any future live probe belongs in that collection too.**
+
+### 5. A scenario is not self-sufficient
+
+The severity-to-scenario mapping (D053) is real as an *attribute*, and S02's contract stops there.
+The toast schema says so itself (a schema reading, recorded in `.gsd/phases/02-winrt-toast-notifications/02-02-RESEARCH.md`,
+not measured here):
+
+- **`reminder` is silently ignored unless the toast carries a button action that activates in the
+  background.** S02's `<action>` elements deliberately omit `activationType`, i.e. they are
+  foreground actions (D054 scopes v1 to activation in the running application) - so a S02-era
+  `scenario="reminder"` toast gets **no reminder treatment at all**.
+- **`alarm` loops alarm audio and needs `duration`** - also not S02's to deliver.
+
+Consequences, and they bind S03-S05:
+
+- **S03-S05 must not promise a visible severity effect.** "A scenario is not self-sufficient" is the
+  sentence to carry forward: S02's contract is the attribute plus `LoadXml`'s acceptance of it,
+  which is what the 4.1 capture shows (`scenario="reminder"`, `hr=0x00000000`) and nothing more.
+- The live run is consistent with that and is not quoted as contradicting it: the reminder toast was
+  accepted, and in 12 s the process saw no activation and no dismissal (`activations=0,
+  dismissals=0`) - it never reported a banner being displayed.
+- Where a *visible* proof is wanted later, it needs the background-activation action (and, for
+  `alarm`, the duration/audio contract) that a later slice owns.
+
+### 6. The image contract handed to S04
+
+- **`file:///` is supported for desktop applications** - explicitly, per the toast image schema - and
+  that is the scheme S04 needs for a locally persisted WPF image. It is also what the 5th shape above
+  renders.
+- **The builder XML-escapes the reference and does nothing else to it**: no URL-encoding, no
+  normalisation, no rewriting (item 1's last rule, with its own test). The reference is the
+  consumer's statement of where the image is; S04 owns producing one.
+- **S02 omits the image `id` attribute.** The schema page marks `id` as required on a `ToastGeneric`
+  `<image>` while every Microsoft `ToastGeneric` example omits it, so S02 pinned a choice (no `id`)
+  rather than guess: the section-1 image shapes have no `id`, and **S04's live image run is what
+  settles it** - if the shell needs one, the fix is a one-line change to `ToastPayload` plus its two
+  exact-string tests, and this paragraph is the pointer to it.
+- `placement` is always written (`appLogoOverride` or `hero`) and `hint-crop="circle"` only when the
+  consumer asks for the crop; both are rendering hints the shell may ignore.
+
+### 7. The wording rule handed to S03
+
+**The public `Activated` event must be documented from the toast's `launch` argument, never as "the
+user clicked the body".** S01 measured that per-click attribution is not available on this machine
+(an activation can arrive while the banner is still displayed, and without any instrument this
+session injected - see T05's section above), while the launch argument is delivered verbatim and
+deterministically. So the honest wording is "the activation carried the argument of the toast it
+came from", which is also why the sample prints `launch='sample-toast-N'` beside each show and
+`last arguments='...'` in its totals line. Two related facts S03 inherits from S02: the notifier
+**registers on its first `Show`** (so `AppUserModelId` is frozen by that first show, D060), and a
+failed `Show` currently **throws** rather than reporting through an event.
+
+### 8. What S02 deliberately did not deliver
+
+| Not delivered | Why / where it lands |
+| --- | --- |
+| **No public events** - `ToastNotifier` declares no `Activated`/`Dismissed` | S03 attaches the `ToastShow` callbacks; S02's shows leave them unset |
+| **No `ToastError` channel** - a failed `Show` throws `ToastException(operation, code)` in the interim (D058) | S03 adds the non-fatal event channel; the throw is deliberate, not an oversight |
+| **No `ImageSource` support** - `ToastImage.Reference` is an already-formed reference string (D059) | S04 turns a WPF `ImageSource` into a `Reference`; S02 consumes the resolved string only |
+| **Nothing else from D056's deferred list** - no progress bar, no attribution text, no scheduled delivery, no text input | not in v1's nine fields; S02's model is exactly `Title`, `Body`, `Severity`, `Launch`, `Image`, `Buttons`, `Tag`, `Group`, `Expiry`, `Sound` |
+
+Two smaller deliberate choices worth carrying forward: `ToastSeverity`'s numeric values are the
+library's own ordinals (`Default=0, Reminder=1, Alarm=2, Urgent=3`), **not** `ToastScenario`'s numbers
+(there is no numeric wire identity to preserve - the payload renders lower-case scenario *names*),
+and `ToastContent.Buttons` is a get-only pre-initialized `IList<ToastButton>`, so "never null" is a
+property of the type.
+
+### Files added or changed by S02
+
+- `src/Trustsoft.NotifyIcon/ToastContent.cs`, `ToastSeverity.cs`, `ToastSound.cs`, `ToastButton.cs`, `ToastImage.cs`, `ToastImagePlacement.cs` - the public content vocabulary (T01).
+- `src/Trustsoft.NotifyIcon/Interop/ToastPayload.cs` - the payload builder over `ToastContent`, one escaping path (T02).
+- `src/Trustsoft.NotifyIcon/Interop/IToastApi.cs`, `ToastApi.cs`, `ShortcutLink.cs` - the four non-XML steps and their raw-vtable implementations (T03).
+- `src/Trustsoft.NotifyIcon/ToastNotifier.cs`, `ToastException.cs` - the public show surface and the failure type (T05).
+- `samples/Trustsoft.NotifyIcon.Sample/App.xaml.cs`, `src/Trustsoft.NotifyIcon/Properties/AssemblyInfo.cs` - the sample's `--toast-severity` run on the public notifier and the internals-grant comment (T06).
+- `tests/Trustsoft.NotifyIcon.Tests/ToastPayloadContractTests.cs`, `ToastNotificationPropertyTests.cs`, `ToastContentTests.cs`, `ToastNotifierTests.cs`, `FakeToastApiTests.cs`, `PackagePurityTests.cs` - the exact-XML contract, the property-step order/arguments/failure-unwinding contract, the model's dumb-data-shape pins, the notifier's behaviour, and the widened surface pins.
+- `tests/Trustsoft.NotifyIcon.Tests/ToastApiContractTests.cs` - this task's additive live probe
+  (`The_show_path_applies_tag_group_and_expiry_to_the_real_notification_object`) and the
+  `[Collection(TraceChannelCollection.Name)]` under which the live probes now run (item 4.5).
+- `docs/TOAST-MEASUREMENT.md` - this section.

@@ -610,11 +610,23 @@ public sealed class ToastApiContractTests
 /// that the callback did <em>not</em> fire - the honest reading - rather than waiting for a click
 /// that cannot arrive.
 /// </para>
+/// <para>
+/// <b>Non-parallel, for the same reason the click tests are.</b> Every probe raises the
+/// process-wide trace level to Verbose to capture its raw HRESULT lines, and restores it from the
+/// value it read at entry - so two probes running at once could restore Verbose over each other
+/// and leave the whole run's source level raised, which is exactly what
+/// <c>NotifyIconTraceTests.Source_is_named_and_defaults_to_warning_level</c> asserts against.
+/// Joining the trace collection also matches the convention <c>BalloonCallbackTests</c> records.
+/// </para>
 /// </remarks>
+[Collection(TraceChannelCollection.Name)]
 public sealed class ToastApiLiveProbeTests
 {
     /// <summary>A throwaway identity for the probe; never a real application's id.</summary>
     private const string ProbeAppUserModelId = "Trustsoft.NotifyIcon.T04.LiveProbe";
+
+    /// <summary>A second throwaway identity, used by the S02 tag/group/expiry probe.</summary>
+    private const string PropertyProbeAppUserModelId = "Trustsoft.NotifyIcon.S02.LiveProbe";
 
     /// <summary>
     /// Registers a throwaway identity, hands a real toast to the shell through the library's own
@@ -699,6 +711,102 @@ public sealed class ToastApiLiveProbeTests
 
             ToastIdentityResult remove = identity.Remove(shortcutPath);
             Console.WriteLine($"[live] t04: remove success={remove.Success} operation='{remove.Operation}' code=0x{remove.Code:X8}");
+        }
+    }
+
+    /// <summary>
+    /// The live re-measurement of the three fields that are not toast XML: S02's tag, group and
+    /// expiry are applied through the notification object's own properties rather than rendered
+    /// into the document, and this run records the shell's own HRESULT for each of the four steps
+    /// (<c>put_Tag</c>, <c>put_Group</c>, <c>PropertyValue.CreateDateTime</c>,
+    /// <c>put_ExpirationTime</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A string-only payload passes every XML assertion while silently dropping all three fields,
+    /// and a mocked <c>S_OK</c> proves only what the library intended to call - so the evidence
+    /// that the shell accepts an HSTRING tag, an HSTRING group and a boxed
+    /// <c>IReference&lt;DateTime&gt;</c> is this run and nothing else. S02's sample does not carry
+    /// these fields (it builds title, body, launch and severity), which is exactly why the probe
+    /// exists: the four steps are conditional, so they can only be measured over content that sets
+    /// them. The raw lines are quoted in <c>docs/TOAST-MEASUREMENT.md</c> (S02 section).
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void The_show_path_applies_tag_group_and_expiry_to_the_real_notification_object()
+    {
+        var capturedTrace = new List<string>();
+        var listener = new CapturingTraceListener(capturedTrace);
+        TraceSource source = NotifyIconTrace.Source;
+        SourceLevels previousLevel = source.Switch.Level;
+
+        var identity = new ToastIdentity(new ShortcutLink());
+        string shortcutPath = ToastIdentity.DefaultShortcutPath(PropertyProbeAppUserModelId);
+        var expiry = new DateTimeOffset(2031, 2, 3, 4, 5, 6, TimeSpan.FromHours(-5));
+        long expectedUniversalTime = ToastShow.ToWinRtUniversalTime(expiry);
+
+        source.Listeners.Add(listener);
+        source.Switch.Level = SourceLevels.Verbose;
+
+        try
+        {
+            Console.WriteLine($"[live] s02: machine={Environment.MachineName}; os={Environment.OSVersion.VersionString}; shortcut={shortcutPath}");
+
+            ToastIdentityResult register = identity.Register(PropertyProbeAppUserModelId, shortcutPath);
+            Console.WriteLine($"[live] s02: register aumid='{PropertyProbeAppUserModelId}' success={register.Success} operation='{register.Operation}' code=0x{register.Code:X8}");
+            Assert.True(register.Success, $"registration failed: {register.Operation} 0x{register.Code:X8}");
+
+            var payload = new ToastPayload(new ToastContent
+            {
+                Title = "Trustsoft.NotifyIcon S02 live probe",
+                Body = "Tag, group and expiry are notification-object properties, not toast XML.",
+                Launch = "s02-live-activation",
+                Tag = "s02-live-tag",
+                Group = "s02-live-group",
+                Expiry = expiry,
+            });
+
+            var show = new ToastShow(new ToastApi(), payload);
+
+            ToastShowResult result = show.Show(PropertyProbeAppUserModelId);
+            bool shown = show.IsShown;
+
+            show.Dispose();
+
+            Console.WriteLine($"[live] s02: show success={result.Success} operation='{result.Operation}' code=0x{result.Code:X8} setting={result.NotificationSetting} aumid='{result.AppUserModelId}'");
+            Console.WriteLine($"[live] s02: expiry='{expiry:O}' expectedUniversalTime={expectedUniversalTime}");
+
+            foreach (string line in capturedTrace)
+            {
+                Console.WriteLine($"[live] s02 trace: {line}");
+            }
+
+            Assert.True(result.Success, $"the show path failed at {result.Operation} 0x{result.Code:X8}");
+            Assert.True(shown, "a successful Show must leave the notification live until disposal");
+
+            // Each of the four non-XML steps really ran against the real notification object and
+            // the shell accepted it: the step's own trace line, carrying its HRESULT as S_OK.
+            Assert.Contains(capturedTrace, line =>
+                line.Contains("put_Tag('s02-live-tag')", StringComparison.Ordinal)
+                && line.Contains("hr=0x00000000", StringComparison.Ordinal));
+            Assert.Contains(capturedTrace, line =>
+                line.Contains("put_Group('s02-live-group')", StringComparison.Ordinal)
+                && line.Contains("hr=0x00000000", StringComparison.Ordinal));
+            Assert.Contains(capturedTrace, line =>
+                line.Contains("CreateDateTime(universalTime=" + expectedUniversalTime + ")", StringComparison.Ordinal)
+                && line.Contains("hr=0x00000000", StringComparison.Ordinal));
+            Assert.Contains(capturedTrace, line =>
+                line.Contains("SetNotificationExpirationTime(put_ExpirationTime)", StringComparison.Ordinal)
+                && line.Contains("hr=0x00000000", StringComparison.Ordinal));
+        }
+        finally
+        {
+            source.Switch.Level = previousLevel;
+            source.Listeners.Remove(listener);
+            listener.Dispose();
+
+            ToastIdentityResult remove = identity.Remove(shortcutPath);
+            Console.WriteLine($"[live] s02: remove success={remove.Success} operation='{remove.Operation}' code=0x{remove.Code:X8}");
         }
     }
 
