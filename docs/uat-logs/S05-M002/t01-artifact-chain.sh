@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
-# S05/T01 - the packed-artifact chain on the current tree, and the stale-surface baseline.
+# S05/T01 - the packed-artifact chain on the current tree, and the consumer's surface assertion.
 #
 # Why this script exists. The S05 research measured that this worktree has never run the chain S05
 # rests on: `artifacts/` is absent, `samples/consumer-proof/bin` is absent, so nothing has ever gone
 # `dotnet pack` -> package inspector -> a restore that can only have come from the local folder feed
 # -> the consumer's own `--surface-only` assertion here. Three later tasks (T03, T04, T06) stand on
-# that chain and on knowing the baseline it produces, and T03 exists because the consumer proof's
-# surface list is stale against the M002 package. This task measures the chain and records the
-# baseline; it changes no file under src/, tests/, samples/, scripts/ or README.md.
+# that chain. T01 was written while the consumer proof's surface list was still the stale M001
+# seven-type one, so it recorded that red baseline; T03 widened the list to the twenty documented
+# types, so this script now asserts the delivered shape (exit 0 plus the twenty-type PASS line) and
+# keeps the measured red reading as text in section 8. It changes no file under src/, tests/,
+# samples/, scripts/ or README.md.
 #
 # What it does, in order: builds the toast instrument first (a re-materialised worktree has no
 # `scripts/probe-toast/bin`, and a later `--no-build` run would then read as "nothing happened"),
@@ -21,13 +23,15 @@
 # and builds the consumer once per target framework, and finally runs the consumer's own
 # `--surface-only` assertion once per framework.
 #
-# The last step is recorded as a BASELINE, not as a failure: `samples/consumer-proof/App.xaml.cs`
-# still lists the seven M001 tray types while the M002 package exports twenty, so every reading is
-# expected to print `[consumer] FAIL the package surface is not the documented one` naming the
-# unexpected `Trustsoft.NotifyIcon.Toast*` types and to exit 3 (SurfaceMismatchExitCode). That red
-# reading is the stale consumer proof T03 fixes. It is asserted in its expected shape rather than
-# ignored, because a reading of any other shape would mean the plan's premise is wrong, not that the
-# surface is fine.
+# The last step is a shape check on the consumer's own assertion, not a verdict on the surface
+# itself: per framework the `--surface-only` run must exit 0 with the line `[consumer] PASS the package
+# surfaces exactly the 20 documented public types`. Any other shape is the unexpected one and is named
+# - including exit 3 with `[consumer] FAIL the package surface is not the documented one`, which is
+# what a regression of the consumer-side allow-list back to the stale M001 seven-type list would
+# produce - because a reading of any other shape means the consumer proof and the packed package
+# disagree. T01 originally asserted the opposite shape: `samples/consumer-proof/App.xaml.cs` then still
+# listed the seven M001 tray types against the M002 package's twenty, so every reading was red on
+# purpose (7 expected / 20 observed, exit 3). That measured baseline is kept as text in section 8.
 #
 # The environment precondition, measured here rather than assumed. The S07/T03 script's control
 # shape - a fresh global-packages folder with the consumer's own feed-only nuget.config - used to
@@ -51,7 +55,7 @@
 # exit, an inspector verdict other than "all ... assertions hold", a precondition failure that names
 # the library, a failed repair, a non-zero consumer restore or build, a control A that did not
 # succeed or did not install the library from a source, a control B that did not fail or did not
-# name the library, or a baseline reading whose shape is not the predicted one.
+# name the library, or a surface-only reading whose shape is not the delivered one.
 #
 # The shell environment is repaired first, in the shape S07/T03 uses: this sandbox strips the Windows
 # known-folder variables, and with that environment the SDK fails inside NuGet's restore-graph
@@ -150,12 +154,12 @@ CONTROL_B_NAMES_PLATFORM=0
 RESTORE_EXIT=0
 BUILD_FAILURES=0
 BUILD_SUMMARY=""
-BASELINE_AS_PREDICTED=0
-BASELINE_UNEXPECTED=0
+SURFACE_AS_DELIVERED=0
+SURFACE_UNEXPECTED=0
 FINAL_EXIT=0
 
 {
-  echo "# S05/T01 raw evidence: the packed-artifact chain, and the stale-surface baseline"
+  echo "# S05/T01 raw evidence: the packed-artifact chain, and the consumer's surface assertion"
   echo "date: $(date -Is)"
   echo "machine: ${COMPUTERNAME:-$(hostname)} / $(uname -s)"
   echo "worktree: $(pwd)"
@@ -171,8 +175,10 @@ FINAL_EXIT=0
   echo "  from Trustsoft.NotifyIcon.sln and carries its own empty Directory.Build.props, so it inherits"
   echo "  neither a project reference nor a build setting of the repository that produced the package."
   echo
-  echo "  This task measures that chain and records the baseline it produces. It edits nothing under"
-  echo "  src/, tests/, samples/, scripts/ or README.md."
+  echo "  This script measures that chain: it packs the library, inspects the artifact, proves the feed"
+  echo "  is the only supplier of the package, builds the consumer on three frameworks and re-reads the"
+  echo "  consumer's own surface assertion. It edits nothing under src/, tests/, samples/, scripts/ or"
+  echo "  README.md."
   echo
   echo "## 1. the toast instrument, built first"
   echo "   A re-materialised worktree has no scripts/probe-toast/bin (bin is gitignored), and the later"
@@ -438,12 +444,19 @@ EOF
   echo "   the package is back in artifacts/: $(ls artifacts/Trustsoft.NotifyIcon.*.nupkg 2>/dev/null || echo '<absent>')"
   echo
   echo "## 8. the consumer's own package-surface assertion, once per framework"
-  echo "   This is the BASELINE. samples/consumer-proof/App.xaml.cs still lists the seven M001 tray"
-  echo "   types; the M002 package exports twenty. Each reading below is therefore expected to print the"
-  echo "   surface FAIL line naming the unexpected Trustsoft.NotifyIcon.Toast* types and to exit 3"
-  echo "   (SurfaceMismatchExitCode). That is the stale consumer proof T03 fixes - the script does not"
-  echo "   fail on the mismatch itself. It does fail when a reading has any other shape, because that"
-  echo "   would mean something other than the predicted stale surface is happening."
+  echo "   Delivered shape, and the one asserted below: each --surface-only run exits 0 and prints the"
+  echo "   line 'PASS the package surfaces exactly the 20 documented public types'. A reading of any other"
+  echo "   shape is the unexpected one and is named - including exit 3 with the stale-surface FAIL line,"
+  echo "   which is what a regression of the consumer-side allow-list back to the seven M001 tray types"
+  echo "   would produce."
+  echo "   Historical baseline, kept here as text rather than only in one run's log (this log is a run"
+  echo "   output and is rewritten by every run): on the tree T01 measured, samples/consumer-proof/"
+  echo "   App.xaml.cs still listed the seven M001 tray types against the M002 package's twenty, so every"
+  echo "   reading printed '[consumer] FAIL the package surface is not the documented one: 7 expected, 20"
+  echo "   observed' naming the thirteen unexpected Trustsoft.NotifyIcon.Toast* types and exited 3"
+  echo "   (SurfaceMismatchExitCode). T03 widened that list to the twenty documented types. The measured"
+  echo "   red reading is recorded in docs/TOAST-MEASUREMENT.md, S05 item 2 ('The stale baseline T01"
+  echo "   measured, and the fix'), beside the green reading that replaced it."
   for tfm in "${TFMS[@]}"; do
     exe="samples/consumer-proof/bin/Release/$tfm/ConsumerProof.exe"
     surface_log="$SCRATCH/surface-$tfm.txt"
@@ -451,26 +464,26 @@ EOF
     echo "\$ $exe --surface-only"
     if [ ! -f "$exe" ]; then
       echo "  the consumer executable is absent, so this reading does not exist"
-      echo "  BASELINE UNEXPECTED: $tfm produced no reading at all"
-      BASELINE_UNEXPECTED=$((BASELINE_UNEXPECTED + 1))
+      echo "  SURFACE UNEXPECTED: $tfm produced no reading at all"
+      SURFACE_UNEXPECTED=$((SURFACE_UNEXPECTED + 1))
       continue
     fi
     "$exe" --surface-only > "$surface_log" 2>&1
     surface_exit=$?
     sed 's/^/  /' "$surface_log"
     echo "  reading: surface-only $tfm exit=$surface_exit"
-    if [ "$surface_exit" = 3 ] \
-      && grep -q "FAIL the package surface is not the documented one" "$surface_log" \
-      && grep -q "Trustsoft\.NotifyIcon\.Toast" "$surface_log"; then
-      echo "  BASELINE (expected to be red until T03): $tfm exits 3 with the FAIL line naming the"
-      echo "  unexpected Trustsoft.NotifyIcon.Toast* types"
-      echo "  offending types named by this reading:"
-      grep -o "unexpected=\[[^]]*\]" "$surface_log" | sed 's/^/    /'
-      BASELINE_AS_PREDICTED=$((BASELINE_AS_PREDICTED + 1))
+    if [ "$surface_exit" = 0 ] \
+      && grep -q "PASS the package surfaces exactly the 20 documented public types" "$surface_log"; then
+      echo "  SURFACE AS DELIVERED: $tfm exits 0 with the twenty-type PASS line"
+      grep -o "public surface: [0-9]* exported type(s)" "$surface_log" | sed 's/^/    /'
+      SURFACE_AS_DELIVERED=$((SURFACE_AS_DELIVERED + 1))
     else
-      echo "  BASELINE UNEXPECTED: the plan predicts exit 3 with a FAIL line naming"
-      echo "  Trustsoft.NotifyIcon.Toast*; this run exited $surface_exit"
-      BASELINE_UNEXPECTED=$((BASELINE_UNEXPECTED + 1))
+      echo "  SURFACE UNEXPECTED: the delivered consumer proof exits $surface_exit, and the delivered shape"
+      echo "  is exit 0 with 'PASS the package surfaces exactly the 20 documented public types'. A stale"
+      echo "  consumer-side allow-list or an absent executable lands here and is named:"
+      grep -o "expected, [0-9]* observed" "$surface_log" | sed 's/^/    /'
+      grep -o "unexpected=\[[^]]*\]" "$surface_log" | sed 's/^/    /'
+      SURFACE_UNEXPECTED=$((SURFACE_UNEXPECTED + 1))
     fi
   done
   echo
@@ -487,7 +500,7 @@ EOF
   echo "  control A exit=$CONTROL_A_EXIT (0 required); library installed from a source=$CONTROL_A_LIBRARY (1 required)"
   echo "  control B exit=$CONTROL_B_EXIT (non-zero required); names the library=$CONTROL_B_NAMES_LIBRARY (1 required); names a framework pack=$CONTROL_B_NAMES_PLATFORM (0 required)"
   echo "  consumer restore exit=$RESTORE_EXIT (0 required); consumer builds: $BUILD_SUMMARY (0 each required)"
-  echo "  baseline readings as predicted=$BASELINE_AS_PREDICTED of ${#TFMS[@]}; unexpected=$BASELINE_UNEXPECTED (0 required)"
+  echo "  surface-only readings as delivered=$SURFACE_AS_DELIVERED of ${#TFMS[@]}; unexpected=$SURFACE_UNEXPECTED (0 required)"
 
   verdict_failures=0
 
@@ -540,10 +553,10 @@ EOF
     verdict_failures=$((verdict_failures + 1))
   fi
 
-  if [ "$BASELINE_UNEXPECTED" != 0 ]; then
-    echo "  FAIL $BASELINE_UNEXPECTED baseline reading(s) did not have the predicted shape (exit 3 plus the"
-    echo "       Trustsoft.NotifyIcon.Toast* FAIL line), so this is not the stale consumer proof the plan"
-    echo "       expects and the slice's premise needs re-checking"
+  if [ "$SURFACE_UNEXPECTED" != 0 ]; then
+    echo "  FAIL $SURFACE_UNEXPECTED surface-only reading(s) did not have the delivered shape (exit 0 plus"
+    echo "       the 'PASS the package surfaces exactly the 20 documented public types' line), so the"
+    echo "       consumer proof and the packed package disagree and the surface needs re-checking"
     verdict_failures=$((verdict_failures + 1))
   fi
 
@@ -564,14 +577,18 @@ EOF
     echo "      (exit=$CONTROL_A_EXIT, library present=$CONTROL_A_LIBRARY) and control B could not find it with"
     echo "      the feed emptied and nuget.org present (exit=$CONTROL_B_EXIT, library named=$CONTROL_B_NAMES_LIBRARY)"
     echo "    - the consumer restored and built on all three frameworks feed-only ($BUILD_SUMMARY)"
-    echo "    - all $BASELINE_AS_PREDICTED baseline --surface-only readings are red as predicted: exit 3 and a"
-    echo "      FAIL line naming the unexpected Trustsoft.NotifyIcon.Toast* types, which is the stale"
-    echo "      consumer-side allow-list T03 replaces with the twenty documented types"
-    echo "  The baseline is a reading, not a defect of this task: the consumer proof asserts against its own"
-    echo "  source-side list, and that list is what T03 widens."
-    echo "  Two things this task did NOT measure, and does not claim: whether a toast is shown or clicked"
-    echo "  (the consumer has no toast path yet - T03 adds it) and anything about the packaged XML"
-    echo "  documentation's exported surface (the inspector's artifact-side rule is T04's work)."
+    echo "    - all $SURFACE_AS_DELIVERED surface-only readings have the delivered shape: exit 0 and the"
+    echo "      PASS line naming the twenty documented public types, which is the consumer-side allow-list"
+    echo "      T03 widened from the seven M001 tray types"
+    echo "  The historical red baseline - exit 3 with 'FAIL the package surface is not the documented one:"
+    echo "  7 expected, 20 observed' - is quoted in section 8 as the record of what T03 fixed; it is the"
+    echo "  measurement that the consumer-side assertion is a real assertion and not a tautology."
+    echo "  This script runs the consumer with --surface-only, so it measures the surface and not the toast"
+    echo "  path: the toast proof (two action buttons, the typed activation, dismissal and error events, the"
+    echo "  platform's setting outcome and a measured 0/0/0 post-teardown window) is"
+    echo "  docs/uat-logs/S05-M002/t06-consumer-proof.sh, one framework per run. The packaged XML"
+    echo "  documentation's exported surface IS measured here, in section 3 (the inspector's artifact-side"
+    echo "  rule, T04)."
     FINAL_EXIT=0
   fi
 } > "$LOG" 2>&1
