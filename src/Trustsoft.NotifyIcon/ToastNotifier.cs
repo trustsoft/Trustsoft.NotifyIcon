@@ -29,13 +29,17 @@ namespace Trustsoft.NotifyIcon;
 /// is removed by <see cref="Dispose"/>, so a disposed notifier leaves nothing registered.
 /// </para>
 /// <para>
-/// <b>Failure is a named exception (D055/D058).</b> A registration or show failure throws
-/// <see cref="ToastException"/> carrying the failing operation and the code that call reported - see
-/// the exception's own documentation for the interim semantics before the non-fatal error event
-/// exists. Caller errors are reported as the framework's own argument exceptions, because they are
-/// not interop failures: a <see langword="null"/> content throws <see cref="ArgumentNullException"/>
-/// and a title that is empty or whitespace throws <see cref="ArgumentException"/> naming
-/// <c>content</c>.
+/// <b>The failure split (D055/D061).</b> Registration and startup failures throw: a notifier that
+/// cannot establish the identity it shows through throws <see cref="ToastException"/> from
+/// <see cref="Show"/> carrying the failing operation and the code that call reported, because an
+/// unpackaged process has no other way to learn that nothing will be delivered. A failure the show
+/// path reports after a successful registration is non-fatal instead: it is published through
+/// <see cref="ToastError"/> plus one Error-level line on the library's trace channel and
+/// <see cref="Show"/> returns normally, so a toast Windows could not deliver never terminates a
+/// windowless host. Caller errors are reported as the framework's own argument exceptions, because
+/// they are not interop failures: a <see langword="null"/> content throws
+/// <see cref="ArgumentNullException"/> and a title that is empty or whitespace throws
+/// <see cref="ArgumentException"/> naming <c>content</c>.
 /// </para>
 /// <para>
 /// <b>Not thread-safe, and it follows the thread that first shows.</b> The Windows toast stack is
@@ -215,14 +219,23 @@ public sealed class ToastNotifier : IDisposable
     /// <see cref="ToastContent.Title"/> is empty or whitespace - a toast with no visible text would
     /// be an empty banner - or the content is otherwise unusable.
     /// </exception>
-    /// <exception cref="ToastException">The identity could not be registered, or the show failed.</exception>
+    /// <exception cref="ToastException">The identity could not be registered.</exception>
     /// <exception cref="ObjectDisposedException">The notifier has been disposed.</exception>
     /// <remarks>
+    /// <para>
     /// <b>Order matters and is the contract.</b> The content is validated first (a caller error must
     /// not touch the shell), then a disposed notifier is refused, then - only on the first call - the
     /// identity is registered, then one show is built and added to the live list <em>before</em> it
     /// runs, then it is shown. Adding the show before running it means a <see cref="Dispose"/> that
-    /// races the show, or a show that throws, still has something to unwind.
+    /// races the show, or a show that fails, still has something to unwind.
+    /// </para>
+    /// <para>
+    /// <b>A failed show does not throw (D055/D061).</b> Once the identity is registered, a show-path
+    /// failure is reported through <see cref="ToastError"/> - with the failing operation and the code
+    /// that call reported - and one Error-level line on the trace channel, and the method returns
+    /// normally. The failed show has already unwound its own subscriptions and handles by then, so
+    /// the notifier is unaffected and a later <see cref="Show"/> is a fresh attempt.
+    /// </para>
     /// </remarks>
     public void Show(ToastContent content)
     {
@@ -264,11 +277,14 @@ public sealed class ToastNotifier : IDisposable
         if (!result.Success)
         {
             // The failed show has already unwound its own handles; drop it from the live list and
-            // release it, then report the failure as a named exception.
+            // release it, then report the failure through the non-fatal channel: one Error-level
+            // trace line plus the ToastError event (the split D055 fixed and D061 replaced D058's
+            // interim throw with). Nothing is thrown here: a toast that could not be delivered must
+            // not terminate a windowless host.
             _liveShows.Remove(show);
             show.Dispose();
 
-            throw new ToastException(result.Operation, result.Code);
+            RaiseError(result.Operation, result.Code, exception: null);
         }
     }
 

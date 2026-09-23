@@ -393,17 +393,21 @@ internal sealed class ToastApi : IToastApi
     public int Show(IntPtr notifier, IntPtr notification) =>
         Vtable<ShowFn>(notifier, NotifierShowSlot)(notifier, notification);
 
+    // The event names below are the operation names a handler-failure trace line carries: they are
+    // the WinRT event the callback arrived on, not a library operation constant, because the failure
+    // is the consumer handler's and happens after the toast was accepted.
+
     /// <inheritdoc />
     public int SubscribeActivated(IntPtr notification, ToastActivatedHandler handler, out long token) =>
-        Subscribe(notification, ToastAddActivatedSlot, (_, args) => handler(ReadActivatedArguments(args)), out token);
+        Subscribe(notification, ToastAddActivatedSlot, "Activated", (_, args) => handler(ReadActivatedArguments(args)), out token);
 
     /// <inheritdoc />
     public int SubscribeDismissed(IntPtr notification, ToastDismissedHandler handler, out long token) =>
-        Subscribe(notification, ToastAddDismissedSlot, (_, args) => handler(ReadDismissedReason(args)), out token);
+        Subscribe(notification, ToastAddDismissedSlot, "Dismissed", (_, args) => handler(ReadDismissedReason(args)), out token);
 
     /// <inheritdoc />
     public int SubscribeFailed(IntPtr notification, ToastFailedHandler handler, out long token) =>
-        Subscribe(notification, ToastAddFailedSlot, (_, args) => handler(ReadFailedErrorCode(args)), out token);
+        Subscribe(notification, ToastAddFailedSlot, "Failed", (_, args) => handler(ReadFailedErrorCode(args)), out token);
 
     /// <inheritdoc />
     public int UnsubscribeActivated(IntPtr notification, long token) => Unsubscribe(notification, ToastRemoveActivatedSlot, token);
@@ -425,14 +429,15 @@ internal sealed class ToastApi : IToastApi
     /// </summary>
     /// <param name="notification">The notification whose event is subscribed.</param>
     /// <param name="slot">The <c>add_</c> vtable slot.</param>
+    /// <param name="eventName">The WinRT event's name, carried into a handler-failure trace line.</param>
     /// <param name="onInvoke">The callback the wrapper invokes with the raw sender and argument pointers.</param>
     /// <param name="token">Receives the event registration token.</param>
     /// <returns>The raw <c>HRESULT</c> of <c>add_</c>.</returns>
-    private int Subscribe(IntPtr notification, int slot, Action<IntPtr, IntPtr> onInvoke, out long token)
+    private int Subscribe(IntPtr notification, int slot, string eventName, Action<IntPtr, IntPtr> onInvoke, out long token)
     {
         token = 0;
 
-        var wrapper = new TypedEventHandler(onInvoke);
+        var wrapper = new TypedEventHandler(eventName, onInvoke);
         IntPtr pointer = Marshal.GetComInterfaceForObject(wrapper, typeof(ITypedEventHandler));
 
         int hr = Vtable<AddEventFn>(notification, slot)(notification, pointer, out EventRegistrationToken registration);
@@ -655,16 +660,26 @@ internal sealed class ToastApi : IToastApi
     /// <remarks>
     /// <c>Invoke</c> lands at vtable slot 6 (<c>IUnknown</c> 3 + <c>IInspectable</c> 3) and
     /// <see cref="IAgileObject"/> makes the wrapper callable from the shell's thread - the shape
-    /// the M002/S01 probe measured live. A callback that throws is caught and traced: an exception
-    /// crossing back into the shell's callback would be an unhandled exception in a thread Windows
-    /// owns, and D055's posture is that a runtime toast failure is reported, never fatal.
+    /// the M002/S01 probe measured live. A callback that throws is caught and reported as one
+    /// Error-level line on the library's trace channel (the source's default Warning level emits it
+    /// with no configuration), naming the event it arrived on: an exception crossing back into the
+    /// shell's callback would be an unhandled exception in a thread Windows owns, and D055's posture
+    /// is that a runtime toast failure is reported, never fatal. This catch is the backstop for the
+    /// callback path itself - the notifier already catches a consumer handler's exception in
+    /// <c>RaiseSafely</c> before it can reach here - and it deliberately does not raise
+    /// <c>ToastError</c>: the failure is the handler's, not the toast's delivery.
     /// </remarks>
     [ComVisible(true)]
     private sealed class TypedEventHandler : ITypedEventHandler, IAgileObject
     {
+        private readonly string _eventName;
         private readonly Action<IntPtr, IntPtr> _onInvoke;
 
-        internal TypedEventHandler(Action<IntPtr, IntPtr> onInvoke) => _onInvoke = onInvoke;
+        internal TypedEventHandler(string eventName, Action<IntPtr, IntPtr> onInvoke)
+        {
+            _eventName = eventName;
+            _onInvoke = onInvoke;
+        }
 
         public int GetIids(out uint count, out IntPtr iids)
         {
@@ -693,7 +708,7 @@ internal sealed class ToastApi : IToastApi
             }
             catch (Exception exception)
             {
-                NotifyIconTrace.Verbose($"toast: a toast event handler threw {exception.GetType().FullName}: {exception.Message}");
+                NotifyIconTrace.ToastError(_eventName, 0, exception);
             }
 
             return 0;

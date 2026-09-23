@@ -12,8 +12,9 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// Contract tests for <see cref="ToastNotifier"/> and <see cref="ToastException"/>, the public toast
 /// surface M002/S02/T05 adds. They prove the things a live machine cannot: that the identity is
 /// registered once, with the commit before the save and the read-back checked, before the first show;
-/// that a registration or show failure becomes a named <see cref="ToastException"/> and not a silent
-/// drop; that a caller error touches the shell not at all; that each <see cref="ToastNotifier.Show"/>
+/// that a registration failure becomes a named <see cref="ToastException"/> and not a silent
+/// drop, while a show-path failure is reported through <see cref="ToastNotifier.ToastError"/> and
+/// never throws; that a caller error touches the shell not at all; that each <see cref="ToastNotifier.Show"/>
 /// creates an independent show; and that <see cref="ToastNotifier.Dispose"/> leaves neither a
 /// subscription nor a shortcut behind.
 /// </summary>
@@ -322,21 +323,36 @@ public sealed class ToastNotifierTests
     }
 
     /// <summary>
-    /// A failed show unwinds its own subscription and handles, is reported as a
-    /// <see cref="ToastException"/> naming the failing seam member, and does not poison the
-    /// notifier: a later show succeeds with a fresh show object.
+    /// A failed show unwinds its own subscriptions and handles and is reported through the non-fatal
+    /// <see cref="ToastNotifier.ToastError"/> channel with the failing seam member as the operation -
+    /// without throwing, which is the split D055 fixes and D061 substituted for D058's interim throw -
+    /// and it does not poison the notifier: a later show succeeds with a fresh show object.
     /// </summary>
     [Fact]
-    public void A_show_failure_throws_the_show_operation_unwinds_and_leaves_the_notifier_usable()
+    public void A_show_failure_raises_ToastError_without_throwing_unwinds_and_leaves_the_notifier_usable()
     {
         var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
         fake.FailNext(ToastOperation.Show);
         using var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
 
-        ToastException error = Assert.Throws<ToastException>(() => notifier.Show(Content()));
+        List<ToastErrorEventArgs> errors = [];
+        notifier.ToastError += (_, e) => errors.Add(e);
+
+        // The runtime failure must not throw: a toast that could not be delivered is reported, not
+        // fatal (D055/D061). Statement body on purpose - Record.Exception's overloads are ambiguous
+        // for an expression lambda whose value could be ignored.
+        Exception? thrown = Record.Exception(() => { notifier.Show(Content()); });
+
+        Assert.Null(thrown);
+
+        ToastErrorEventArgs error = Assert.Single(errors);
 
         Assert.Equal(nameof(IToastApi.Show), error.Operation);
         Assert.Equal(fake.FailureHResult, error.ErrorCode);
+
+        // A show-path failure is a returned code, so there is no exception behind it - the same
+        // shape the shell's asynchronous failure reports.
+        Assert.Null(error.Exception);
 
         // The failed show removed its three subscriptions and released its five handles
         // (statics, factory, document, notifier, notification); the three write-path handles and the

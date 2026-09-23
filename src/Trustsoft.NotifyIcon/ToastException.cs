@@ -25,12 +25,14 @@ namespace Trustsoft.NotifyIcon;
 /// </para>
 /// <para>
 /// <b>The D055 posture: startup and registration failures throw; runtime failures do not.</b>
-/// A notifier that cannot establish the identity it shows through throws from
+/// A notifier that cannot establish the identity it shows through throws this exception from
 /// <see cref="ToastNotifier.Show"/> rather than silently dropping the toast, because an unpackaged
 /// process has no other way to learn that nothing will be delivered. A failure that happens while
-/// an already registered notifier is showing a toast will be surfaced through the non-fatal
-/// <c>ToastError</c> event and the trace channel once that event exists (S03); until then this type
-/// is also the runtime report, so a caller always learns that Windows did not confirm delivery.
+/// an already registered notifier is showing a toast is reported through the non-fatal
+/// <c>ToastError</c> event and one Error-level line on the trace channel instead, so the caller
+/// still learns that Windows did not confirm delivery - without a throw from
+/// <see cref="ToastNotifier.Show"/>. This type is therefore the startup and registration report;
+/// <c>ToastError</c> is the runtime one (D055, as replaced by D061).
 /// </para>
 /// <para>
 /// <b><see cref="ErrorCode"/> of <c>0</c> is not success.</b> <c>0</c> means no code describes the

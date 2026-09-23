@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Xml.Linq;
@@ -8,10 +9,12 @@ using Xunit;
 namespace Trustsoft.NotifyIcon.Tests;
 
 /// <summary>
-/// Contract tests for the public activation surface M002/S03/T01 adds: the three typed events on
+/// Contract tests for the public activation surface M002/S03 adds: the three typed events on
 /// <see cref="ToastNotifier"/> and the four types that carry them
 /// (<see cref="ToastActivatedEventArgs"/>, <see cref="ToastDismissedEventArgs"/>,
-/// <see cref="ToastDismissalReason"/>, <see cref="ToastErrorEventArgs"/>).
+/// <see cref="ToastDismissalReason"/>, <see cref="ToastErrorEventArgs"/>), plus the failure split
+/// (D055/D061) that sends a show-path failure through the event and the Error-level trace line
+/// instead of a throw.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,7 +30,13 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// touched, which the platform does not report (see the wording rule on
 /// <see cref="ToastNotifier"/>).
 /// </para>
+/// <para>
+/// The failure-split tests read the shared trace source, so this class joins
+/// <c>TraceChannelCollection</c>: a test that asserts an exact line count cannot overlap with another
+/// class' writer on the same process-wide source.
+/// </para>
 /// </remarks>
+[Collection(TraceChannelCollection.Name)]
 public sealed class ToastEventTests
 {
     /// <summary>The override id every test registers with, chosen so it cannot be the derived default.</summary>
@@ -228,6 +237,162 @@ public sealed class ToastEventTests
     }
 
     /// <summary>
+    /// A failure the show path reports after a successful registration is non-fatal (D055/D061): it
+    /// raises <see cref="ToastNotifier.ToastError"/> once with the failing seam member as the
+    /// operation, writes exactly one Error-level line on the trace channel carrying the pinned event
+    /// id, and <c>Show</c> returns normally instead of throwing.
+    /// </summary>
+    [Fact]
+    public void A_show_path_failure_raises_ToastError_and_writes_one_Error_line_without_throwing()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
+        fake.FailNext(ToastOperation.Show);
+        using var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        List<ToastErrorEventArgs> errors = [];
+        notifier.ToastError += (_, e) => errors.Add(e);
+
+        var recorder = new RecordingTraceListener();
+        TraceSource source = NotifyIconTrace.Source;
+
+        try
+        {
+            source.Listeners.Add(recorder);
+
+            // The runtime failure is reported, not fatal: no exception may leave Show (D055/D061).
+            // Statement body on purpose - Record.Exception's overloads are ambiguous for an
+            // expression lambda whose value could be ignored.
+            Exception? thrown = Record.Exception(() => { notifier.Show(Content()); });
+
+            Assert.Null(thrown);
+        }
+        finally
+        {
+            source.Listeners.Remove(recorder);
+        }
+
+        ToastErrorEventArgs error = Assert.Single(errors);
+
+        Assert.Equal(nameof(IToastApi.Show), error.Operation);
+        Assert.Equal(FakeToastApi.DefaultFailureHResult, error.ErrorCode);
+        Assert.Null(error.Exception);
+
+        // Exactly one line, at Error severity, with the toast-failure event id - a listener at the
+        // source's default Warning level sees it without configuration, unlike the Verbose steps.
+        (TraceEventType eventType, int eventId, string? message) = Assert.Single(recorder.Events);
+
+        Assert.Equal(TraceEventType.Error, eventType);
+        Assert.Equal(NotifyIconTrace.ToastErrorEventId, eventId);
+        Assert.NotNull(message);
+        Assert.Contains(
+            $"Toast {nameof(IToastApi.Show)} failed (code {FakeToastApi.DefaultFailureHResult}, 0x{FakeToastApi.DefaultFailureHResult:X8}).",
+            message,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other half of the split D061 fixes: a registration failure still throws
+    /// <see cref="ToastException"/> from <c>Show</c> and raises no <see cref="ToastNotifier.ToastError"/>
+    /// - a notifier that cannot establish its identity has no non-fatal way to say so.
+    /// </summary>
+    [Fact]
+    public void A_registration_failure_still_throws_and_raises_no_ToastError()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
+        fake.FailNext(ToastOperation.SaveShortcut);
+        using var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        List<ToastErrorEventArgs> errors = [];
+        notifier.ToastError += (_, e) => errors.Add(e);
+
+        ToastException error = Assert.Throws<ToastException>(() => notifier.Show(Content()));
+
+        Assert.Equal(nameof(IToastApi.SaveShortcut), error.Operation);
+        Assert.Equal(fake.FailureHResult, error.ErrorCode);
+        Assert.Empty(errors);
+    }
+
+    /// <summary>
+    /// A consumer handler that throws is the consumer's bug, not a delivery failure: it is caught,
+    /// written as exactly one Error-level line naming the event it arrived on, never published as
+    /// <see cref="ToastNotifier.ToastError"/>, and never crosses back into the callback path.
+    /// </summary>
+    [Fact]
+    public void A_throwing_consumer_handler_is_traced_at_Error_level_and_raises_no_ToastError()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
+        using var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        notifier.Show(Content());
+
+        List<ToastErrorEventArgs> errors = [];
+        notifier.ToastError += (_, e) => errors.Add(e);
+        notifier.Activated += (_, _) => throw new InvalidOperationException("consumer bug in Activated");
+
+        var recorder = new RecordingTraceListener();
+        TraceSource source = NotifyIconTrace.Source;
+
+        try
+        {
+            source.Listeners.Add(recorder);
+
+            // No Assert.Throws: the assertion is that control returns here at all.
+            Assert.Null(Record.Exception(() => { fake.RaiseActivated("sample-button-1"); }));
+        }
+        finally
+        {
+            source.Listeners.Remove(recorder);
+        }
+
+        // The toast was delivered; it is the handler that failed, so the failure is not reported as
+        // a ToastError - it is the consumer's own bug.
+        Assert.Empty(errors);
+
+        (TraceEventType eventType, int eventId, string? message) = Assert.Single(recorder.Events);
+
+        Assert.Equal(TraceEventType.Error, eventType);
+        Assert.Equal(NotifyIconTrace.ToastErrorEventId, eventId);
+        Assert.NotNull(message);
+        Assert.Contains(
+            $"Toast {nameof(ToastNotifier.Activated)} failed (code 0, 0x00000000).",
+            message,
+            StringComparison.Ordinal);
+        Assert.Contains("InvalidOperationException", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A healthy show emits nothing at Error level: the trace channel stays failure-only (MEM026),
+    /// so a consumer who subscribes the documented source is never woken by ordinary traffic. The
+    /// show path's own step lines are Verbose and are filtered by the source's default Warning level.
+    /// </summary>
+    [Fact]
+    public void A_healthy_show_writes_no_Error_level_line()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
+        using var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        var recorder = new RecordingTraceListener();
+        TraceSource source = NotifyIconTrace.Source;
+
+        try
+        {
+            source.Listeners.Add(recorder);
+
+            notifier.Show(Content());
+
+            // Delivery traffic is not a failure: an activation and a dismissal must stay silent too.
+            Assert.True(fake.RaiseActivated("sample-button-1"));
+            Assert.True(fake.RaiseDismissed((int)ToastDismissalReason.UserCanceled));
+        }
+        finally
+        {
+            source.Listeners.Remove(recorder);
+        }
+
+        Assert.Empty(recorder.Events);
+    }
+
+    /// <summary>
     /// The dismissal vocabulary carries the platform's own ordinals, and
     /// <see cref="ToastDismissalReason.Unknown"/> is the seam's sentinel at <c>-1</c> - never a
     /// platform value.
@@ -330,4 +495,36 @@ public sealed class ToastEventTests
         Severity = ToastSeverity.Reminder,
         Launch = launch,
     };
+
+    /// <summary>
+    /// Captures the structured trace events the shared source emits, so severity and event id can be
+    /// asserted instead of inferred from formatted text. The same shape
+    /// <see cref="NotifyIconTraceTests"/> uses for the tray writer.
+    /// </summary>
+    private sealed class RecordingTraceListener : TraceListener
+    {
+        /// <summary>Gets the sequence of trace events this listener has received.</summary>
+        internal List<(TraceEventType EventType, int EventId, string? Message)> Events { get; } = [];
+
+        /// <inheritdoc />
+        public override void Write(string? message)
+        {
+        }
+
+        /// <inheritdoc />
+        public override void WriteLine(string? message)
+        {
+        }
+
+        /// <inheritdoc />
+        public override void TraceEvent(
+            TraceEventCache? eventCache,
+            string source,
+            TraceEventType eventType,
+            int id,
+            string? message)
+        {
+            Events.Add((eventType, id, message));
+        }
+    }
 }
