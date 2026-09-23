@@ -663,8 +663,10 @@ public sealed class ToastApiContractTests
     }
 
     /// <summary>
-    /// Builds the payload of <see cref="Payload"/> with a resolved temp file attached, the shape the
-    /// notifier hands the show when the content carried a <see cref="ToastImage.Source"/>.
+    /// Builds the payload of <see cref="Payload"/> with a resolved temp file attached - the shape the
+    /// notifier hands the show when the content carried a <see cref="ToastImage.Source"/>, except that
+    /// the owner is adopted from the path rather than handed in: either way the payload carries a
+    /// <see cref="ToastImageFile"/>, and the show deletes through it.
     /// </summary>
     /// <param name="path">The file the payload's resolved reference names.</param>
     /// <returns>The payload.</returns>

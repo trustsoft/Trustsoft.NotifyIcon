@@ -14,9 +14,9 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// The per-show half of the S04 image contract, over the recording seam and with no shell: the
 /// notifier resolves <see cref="ToastImage.Source"/> into <see cref="ToastImageFile"/>, the payload
 /// the show hands the shell names that resolved <c>file:///</c> reference, the show owns the temp
-/// file from <c>Show</c> to teardown and deletes it in its single unwind path - on disposal, on a
-/// failed show and never twice - and a source that cannot be encoded is a named, file-free failure
-/// that never reaches the seam.
+/// file from <c>Show</c> to teardown and deletes it in its single unwind path through the owner the
+/// payload carries - on disposal, on a failed show and never twice - and a source that cannot be
+/// encoded is a named, file-free failure that never reaches the seam.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -156,6 +156,87 @@ public sealed class ToastImageResolutionTests
                     .Skip(showStart + ShowHalfSequence.Length + UnsubscribeSequence.Length)
                     .Take(HandleReturningOperations)
                     .ToArray());
+        }
+        finally
+        {
+            notifier.Dispose();
+            RemoveTempFiles(before);
+        }
+    }
+
+    /// <summary>
+    /// The same <see cref="ToastContent"/> instance can be shown twice: each show resolves a file of
+    /// its own, both exist while both shows are live, and neither the content nor its
+    /// <see cref="ToastImage"/> is written back to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The must-have's "never mutates ToastContent or ToastImage - the same content object can be
+    /// shown twice" was a static reading of <c>ToastNotifier.ResolveImage</c>; here it is measured.
+    /// The two resolved paths must differ (a GUID name per show is the collision story: sharing one
+    /// file would let the first teardown delete the second show's image), the content's own
+    /// <see cref="ToastImage.Reference"/> and the very <see cref="ImageSource"/> instance must survive
+    /// both shows unchanged, and disposal must remove both files.
+    /// </para>
+    /// <para>
+    /// The two shows render one <c>file:///</c> reference each - not the reference the content
+    /// carries - which is what proves the resolution reached the payload rather than the content.
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void The_same_content_shown_twice_resolves_two_files_and_leaves_the_content_untouched()
+    {
+        var fake = RegisteredFake();
+        var notifier = new ToastNotifier(fake) { AppUserModelId = AppUserModelId };
+        string[] before = TempFiles();
+
+        try
+        {
+            BitmapSource source = CreateSolid(4, 12, 34, 56, 200);
+            var content = new ToastContent
+            {
+                Title = "shown twice",
+                Image = new ToastImage
+                {
+                    Reference = "https://example.com/ignored.png",
+                    Source = source,
+                },
+            };
+
+            notifier.Show(content);
+            notifier.Show(content);
+
+            string first = ResolvedReferenceOf(fake, index: 0);
+            string second = ResolvedReferenceOf(fake, index: 1);
+
+            Assert.StartsWith("file:///", first, StringComparison.Ordinal);
+            Assert.StartsWith("file:///", second, StringComparison.Ordinal);
+            Assert.NotEqual(first, second);
+
+            string firstPath = new Uri(first).LocalPath;
+            string secondPath = new Uri(second).LocalPath;
+
+            Assert.NotEqual(firstPath, secondPath);
+            Assert.True(File.Exists(firstPath), "the first show's file must exist while its show is live");
+            Assert.True(File.Exists(secondPath), "the second show's file must exist while its show is live");
+
+            // Exactly the two files the two references named, and no third file from a re-resolution.
+            Assert.Equal(
+                new[] { firstPath, secondPath }.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
+                TempFiles().Except(before).OrderBy(path => path, StringComparer.Ordinal).ToArray());
+
+            // Nothing was written back: the content still carries what the consumer set, and each show
+            // rendered its own resolved reference instead of the content's own.
+            Assert.DoesNotContain("example.com", XmlOf(fake, 0), StringComparison.Ordinal);
+            Assert.DoesNotContain("example.com", XmlOf(fake, 1), StringComparison.Ordinal);
+            Assert.Equal("https://example.com/ignored.png", content.Image.Reference);
+            Assert.Same(source, content.Image.Source);
+
+            notifier.Dispose();
+
+            Assert.False(File.Exists(firstPath), "disposal must delete the first show's file");
+            Assert.False(File.Exists(secondPath), "disposal must delete the second show's file");
+            Assert.Empty(TempFiles().Except(before));
         }
         finally
         {
@@ -342,10 +423,11 @@ public sealed class ToastImageResolutionTests
     /// shell, so the reference under test is the one the shell actually received.
     /// </summary>
     /// <param name="fake">The recording fake.</param>
+    /// <param name="index">Which <c>LoadXml</c> call to read; the default is the first.</param>
     /// <returns>The reference string from the payload's image element.</returns>
-    private static string ResolvedReferenceOf(FakeToastApi fake)
+    private static string ResolvedReferenceOf(FakeToastApi fake, int index = 0)
     {
-        string xml = XmlOf(fake);
+        string xml = XmlOf(fake, index);
         int start = xml.IndexOf("src=\"", StringComparison.Ordinal) + "src=\"".Length;
         int end = xml.IndexOf('"', start);
 

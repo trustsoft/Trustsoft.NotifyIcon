@@ -976,14 +976,23 @@ internal sealed class ToastShow : IDisposable
     private readonly ToastPayload _payload;
 
     /// <summary>
-    /// The absolute path of the temp file the payload's resolved image reference names, or
+    /// The owner of the temp file the payload's resolved image reference names, or
     /// <see langword="null"/> when this show persisted nothing.
     /// </summary>
     /// <remarks>
-    /// Cleared as soon as it has been deleted, so the single unwind path removes the file exactly
-    /// once even when <see cref="Fail"/> has already unwound and <see cref="Dispose"/> runs after it.
+    /// <para>
+    /// The owner object, not the path: the file's lifetime is owned by one object, so the delete goes
+    /// through <see cref="ToastImageFile.Delete"/> and the show never deletes a bare string. The
+    /// payload supplies the owner for every shape that names a file - the notifier's resolution
+    /// result, or a path the payload adopted (see <see cref="ToastImageFile.Adopt"/>) - so there is
+    /// exactly one delete path.
+    /// </para>
+    /// <para>
+    /// Cleared as soon as it has been used, so the single unwind path removes the file exactly once
+    /// even when <see cref="Fail"/> has already unwound and <see cref="Dispose"/> runs after it.
+    /// </para>
     /// </remarks>
-    private string? _imageFilePath;
+    private ToastImageFile? _imageFile;
 
     private IntPtr _statics;
     private IntPtr _factory;
@@ -1029,7 +1038,7 @@ internal sealed class ToastShow : IDisposable
     {
         _api = api ?? throw new ArgumentNullException(nameof(api));
         _payload = payload ?? throw new ArgumentNullException(nameof(payload));
-        _imageFilePath = _payload.ImageFilePath;
+        _imageFile = payload.ImageFile;
     }
 
     /// <summary>
@@ -1332,39 +1341,31 @@ internal sealed class ToastShow : IDisposable
     /// and the recording fake for no gain.
     /// </para>
     /// <para>
-    /// <b>Exactly once, after the unsubscribes and the releases.</b> The field is cleared before the
-    /// delete runs, so a <see cref="Dispose"/> that follows a <see cref="Fail"/> finds nothing left to
-    /// remove and no second delete is attempted. A delete that fails - the shell may still hold the
-    /// file while it renders - is traced and swallowed: the toast is already being torn down, and a
-    /// leftover file is the same end state as a process killed before teardown, which the class
-    /// documents as a limitation rather than a new failure.
+    /// <b>Exactly once, through the owner, after the unsubscribes and the releases.</b> The delete goes
+    /// through <see cref="ToastImageFile.Delete"/> - the object the notifier passed in with the
+    /// resolved reference, which also owns a path the payload only knew by path (the payload adopts
+    /// it) - so the show has one delete path and never deletes a bare string. The field is cleared
+    /// before the delete runs, so a <see cref="Dispose"/> that follows a <see cref="Fail"/> finds
+    /// nothing left to remove and no second delete is attempted. A delete that fails - the shell may
+    /// still hold the file while it renders - is traced and swallowed: the toast is already being torn
+    /// down, and a leftover file is the same end state as a process killed before teardown, which the
+    /// class documents as a limitation rather than a new failure.
     /// </para>
     /// </remarks>
     private void DeleteImageFile()
     {
-        if (_imageFilePath is not { } path)
+        if (_imageFile is not { } owner)
         {
             return;
         }
 
-        _imageFilePath = null;
+        _imageFile = null;
 
-        bool existed = File.Exists(path);
+        bool existed = File.Exists(owner.Path);
 
-        try
-        {
-            File.Delete(path);
-        }
-        catch (IOException)
-        {
-            // Best effort: see the remarks on this method.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Best effort: see the remarks on this method.
-        }
+        owner.Delete();
 
-        NotifyIconTrace.Verbose($"toast show: delete image file='{path}' existed={existed}");
+        NotifyIconTrace.Verbose($"toast show: delete image file='{owner.Path}' existed={existed}");
     }
 
     /// <summary>Traces the failure, unwinds the handles acquired so far and returns the failure as data.</summary>

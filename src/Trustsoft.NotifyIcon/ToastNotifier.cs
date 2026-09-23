@@ -317,7 +317,14 @@ public sealed class ToastNotifier : IDisposable
 
         ToastImageFile? imageFile = ResolveImage(content);
 
-        var show = new ToastShow(_api, new ToastPayload(content, imageFile?.Reference, imageFile?.Path));
+        // The payload carries the owner the resolution created - not just its path - so the show deletes
+        // through the object that wrote the file and this library has one delete path. A content with no
+        // image still builds the content-only payload the exact-string contract tests pin.
+        ToastPayload payload = imageFile is null
+            ? new ToastPayload(content)
+            : ToastPayload.Resolved(content, imageFile.Reference, imageFile);
+
+        var show = new ToastShow(_api, payload);
 
         _liveShows.Add(show);
 

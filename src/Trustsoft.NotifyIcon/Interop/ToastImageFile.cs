@@ -8,7 +8,7 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// <summary>
 /// One image the toast path needs on disk: a WPF <see cref="ImageSource"/> persisted as a PNG in
 /// the library's own temp folder, together with the absolute <c>file:///</c> reference handed to
-/// the shell and the ownership of the file that was written.
+/// the shell and the ownership of the file behind it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,11 +25,17 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// URL-encodes an attribute value, so the malformed URI would reach the shell unchanged.
 /// </para>
 /// <para>
-/// <b>Ownership is explicit and short-lived.</b> The file belongs to the caller from the moment
-/// <see cref="Create(ImageSource)"/> returns until <see cref="Delete"/> is called, which is the one
-/// unwind path of the show that resolved it. The directory is fixed and documented
-/// (<see cref="DefaultFolder"/>) rather than a cache: a process killed before its teardown can
-/// leave one orphan file in it, which is a documented limitation instead of a background sweeper.
+/// <b>Ownership is explicit, short-lived, and there is exactly one delete path.</b> The file belongs
+/// to the object <see cref="Create(ImageSource)"/> returns, from the moment it returns until
+/// <see cref="Delete"/> is called. That object travels with the resolved reference into the payload
+/// (<c>ToastPayload.ImageFile</c>), and <c>ToastShow</c> calls <see cref="Delete"/> from its single
+/// unwind path - the path a disposal and a failed show both take - so the object that wrote the file
+/// is the object that removes it, exactly once. A payload built from a path alone (the
+/// resolved-reference constructor the exact-string contract tests use) adopts its file through
+/// <see cref="Adopt"/>, so that shape ends in the same single delete rather than in a second delete of
+/// its own. The directory is fixed and documented (<see cref="DefaultFolder"/>) rather than a cache:
+/// a process killed before its teardown can leave one orphan file in it, which is a documented
+/// limitation instead of a background sweeper.
 /// </para>
 /// <para>
 /// <b>Everything is translated.</b> A source that cannot be read, encoded or written - including a
@@ -125,10 +131,16 @@ internal sealed class ToastImageFile
     /// </value>
     internal string Reference { get; }
 
-    /// <summary>Gets the image width in pixels, as written to the PNG.</summary>
+    /// <summary>
+    /// Gets the image width in pixels the encoder wrote, or <c>0</c> for a file
+    /// <see cref="Adopt"/> took over without measuring it.
+    /// </summary>
     internal int PixelWidth { get; }
 
-    /// <summary>Gets the image height in pixels, as written to the PNG.</summary>
+    /// <summary>
+    /// Gets the image height in pixels the encoder wrote, or <c>0</c> for a file
+    /// <see cref="Adopt"/> took over without measuring it.
+    /// </summary>
     internal int PixelHeight { get; }
 
     /// <summary>
@@ -161,10 +173,57 @@ internal sealed class ToastImageFile
     /// The source could not be read, encoded or written. <see cref="ToastException.Operation"/> is
     /// <see cref="OperationImageResolution"/>, and no file is left behind.
     /// </exception>
-    internal static ToastImageFile Create(ImageSource source, string folder)
+    internal static ToastImageFile Create(ImageSource source, string folder) => Create(source, folder, WritePng);
+
+    /// <summary>
+    /// Persists <paramref name="source"/> through <paramref name="encode" /> - the seam the cleanup
+    /// guard's <see cref="ToastException"/> branch is proven with - and returns the object that owns
+    /// the file.
+    /// </summary>
+    /// <param name="source">The image to persist; must not be <see langword="null"/>.</param>
+    /// <param name="folder">The absolute folder to write into.</param>
+    /// <param name="encode">
+    /// The encode step: it receives the source and the absolute path to write and returns the pixel
+    /// extent to report, exactly as <see cref="WritePng"/> does. Production code always passes
+    /// <see cref="WritePng"/>, through the overload above.
+    /// </param>
+    /// <returns>An owner exposing the path, the <c>file:///</c> reference and the pixel extent.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="source"/> or <paramref name="encode"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException"><paramref name="folder"/> is null or empty.</exception>
+    /// <exception cref="ToastException">
+    /// The source could not be read, encoded or written, or a helper raised the library's own failure
+    /// type. The file is removed in either case; the exception is the translated
+    /// <see cref="OperationImageResolution"/> failure for an internal failure of any other type, and
+    /// the helper's own unchanged <see cref="ToastException"/> when it already spoke that language.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the seam exists.</b> The guard below must remove a half-written file for every exception
+    /// type, including a <see cref="ToastException"/> an internal helper raised - which is cleaned up
+    /// and rethrown unchanged rather than translated a second time. No source, and no double of one,
+    /// can make the real encode step throw this library's own type: <see cref="ToastException"/> is
+    /// sealed, and <see cref="HiconFactory.GetBgraPixels"/> turns everything it catches into a
+    /// <see cref="TrayIconException"/> that this class then translates. The seam is therefore the only
+    /// way to reach that branch, and it exists for
+    /// <c>ToastImageFileTests.A_toast_exception_from_the_encode_step_is_cleaned_up_and_rethrown_unchanged</c>.
+    /// </para>
+    /// <para>
+    /// <b>The guard runs once, for whichever step failed.</b> Creating the folder and running the encode
+    /// step share one <c>try</c>, so a failure after the file was opened but before the encoder committed
+    /// (a disk-full <see cref="IOException"/>, an encoder refusal) cannot leave the partial file in the
+    /// library's folder.
+    /// </para>
+    /// </remarks>
+    internal static ToastImageFile Create(
+        ImageSource source,
+        string folder,
+        Func<ImageSource, string, (int PixelWidth, int PixelHeight)> encode)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrEmpty(folder);
+        ArgumentNullException.ThrowIfNull(encode);
 
         // The random name is the whole collision story: two shows resolving the same content at the
         // same time (or the same content shown twice) must not share a file, because one show's
@@ -176,11 +235,20 @@ internal sealed class ToastImageFile
         {
             Directory.CreateDirectory(folder);
 
-            (int pixelWidth, int pixelHeight) = WritePng(source, path);
+            (int pixelWidth, int pixelHeight) = encode(source, path);
 
             return new ToastImageFile(path, pixelWidth, pixelHeight);
         }
-        catch (Exception ex) when (ex is not ToastException)
+        catch (ToastException)
+        {
+            // A helper already spoke the library's own failure language: its operation, code and detail
+            // are the report, so the file is removed and the exception rethrown unchanged rather than
+            // translated into a second ToastException that would lose the original.
+            DeleteFileIfPresent(path);
+
+            throw;
+        }
+        catch (Exception ex)
         {
             // The one unwind path for a failed resolution. A run that fails after the file was
             // opened but before the encoder committed (a disk-full IOException, an encoder refusal)
@@ -200,14 +268,57 @@ internal sealed class ToastImageFile
     }
 
     /// <summary>
-    /// Deletes the file this object owns.
+    /// Takes ownership of a toast image file that already exists at <paramref name="path"/>, without
+    /// measuring it.
+    /// </summary>
+    /// <param name="path">The absolute path of the file to own; it is not checked for existence.</param>
+    /// <returns>An owner whose <see cref="Delete"/> removes the file at <paramref name="path"/>.</returns>
+    /// <exception cref="ArgumentException"><paramref name="path"/> is null or empty.</exception>
+    /// <exception cref="UriFormatException"><paramref name="path"/> is not an absolute path.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this exists.</b> <see cref="Create(ImageSource)"/> is the only method here that writes a
+    /// file, but a payload can also be built from a path alone (the resolved-reference constructor).
+    /// Wrapping that path in an owner keeps one delete path: every payload that names a file carries
+    /// the owner the show deletes through, so the show never deletes a bare string.
+    /// </para>
+    /// <para>
+    /// <b>The extent reads <c>0</c>, because nothing measured this file.</b>
+    /// <see cref="PixelWidth"/> and <see cref="PixelHeight"/> are the encoder's own readings from
+    /// <see cref="Create(ImageSource)"/> - the notifier's resolution trace line is their only reader -
+    /// and an adopted file was written by someone else, so there is no reading to report: <c>0</c>
+    /// means "not measured", never a zero-pixel image.
+    /// </para>
+    /// <para>
+    /// <b>The reference is derived here, not trusted.</b> <see cref="Reference"/> is built from
+    /// <paramref name="path"/> exactly as <see cref="Create(ImageSource)"/> builds it. It is not a claim
+    /// about what such a payload renders: the reference that reaches the shell is the resolved
+    /// reference passed into the payload separately, which is the caller's own string.
+    /// </para>
+    /// </remarks>
+    internal static ToastImageFile Adopt(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        return new ToastImageFile(path, 0, 0);
+    }
+
+    /// <summary>
+    /// Deletes the file this object owns: the library's one delete path for a toast image.
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>This is the delete the production show performs.</b> The notifier hands this instance to
+    /// <c>ToastShow</c> through the payload, and <c>ToastShow.DeleteImageFile</c> - the show's single
+    /// unwind point, reached from both its failure path and its disposal - calls this method after the
+    /// unsubscribes and the handle releases. Nothing else in the library deletes a toast image file: a
+    /// payload that knew the file by path alone adopts it into this type first.
+    /// </para>
+    /// <para>
     /// <b>Idempotent and safe after the file is gone.</b> <c>File.Delete</c> succeeds for a path
     /// that does not exist, so calling this twice - or calling it after something else removed the
-    /// file - is a no-op rather than an error. That is what lets the show path call it from its
-    /// single unwind point without tracking whether a delete already ran.
+    /// file - is a no-op rather than an error. That is what lets the show call it from that single
+    /// unwind point without tracking whether a delete already ran.
     /// </para>
     /// <para>
     /// <b>A failed delete does not throw.</b> The file is the library's own temp artefact and the
@@ -371,7 +482,7 @@ internal sealed class ToastImageFile
     /// </summary>
     /// <param name="path">The file to remove.</param>
     /// <remarks>
-    /// Used only on the failure path of <see cref="Create(ImageSource, string)"/>, where the original
+    /// Used only on the failure paths of <see cref="Create(ImageSource, string)"/>, where the original
     /// exception is the report and a cleanup failure must not replace it.
     /// </remarks>
     private static void DeleteFileIfPresent(string path)

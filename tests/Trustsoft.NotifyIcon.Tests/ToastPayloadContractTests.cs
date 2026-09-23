@@ -397,6 +397,7 @@ public sealed class ToastPayloadContractTests
 
         Assert.Null(payload.ResolvedImageReference);
         Assert.Null(payload.ImageFilePath);
+        Assert.Null(payload.ImageFile);
     }
 
     /// <summary>
@@ -462,5 +463,52 @@ public sealed class ToastPayloadContractTests
         // escape the path.
         Assert.Contains(' ', "file:///" + path);
         Assert.DoesNotContain("src=\"file:///" + path, xml, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The resolved-reference constructor adopts the path it is handed into the owner the show
+    /// deletes through, so a payload that names a file always carries one - the one delete path.
+    /// </summary>
+    /// <remarks>
+    /// <c>ToastImageFile.Adopt</c> never touches the disk, so this asserts the ownership shape without
+    /// a temp file. The delete itself is exercised where it happens:
+    /// <c>ToastApiContractTests.A_payload_carrying_a_temp_file_deletes_it_on_the_unwind_path_after_the_last_release</c>
+    /// for this shape, and the notifier-side tests in <c>ToastImageResolutionTests</c> for the owner
+    /// the resolution creates.
+    /// </remarks>
+    [Fact]
+    public void The_path_only_constructor_carries_the_owner_the_show_deletes_through()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "Trustsoft NotifyIcon test", "toast-abc.png");
+        var content = new ToastContent { Title = "Title", Image = new ToastImage() };
+
+        var payload = new ToastPayload(content, new Uri(path, UriKind.Absolute).AbsoluteUri, path);
+
+        Assert.NotNull(payload.ImageFile);
+        Assert.Equal(path, payload.ImageFile.Path);
+        Assert.Equal(path, payload.ImageFilePath);
+    }
+
+    /// <summary>
+    /// The notifier's factory carries the owner itself, so <see cref="ToastPayload.ImageFilePath"/> is
+    /// that owner's own path - the reference and the file cannot disagree - and a missing owner or
+    /// reference is refused rather than silently producing a payload the show could not delete
+    /// through.
+    /// </summary>
+    [Fact]
+    public void The_resolved_factory_carries_the_owners_path_and_refuses_a_missing_owner()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "toast-owner.png");
+        ToastImageFile owner = ToastImageFile.Adopt(path);
+        var content = new ToastContent { Title = "Title", Image = new ToastImage() };
+
+        ToastPayload payload = ToastPayload.Resolved(content, owner.Reference, owner);
+
+        Assert.Same(owner, payload.ImageFile);
+        Assert.Equal(path, payload.ImageFilePath);
+        Assert.Equal(owner.Reference, payload.ResolvedImageReference);
+
+        Assert.Throws<ArgumentNullException>(() => ToastPayload.Resolved(content, owner.Reference, null!));
+        Assert.Throws<ArgumentNullException>(() => ToastPayload.Resolved(content, null!, owner));
     }
 }

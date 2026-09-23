@@ -25,14 +25,15 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// <see cref="EscapeAttribute"/> below - so a payload can only ever be well-formed XML.
 /// </para>
 /// <para>
-/// <b>The image reference can come from two places, and both are finished strings.</b> A content
-/// whose <see cref="ToastImage.Reference"/> is set renders that string; a content whose
-/// <see cref="ToastImage.Source"/> the notifier resolved for this show renders the reference the
-/// resolution produced, which is handed in through the second constructor
-/// (<see cref="ToastPayload(ToastContent, string?, string?)"/>). In both cases the builder only
-/// XML-escapes the value: it never rewrites, normalises or URL-encodes a reference, because the URI
-/// spelling is the resolution's (or the consumer's) own statement of where the image is, and
-/// escaping is the only transformation a well-formed document needs.
+/// <b>The image reference can come from two places, both finished strings, and the payload carries the
+/// owner of the file behind it.</b> A content whose <see cref="ToastImage.Reference"/> is set renders
+/// that string; a content whose <see cref="ToastImage.Source"/> the notifier resolved for this show
+/// renders the reference the resolution produced - handed in by <see cref="Resolved"/> together with the
+/// <see cref="ToastImageFile"/> that owns the PNG, or, for a caller that has only a path, by the
+/// resolved-reference constructor below, which adopts the file so the show has one delete path. In both
+/// cases the builder only XML-escapes the value: it never rewrites, normalises or URL-encodes a
+/// reference, because the URI spelling is the resolution's (or the consumer's) own statement of where
+/// the image is, and escaping is the only transformation a well-formed document needs.
 /// </para>
 /// <para>
 /// <b>The rendered shapes, and their pinned order.</b> The <c>&lt;toast&gt;</c> element carries
@@ -74,8 +75,8 @@ internal sealed class ToastPayload
     }
 
     /// <summary>
-    /// Initializes a payload over the public content model and the image resolution the notifier
-    /// performed for one show.
+    /// Initializes a payload over the public content model and the image resolution that named a file
+    /// by path, taking ownership of that file through <see cref="ToastImageFile.Adopt"/>.
     /// </summary>
     /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
     /// <param name="resolvedImageReference">
@@ -85,15 +86,72 @@ internal sealed class ToastPayload
     /// </param>
     /// <param name="imageFilePath">
     /// The absolute path of the PNG <paramref name="resolvedImageReference"/> names, or
-    /// <see langword="null"/> when nothing was persisted. The show owns this file and deletes it in
-    /// its single unwind path.
+    /// <see langword="null"/> when nothing was persisted. The payload adopts it into an owner that the
+    /// show deletes through in its single unwind path.
     /// </param>
     /// <exception cref="ArgumentNullException">The content is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="imageFilePath"/> is empty.</exception>
+    /// <exception cref="UriFormatException"><paramref name="imageFilePath"/> is not an absolute path.</exception>
+    /// <remarks>
+    /// This is the constructor the exact-string contract tests and the path-shaped show-path contract
+    /// tests use; it carries no image resolution beyond the path it adopts. The notifier itself uses
+    /// <see cref="Resolved"/>, which hands in the owner the resolution created rather than a path to
+    /// adopt, so the same file is never described by two different owners.
+    /// </remarks>
     internal ToastPayload(ToastContent content, string? resolvedImageReference, string? imageFilePath)
+        : this(content, resolvedImageReference, imageFilePath is null ? null : ToastImageFile.Adopt(imageFilePath))
+    {
+    }
+
+    /// <summary>
+    /// Builds the payload for a show the notifier resolved an image for: the finished reference the
+    /// image element carries and the <see cref="ToastImageFile"/> that owns the PNG behind it.
+    /// </summary>
+    /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
+    /// <param name="resolvedImageReference">
+    /// The absolute <c>file:///</c> reference <paramref name="imageFile"/> produced.
+    /// </param>
+    /// <param name="imageFile">
+    /// The owner of the PNG the resolution wrote; the show deletes the file through it in its single
+    /// unwind path.
+    /// </param>
+    /// <returns>The payload the show is constructed over.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="content"/>, <paramref name="resolvedImageReference"/> or
+    /// <paramref name="imageFile"/> is <see langword="null"/>.
+    /// </exception>
+    /// <remarks>
+    /// A factory rather than a further constructor overload: the owner is the file's single
+    /// representation here (<see cref="ImageFilePath"/> reads <c>imageFile.Path</c>), so a path and an
+    /// owner that could disagree is not expressible. The two constructors above stay the shapes
+    /// existing callers already use.
+    /// </remarks>
+    internal static ToastPayload Resolved(ToastContent content, string resolvedImageReference, ToastImageFile imageFile)
+    {
+        ArgumentNullException.ThrowIfNull(resolvedImageReference);
+        ArgumentNullException.ThrowIfNull(imageFile);
+
+        return new ToastPayload(content, resolvedImageReference, imageFile);
+    }
+
+    /// <summary>
+    /// Initializes a payload over the content, the resolved reference and the owner of the file the
+    /// reference names.
+    /// </summary>
+    /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
+    /// <param name="resolvedImageReference">The finished reference, or <see langword="null"/>.</param>
+    /// <param name="imageFile">
+    /// The file's owner, or <see langword="null"/> when nothing was persisted. The payload reports its
+    /// path and deletes nothing itself: ownership passes to the show, which calls
+    /// <see cref="ToastImageFile.Delete"/> in its single unwind path.
+    /// </param>
+    /// <exception cref="ArgumentNullException">The content is <see langword="null"/>.</exception>
+    private ToastPayload(ToastContent content, string? resolvedImageReference, ToastImageFile? imageFile)
     {
         Content = content ?? throw new ArgumentNullException(nameof(content));
         ResolvedImageReference = resolvedImageReference;
-        ImageFilePath = imageFilePath;
+        ImageFile = imageFile;
+        ImageFilePath = imageFile?.Path;
     }
 
     /// <summary>
@@ -118,10 +176,21 @@ internal sealed class ToastPayload
     /// <see langword="null"/> when this payload persisted nothing.
     /// </summary>
     /// <value>
-    /// The file belongs to the show that resolved it, which deletes it in its single unwind path.
-    /// The payload only reports the path; it neither reads nor owns the file.
+    /// The path of <see cref="ImageFile"/>, which the show deletes through in its single unwind path.
+    /// The payload reports the path and carries the owner; it neither reads nor deletes the file.
     /// </value>
     internal string? ImageFilePath { get; }
+
+    /// <summary>
+    /// Gets the owner of the file <see cref="ImageFilePath"/> names, or <see langword="null"/> when
+    /// this payload persisted nothing.
+    /// </summary>
+    /// <value>
+    /// The object the show deletes through - the notifier's resolution result, or a
+    /// <see cref="ToastImageFile.Adopt"/> of the path this payload was built from - so the library has
+    /// exactly one delete path and the show never deletes a bare string.
+    /// </value>
+    internal ToastImageFile? ImageFile { get; }
 
     /// <summary>
     /// Renders the payload as the exact XML handed to <c>IXmlDocumentIO.LoadXml</c>.

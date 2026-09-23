@@ -121,9 +121,10 @@ public sealed class ToastImageFileTests
     /// again - or after something else removed the file - is a no-op rather than an error.
     /// </summary>
     /// <remarks>
-    /// The idempotence matters beyond tidiness: the show path calls <c>Delete</c> from its single
-    /// unwind point without tracking whether a delete already ran, and the shell may still hold the
-    /// file open when the unwind happens.
+    /// The idempotence matters beyond tidiness: <c>ToastShow.DeleteImageFile</c> - the show's single
+    /// unwind point, reached from both its failure path and its disposal - calls <c>Delete</c> without
+    /// tracking whether a delete already ran, and the shell may still hold the file open when the
+    /// unwind happens.
     /// </remarks>
     [StaFact]
     public void File_exists_after_create_and_delete_removes_it_idempotently()
@@ -190,6 +191,119 @@ public sealed class ToastImageFileTests
         {
             TryDeleteFolder(folder);
         }
+    }
+
+    /// <summary>
+    /// A <see cref="ToastException"/> raised by the encode step is cleaned up and rethrown unchanged:
+    /// the half-written file is gone and the caller receives the same instance, not a translation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the branch the seam exists for (the three-argument
+    /// <c>ToastImageFile.Create(source, folder, encode)</c> overload):
+    /// the guard must remove the file for <em>every</em> exception type, including the library's own,
+    /// and a failure a helper already reported in the library's vocabulary must keep its operation,
+    /// code and detail. <c>Assert.Same</c> is the proof that no second <see cref="ToastException"/> was
+    /// constructed - a translation would be a different instance.
+    /// </para>
+    /// <para>
+    /// The throwaway PNG the seam writes is what makes the cleanup assertion meaningful: the file
+    /// really exists when the exception is raised, so "no <c>toast-*.png</c> left behind" is a reading
+    /// rather than a vacuous one.
+    /// </para>
+    /// </remarks>
+    [StaFact]
+    public void A_toast_exception_from_the_encode_step_is_cleaned_up_and_rethrown_unchanged()
+    {
+        string folder = CreateTempFolder();
+
+        try
+        {
+            ImageSource source = CreateSolid(4, 12, 34, 56, 200);
+            var raised = new ToastException(
+                ToastException.OperationImageResolution,
+                unchecked((int)0x8000FFFF),
+                "Simulated: an internal helper reported the library's own failure type.");
+
+            ToastException caught = Assert.Throws<ToastException>(() => ToastImageFile.Create(
+                source,
+                folder,
+                (_, path) =>
+                {
+                    // The half-written file the guard has to remove: the encode step wrote bytes and
+                    // then failed.
+                    File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
+
+                    throw raised;
+                }));
+
+            Assert.Same(raised, caught);
+            Assert.Equal(ToastException.OperationImageResolution, caught.Operation);
+            Assert.Equal(unchecked((int)0x8000FFFF), caught.ErrorCode);
+            Assert.IsNotType<TrayIconException>(caught);
+            Assert.Empty(Directory.GetFiles(folder, "toast-*.png"));
+        }
+        finally
+        {
+            TryDeleteFolder(folder);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="ToastImageFile.Adopt"/> takes over a file that already exists, derives the same
+    /// absolute <c>file:///</c> reference <c>Create</c> would, and removes the file through the same
+    /// <c>Delete</c> - which is how a payload built from a path alone reaches the single delete path.
+    /// </summary>
+    /// <remarks>
+    /// The extent assertion is the honest half of adoption: nothing measured the file, so
+    /// <c>PixelWidth</c> and <c>PixelHeight</c> read <c>0</c> ("not measured") rather than a
+    /// fabricated size. The reference is still built from the path, so an adopted file in a folder
+    /// with a space in its name is escaped exactly like an encoded one.
+    /// </remarks>
+    [StaFact]
+    public void Adopt_takes_ownership_of_an_existing_file_and_deletes_it_through_the_same_path()
+    {
+        string folder = CreateTempFolder();
+
+        try
+        {
+            string path = System.IO.Path.Combine(folder, "toast-" + Guid.NewGuid().ToString("N") + ".png");
+
+            File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
+
+            ToastImageFile adopted = ToastImageFile.Adopt(path);
+
+            Assert.Equal(path, adopted.Path);
+            Assert.Contains(' ', adopted.Path);
+            Assert.Equal(new Uri(path, UriKind.Absolute).AbsoluteUri, adopted.Reference);
+            Assert.Equal(0, adopted.PixelWidth);
+            Assert.Equal(0, adopted.PixelHeight);
+            Assert.True(File.Exists(path));
+
+            adopted.Delete();
+
+            Assert.False(File.Exists(path), "the adopted owner must delete the file it was handed");
+
+            // The same idempotence the created owner has: a second delete is a no-op.
+            adopted.Delete();
+
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            TryDeleteFolder(folder);
+        }
+    }
+
+    /// <summary>
+    /// Adoption refuses the two paths that cannot name a file, so a payload cannot carry an owner
+    /// whose path is not one.
+    /// </summary>
+    [Fact]
+    public void Adopt_refuses_a_null_or_empty_path()
+    {
+        Assert.Throws<ArgumentNullException>(() => ToastImageFile.Adopt(null!));
+        Assert.Throws<ArgumentException>(() => ToastImageFile.Adopt(string.Empty));
     }
 
     /// <summary>
