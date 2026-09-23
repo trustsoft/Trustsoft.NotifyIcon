@@ -925,3 +925,471 @@ property of the type.
   (`The_show_path_applies_tag_group_and_expiry_to_the_real_notification_object`) and the
   `[Collection(TraceChannelCollection.Name)]` under which the live probes now run (item 4.5).
 - `docs/TOAST-MEASUREMENT.md` - this section.
+
+---
+
+## S03: the activation event surface, the failure split and the disposal guarantee, measured live
+
+Scope: M002/S03/T05. S03 gave the toast subsystem its **public activation surface**: `ToastNotifier`
+raises three typed events (`Activated`, `Dismissed`, `ToastError`) fed by the same three WinRT
+subscriptions S01 measured and S02 left unassigned; a **failure the show path reports after a
+successful registration** became a non-fatal event plus one Error-level trace line instead of a
+throw; and **disposal** was closed on two layers, so nothing the shell can still deliver raises
+anything after `Dispose`.
+
+Every claim below is one of exactly three kinds and says which one it is:
+
+1. a **line captured live in this task** (quoted verbatim, with the command that produced it),
+2. a **string, ordinal or behaviour pinned by a named test**, or
+3. a **source or SDK-IDL reading**, named as such.
+
+### 1. The public event surface
+
+Three events on `ToastNotifier`, each an ordinary `EventHandler<T>` (D052: not a routed event, not
+XAML-wirable), each with its own public payload type:
+
+| Event | Payload type | What the payload carries | Delivered verbatim? |
+| --- | --- | --- | --- |
+| `Activated` | `ToastActivatedEventArgs` | `Arguments` - the launch or button argument the shell handed back | yes, the exact string, `null` when the toast carried none |
+| `Dismissed` | `ToastDismissedEventArgs` | `Reason` - the shell's dismissal reason, mapped into this library's vocabulary | the reason as delivered, mapped, never reinterpreted |
+| `ToastError` | `ToastErrorEventArgs` | `Operation`, `ErrorCode`, `Exception?` - the same machine-readable pair `ToastException` uses | the failing operation name and the code that call reported |
+
+**`ToastDismissalReason`'s ordinals are the platform's numbers, and one member is not.**
+
+| Member | Value | Authority |
+| --- | --- | --- |
+| `Unknown` | `-1` | **this library's seam sentinel**, not a WinRT member. `ToastApi.ReadDismissedReason` returns `-1` when the payload's `Reason` getter fails (`hr < 0`), and the notifier maps any value outside the three known members onto `Unknown` as well - so a consumer always gets a total answer, and an unrecognised value is reported as unrecognised rather than folded into `UserCanceled`. |
+| `UserCanceled` | `0` | `ToastDismissalReason.UserCanceled`, SDK IDL |
+| `ApplicationHidden` | `1` | `ToastDismissalReason.ApplicationHidden`, SDK IDL |
+| `TimedOut` | `2` | `ToastDismissalReason.TimedOut`, SDK IDL |
+
+**The IDL reading behind the three known values** (the same local SDK source S01 and S02 used,
+`C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\winrt\windows.ui.notifications.idl`):
+`enum ToastDismissalReason { UserCanceled = 0; ApplicationHidden = 1; TimedOut = 2 }` at lines
+**743-748**; the value arrives through `IToastDismissedEventArgs` (uuid
+**`3F89D935-D9CB-4538-A0F0-FFE7659938F8`**, line 1246), whose `[propget] HRESULT Reason(...)` is at
+line **1249** and is read at vtable slot 6 (the same slot the activation argument getter uses).
+A wrong slot here would return a garbage reason rather than fail, which is why the ordinals are
+pinned: `ToastEventTests.Dismissal_reason_ordinals_are_the_platform_values`.
+
+The three callbacks that feed these events are the subscriptions S01 already measured - the
+`IToastNotification` event pairs at `windows.ui.notifications.idl:1268-1273` (`Dismissed` 9/10,
+`Activated` 11/12, `Failed` 13/14) - and they are assigned **before** the show runs, so an activation
+that races the display finds a handler in place instead of being dropped
+(`ToastEventTests.No_activation_is_delivered_before_the_first_show_subscribes`).
+
+**The shell's asynchronous delivery failure has a stable name:** `NotificationFailed`
+(`ToastException.OperationNotificationFailed`, `ToastShow.OperationNotificationFailed`,
+`"NotificationFailed"`). That is the operation a consumer branches on for a delivery failure; it is
+distinct from the seam member names (`Show`, `LoadXml`, `CreateShellLink`, `OpenShellLink`, ...) that
+report a failure of a specific step.
+
+**Surface accounting.** S03 added exactly four public types - `ToastActivatedEventArgs`,
+`ToastDismissedEventArgs`, `ToastDismissalReason`, `ToastErrorEventArgs` - bringing the exported
+surface to **nineteen types**, pinned by three independent allow-lists: two in `PackagePurityTests`
+(`Public_surface_is_only_the_documented_types` and the count sentence in
+`TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type`) and one in
+`TrayIconExceptionTests`. A stringly activation surface (one event carrying a string, or a raw
+`HRESULT`) would have added no types; it was rejected so a consumer can branch on data instead of on
+message text.
+
+**No per-show identity is exposed, and that is a platform fact, not an omission.** One notifier can
+have several toasts live at once, and Windows delivers **no per-show event object** with an
+activation or a dismissal: the payload carries the argument string and nothing else. The delivered
+argument is therefore the only identifier, and a consumer that needs to tell its toasts apart must
+make its launch and button arguments unique - which is exactly what the sample does with
+`sample-toast-N`, `sample-button-1` and `sample-button-2`. A `null` argument is a legitimate
+delivery (a toast that carried no launch argument), not a failure; "no argument" and "the empty
+string" are different values.
+
+### 2. The wording rule, and the measurement behind it
+
+The sentence, verbatim, pinned in the generated documentation by
+`ToastEventTests.The_two_boundary_sentences_appear_verbatim_in_the_generated_documentation`:
+
+> Activated reports that the toast's launch or button argument arrived; it is not a report that the user clicked the body.
+
+**The measured limitation behind the rule** (S01's out-of-process observation, recorded above in
+"Activation callback - what was and was NOT captured"): an activation can arrive while the banner is
+still displayed and with no instrumented click at all, and a specific activation **cannot be credited
+to a specific click**. The platform reports that *something* was activated and what argument it
+carried; it does not report which element the user touched. So an `Activated` handler may correctly
+print the argument of the toast it came from, and must never be described - in this library's
+documentation, in the sample or in later slices - as proof of where the user clicked.
+
+Two consequences this slice carries forward:
+
+- The rule is pinned in the generated `.xml` beside the assembly, not just in source comments, so a
+  consumer reading only the shipped documentation still sees it.
+- The same honesty applies one level down: `ToastDismissedEventArgs` says a dismissal "is not a click
+  and carries no argument", so a dismissal cannot be used to infer an activation either.
+
+### 3. The failure split: the show path reports, registration and caller errors still throw
+
+**The decision is D055, with its show-path half fixed by D061 (which replaced D058's interim
+semantics).** D055 (planning): a dedicated `ToastException` (operation + `HRESULT`) plus a
+`ToastError` event and `TraceSource` output; **registration/startup failures throw, runtime failures
+surface through the event and trace without terminating the process**. D058 had made the interim
+public `Show` throw for a show-path failure while S03's event channel did not yet exist; D061
+replaced that: once a notifier is registered, a failure its show reports is **reported, not thrown**.
+
+Read from `ToastNotifier.Show`, the split is exact:
+
+| Situation | Behaviour |
+| --- | --- |
+| `content` is `null` | `ArgumentNullException` (caller error, before the seam is touched) |
+| `Title` is empty or whitespace | `ArgumentException` (caller error; a toast with no visible text is an empty banner) |
+| the notifier was disposed | `ObjectDisposedException` |
+| the **first** show cannot register its identity (`EnsureRegistered`, D060) | `ToastException` with the failing operation and code |
+| a show the notifier **did** register reports `!result.Success` | `_liveShows.Remove(show)` -> `show.Dispose()` -> `RaiseError(result.Operation, result.Code, exception: null)`; **nothing is thrown** |
+
+Both halves are pinned by tests: `ToastEventTests.A_show_path_failure_raises_ToastError_and_writes_one_Error_line_without_throwing`
+(no exception leaves `Show`, one event, one Error line) and
+`ToastEventTests.A_registration_failure_still_throws_and_raises_no_ToastError` (a `ToastException`
+and **zero** events). The failed show has already unwound its own handles by then, so the notifier is
+unaffected and a later `Show` is a fresh attempt.
+
+**The Error-level line.** One line per failure, written by `NotifyIconTrace.ToastError` at
+`TraceEventType.Error`, event id **3** (`NotifyIconTrace.ToastErrorEventId`), shape:
+
+```text
+Toast {operation} failed (code {code}, 0x{code:X8}). {exception type}: {message}
+```
+
+with `No exception detail was supplied.` in place of the last two fields when the failure carried no
+exception - which is the normal case for the shell's asynchronous failure and for the show-path
+failure, both of which report a bare code. The code is rendered in decimal **and** hexadecimal
+because a toast failure is almost always an `HRESULT`, and an `HRESULT` is read in hexadecimal.
+Two concrete renderings pinned by tests (`ToastEventTests`,
+`NotifyIconTraceTests.ToastError_renders_a_negative_hresult_in_decimal_and_hexadecimal`):
+
+```text
+Toast Show failed (code -2147467259, 0x80004005). No exception detail was supplied.
+Toast Activated failed (code 0, 0x00000000). System.InvalidOperationException: consumer bug in Activated
+```
+
+**Visibility, and S02's finding F2.** The line is written at `Error`, so it is visible at the trace
+source's **default `Warning` level with no configuration**
+(`NotifyIconTraceTests.Source_is_named_and_defaults_to_warning_level` pins that default). That is the
+failure half of S02's finding F2: S02 recorded that the documented consumer spelling - attaching a
+listener to the same-named `TraceSource` - receives nothing, because the per-step toast lines are
+`Verbose` and the source sits at `Warning`. The failure line is deliberately **not** `Verbose`: a
+consumer who subscribes the documented source now sees a toast failure, while the ordinary step
+traffic stays filtered. The Verbose step lines stay Verbose - the gap is converted into one Error
+line per failure, not into Error noise per step. Event ids are now **1** (notification-area
+failure), **2** (Verbose traffic, filtered by default), **3** (toast failure), and
+`NotifyIconTraceTests` pins that the three are distinct so a listener can filter on the id rather than
+parse the message.
+
+**The third writer is a backstop, not a failure report.** A consumer handler that throws is caught on
+the COM-callable callback path, which writes `NotifyIconTrace.ToastError(eventName, 0, exception)` -
+one Error line naming the **event** it arrived on - and deliberately raises **no** `ToastError` event:
+the toast was already delivered and the failure belongs to the consumer's handler, not to the toast
+subsystem. The event name is threaded into the subscription rather than hardcoded. Pinned by
+`ToastEventTests.A_throwing_consumer_handler_is_traced_at_Error_level_and_raises_no_ToastError` and
+`ToastEventTests.A_throwing_consumer_handler_does_not_escape_the_raise` (a handler exception never
+crosses back into the callback path). A healthy show writes no Error line at all:
+`ToastEventTests.A_healthy_show_writes_no_Error_level_line`.
+
+**The honest limit of the live evidence: a `ToastError` cannot be forced on a healthy machine.**
+There is no way to make the shell refuse a well-formed show, and the shell's asynchronous `Failed`
+callback does not fire on a healthy machine either - so a live `ToastError` was **not** produced in
+this task. What *is* live:
+
+- the **throw half**, forced live in this task through the sample's own refusal path (item 3.1);
+- the shape and visibility of the Error line, pinned by the tests named above;
+- the **event half**, exercised by the fakes: reproduce in process with
+  `FakeToastApi.FailNext(ToastOperation.Show)` plus a listener on `NotifyIconTrace.Source`, and the
+  activation path with `FakeToastApi.RaiseActivated`.
+
+#### 3.1 The refusal path, forced live
+
+A registration failure is the documented throw, and it can be forced live by giving the sample an
+identity whose shortcut cannot be created. Command (the identity in this run was a 300-character run
+of `X`, written `'XXXX...'` below; everything else is verbatim):
+
+```text
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe \
+    --toast --toast-aumid 'XXXX...(300 X)...' --toast-after 2 --run-seconds 8
+```
+
+```text
+[sample] toast demonstration: identity='XXXX...' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\XXXX....lnk' register=True severity=Default repeat=off - the shows go through the public ToastNotifier, which registers the identity on its first show and raises the three S03 events; the sample's InternalsVisibleTo grant survives this slice for the fresh-link read-back, the --toast-skip-register control and the Verbose trace attachment, none of which has a public equivalent (S05's consumer proof retires it).
+[sample] toast show scheduled: first show after 2s (--toast-after); the toast's launch argument is 'sample-toast-N', so the activation a click delivers names the show it came from.
+[sample] toast content: title='Trustsoft.NotifyIcon sample toast' body='Click this banner's body: the sample prints the activation it receives.' severity=Default launch='sample-toast-1'
+[sample] toast show #1: asking the shell for identity='XXXX...' launch='sample-toast-1' title='Trustsoft.NotifyIcon sample toast'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: register attempt override='XXXX...'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register attempt aumid='XXXX...' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\XXXX....lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register read-back failed at OpenShellLink hr=0x8007007B
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: register failed at OpenShellLink code=0x8007007B; no toast is shown
+[sample] toast show #1: REFUSED operation='OpenShellLink' code=0x8007007B - the shell did not accept a toast for identity='XXXX...'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: dispose liveShows=0 createdShortcut=False
+[sample] totals: raw callback lines=0, pump-observed private-range messages=0, library trace lines=0, clicks=0, cancelled by a Preview handler=0, balloon show requests=0 (self=0), balloon clicked deliveries=0, balloon preview deliveries=0, menu opens=0, menu dismissals=0.
+[sample] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line (0 is the disposal guarantee)
+[sample] toast totals: shows=1, accepted=0, activations=0 (last arguments='(none)'), dismissals=0, failures=0, errors=0, refused=1, libraryTrace=5, registered=False, identity='XXXX...'.
+```
+
+What this run shows, and what it does not:
+
+- **The throw half is live.** The registration read-back failed (`OpenShellLink hr=0x8007007B`,
+  `ERROR_INVALID_NAME`), the library traced `register failed ... no toast is shown`, `Show` threw
+  `ToastException(OpenShellLink, 0x8007007B)`, the sample printed **REFUSED** and counted
+  `refused=1, accepted=0` - no toast was shown and the process did not crash.
+- **A registration failure raises no `ToastError`.** `errors=0` in the totals line of a run whose
+  `Show` demonstrably threw is the split's other half, measured: only a failure reported *after*
+  registration goes through the event channel.
+- It says **nothing** about the `ToastError` line, because that path was not reached - by design, as
+  recorded above.
+
+### 4. The disposal guarantee, on two layers
+
+The milestone's success criterion 3 is "after the notifier is disposed, none of the events fires".
+S03 closes it on two independent layers, because either one alone can be raced:
+
+1. **The source is detached.** `ToastShow.Dispose` nulls its three callbacks **before** it unwinds,
+   then unsubscribes each of the three and releases the handles. Detaching first is what makes a
+   callback the shell had **already dequeued** find nothing to invoke instead of finding a live
+   handler.
+2. **The notifier's own raise paths refuse.** All four paths (`OnShowActivated`, `OnShowDismissed`,
+   `OnShowFailed`, `RaiseError`) return immediately once `_disposed` is set, so the guarantee does
+   not depend on the show-side detach alone - a disposed notifier writes no line and raises no event.
+
+What makes each layer observable, all of it pinned by `ToastEventTests`:
+
+| Claim | How it is observed | Test |
+| --- | --- | --- |
+| the source is detached | the fake reports `false` for `RaiseActivated`/`RaiseDismissed`/`RaiseFailed` after `Dispose`, and the counts stay at the pre-dispose values | `After_dispose_the_source_is_detached_and_nothing_fires` (which also delivers once **before** disposal, so it cannot pass by never having connected) |
+| a replayed captured callback is silent | the fake retains the real delegates (`CaptureHandlers`) and re-invokes them exactly as a dequeued callback would; all three reach nulled callbacks and raise nothing | `A_dequeued_callback_that_runs_after_dispose_raises_nothing` |
+| the notifier's own raise path refuses | the four internal raise members are called directly after `Dispose`; zero events | `The_notifiers_own_raise_paths_refuse_after_dispose` |
+| the guarantee is disposal-scoped, not a blanket teardown | a **live** show still delivers through a retained callback, and only the disposed show goes quiet | `The_disposal_guarantee_is_scoped_to_the_disposed_show` |
+| a handler that disposes mid-delivery stops the next queued callback | the first delivery disposes from inside the handler; the replayed second callback raises nothing | `A_handler_that_disposes_the_notifier_stops_a_replayed_callback` |
+| nothing is left registered | the live capture's teardown lines: `dispose`, three `Unsubscribe...(token) hr=0x00000000`, `remove shortcut ... removed=True` | the S03 capture, item 5 |
+| the post-teardown window is silent | the live capture's `toast post-teardown window: activations=0 dismissals=0 errors=0` after the teardown line | the S03 capture, item 5 |
+| the shortcut itself is gone | the live capture's post-dispose read-back fails at `OpenShellLink` with **`0x80070002`** (`ERROR_FILE_NOT_FOUND`) - the same reading T03/T05/S02 recorded | the S03 capture, item 5 |
+
+The `--toast-dispose-after` switch exists so the silence is a **window** rather than an instant: the
+run disposes the notifier mid-run and then keeps pumping, so "nothing fired after disposal" is a
+measurement over wall time, not an assumption about the code path.
+
+### 5. The live capture, verbatim
+
+Reproduce with (from the repository root; the `export`s only matter because the sandbox used for
+these runs strips Windows environment variables - a normal shell already has them):
+
+```text
+export APPDATA='C:\Users\Maxim\AppData\Roaming'; export ProgramData='C:\ProgramData'
+export LOCALAPPDATA='C:\Users\Maxim\AppData\Local'; export DOTNET_CLI_HOME='C:\Users\Maxim'
+
+dotnet build Trustsoft.NotifyIcon.sln -c Release
+
+# the slice's demo run: two action buttons, a mid-run dispose, a measured silence window
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe \
+    --toast --toast-buttons --toast-after 2 --toast-dispose-after 8 --run-seconds 20
+```
+
+The tray/balloon bootstrap lines the sample prints before the toast block are omitted here (they are
+unchanged from T05's and S02's captures); everything from the toast demonstration line to the toast
+totals line is verbatim, and this block and the negative control in item 6 are the two runs performed
+in this task.
+
+```text
+[sample] toast library trace: the library's own source 'Trustsoft.NotifyIcon' was raised to Verbose through the sample's InternalsVisibleTo grant, so its per-step toast lines - including the exact XML handed to LoadXml - print below as [trace] lines.
+[sample] toast demonstration: identity='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk' register=True severity=Default repeat=off - the shows go through the public ToastNotifier, which registers the identity on its first show and raises the three S03 events; the sample's InternalsVisibleTo grant survives this slice for the fresh-link read-back, the --toast-skip-register control and the Verbose trace attachment, none of which has a public equivalent (S05's consumer proof retires it).
+[sample] toast show scheduled: first show after 2s (--toast-after); the toast's launch argument is 'sample-toast-N', so the activation a click delivers names the show it came from.
+[sample] toast dispose scheduled: the notifier is disposed after 8s (--toast-dispose-after) while this run keeps pumping, so an activation, dismissal or error arriving after the teardown line is measured rather than assumed.
+[sample] toast content: title='Trustsoft.NotifyIcon sample toast' body='Click this banner's body: the sample prints the activation it receives.' severity=Default launch='sample-toast-1' buttons=[sample-button-1,sample-button-2]
+[sample] toast show #1: asking the shell for identity='Trustsoft.NotifyIcon.Sample' launch='sample-toast-1' title='Trustsoft.NotifyIcon sample toast'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: register attempt override='(default)'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register attempt aumid='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: register succeeded aumid='Trustsoft.NotifyIcon.Sample'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: registered aumid='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: show title='Trustsoft.NotifyIcon sample toast' severity=Default launch='sample-toast-1' aumid='Trustsoft.NotifyIcon.Sample'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: begin aumid='Trustsoft.NotifyIcon.Sample' title='Trustsoft.NotifyIcon sample toast' launch='sample-toast-1'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotificationManager -> IToastNotificationManagerStatics) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotification -> IToastNotificationFactory) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001 (RPC_E_CHANGED_MODE 0x80010106 is benign)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: RoActivateInstance(Windows.Data.Xml.Dom.XmlDocument) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast: CreateToastNotifierWithId('Trustsoft.NotifyIcon.Sample') hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: GetNotifierSetting hr=0x00000000 setting=0
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: LoadXml hr=0x00000000 xml=<toast launch="sample-toast-1"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon sample toast</text><text>Click this banner's body: the sample prints the activation it receives.</text></binding></visual><actions><action content="Button 1" arguments="sample-button-1"/><action content="Button 2" arguments="sample-button-2"/></actions></toast>
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: subscribed activated=0xB909B3ED8CAAF81 dismissed=0x7D3953E533BE64AF failed=0xAAFB866D9C49729A
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+[sample] toast show #1: the shell accepted it (ToastNotifier.Show returned; S_OK inside it is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history 'Trustsoft.NotifyIcon.Sample'
+[sample] toast registration read-back (fresh shell link): success=True operation='' code=0x00000000 value='Trustsoft.NotifyIcon.Sample' matchesExpected=True
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: dispose liveShows=1 createdShortcut=True
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: dispose
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeActivated(0xB909B3ED8CAAF81) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeDismissed(0x7D3953E533BE64AF) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeFailed(0xAAFB866D9C49729A) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast identity: remove succeeded shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: remove shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk' removed=True operation='' code=0
+[sample] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+[sample] toast unregistration: Dispose removed the shortcut this run registered; read-back after dispose success=False operation='OpenShellLink' code=0x80070002 (a failure at OpenShellLink is the shortcut being gone)
+[sample] totals: raw callback lines=0, pump-observed private-range messages=0, library trace lines=0, clicks=0, cancelled by a Preview handler=0, balloon show requests=0 (self=0), balloon clicked deliveries=0, balloon preview deliveries=0, menu opens=0, menu dismissals=0.
+[sample] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line (0 is the disposal guarantee)
+[sample] toast totals: shows=1, accepted=1, activations=0 (last arguments='(none)'), dismissals=0, failures=0, errors=0, refused=0, libraryTrace=24, registered=True, identity='Trustsoft.NotifyIcon.Sample'.
+```
+
+What this capture is evidence for, and what it is not:
+
+- **The exact document the shell received carries both action buttons**: the `LoadXml` line contains
+  `<actions><action content="Button 1" arguments="sample-button-1"/><action content="Button 2" arguments="sample-button-2"/></actions>` - the S02-pinned shape of item 1's seventh row, now
+  carrying the slice's own arguments, accepted by the shell (`LoadXml hr=0x00000000`,
+  `Show hr=0x00000000`).
+- **The three subscriptions were established and then released**: `subscribed
+  activated=0xB909B3ED8CAAF81 dismissed=0x7D3953E533BE64AF failed=0xAAFB866D9C49729A` at show time,
+  and all three `Unsubscribe...hr=0x00000000` on teardown, followed by
+  `remove shortcut ... removed=True` and the read-back failing at `OpenShellLink` with `0x80070002`.
+- **The post-teardown window is a measured silence**: `activations=0 dismissals=0 errors=0 after the
+  teardown line`, taken after the dispose at t+8s while the process kept pumping to t+20s - about
+  12 s of window with nothing in it.
+- **It does not report a click.** `activations=0 (last arguments='(none)')` and `dismissals=0` in this
+  run: nobody touched the banner, so this capture proves the payload plumbing and the teardown, not
+  the demo's click clauses - which are item 8's human follow-up, by design.
+- `registered=True` with the fresh-link read-back `value='Trustsoft.NotifyIcon.Sample'`
+  `matchesExpected=True` is registration-on-first-show (D060) holding on the public path, unchanged
+  from S02.
+- `libraryTrace=24` and the tray totals' `library trace lines=0` in the *same* capture remain the
+  measured shape of F2 - the counts are the *sample's* listener, which reaches the library's own
+  source through its internals grant, not a consumer's.
+
+### 6. The negative control, measured on the sample's own path
+
+The guard that S03 did not change the unregistered case (and that the S03 events are not what makes a
+show work). Command:
+
+```text
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe \
+    --toast --toast-skip-register --toast-after 2 --toast-buttons --run-seconds 12
+```
+
+```text
+[sample] toast demonstration: identity='Trustsoft.NotifyIcon.Sample' shortcut='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.Sample.lnk' register=False severity=Default repeat=off - this is the negative control, so no shortcut is created anywhere: the shows go through the library's internal seam (ToastShow directly), which is the only path that can show for an identity that was never registered.
+[sample] toast demonstration negative control: no shortcut is created; read-back success=False operation='OpenShellLink' code=0x80070002 value='(null)' carriesTheIdentity=False
+[sample] toast show scheduled: first show after 2s (--toast-after); the toast's launch argument is 'sample-toast-N', so the activation a click delivers names the show it came from.
+[sample] toast content: title='Trustsoft.NotifyIcon sample toast' body='Click this banner's body: the sample prints the activation it receives.' severity=Default launch='sample-toast-1' buttons=[sample-button-1,sample-button-2]
+[sample] toast show #1: asking the shell for identity='Trustsoft.NotifyIcon.Sample' launch='sample-toast-1' title='Trustsoft.NotifyIcon sample toast'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: begin aumid='Trustsoft.NotifyIcon.Sample' title='Trustsoft.NotifyIcon sample toast' launch='sample-toast-1'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: GetNotifierSetting hr=0x00000000 setting=0
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: LoadXml hr=0x00000000 xml=<toast launch="sample-toast-1"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon sample toast</text><text>Click this banner's body: the sample prints the activation it receives.</text></binding></visual><actions><action content="Button 1" arguments="sample-button-1"/><action content="Button 2" arguments="sample-button-2"/></actions></toast>
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: subscribed activated=0x330B054A9CFFAAEF dismissed=0xE016C64ACE681DFE failed=0x1CBDD8219050B7F7
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+[sample] toast show #1: the shell accepted it (setting=0 raw; S_OK is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history 'Trustsoft.NotifyIcon.Sample'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: dispose
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeActivated(0x330B054A9CFFAAEF) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeDismissed(0xE016C64ACE681DFE) hr=0x00000000
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: UnsubscribeFailed(0x1CBDD8219050B7F7) hr=0x00000000
+[sample] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+[sample] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line (0 is the disposal guarantee)
+[sample] toast totals: shows=1, accepted=1, activations=0 (last arguments='(none)'), dismissals=0, failures=0, errors=0, refused=0, libraryTrace=16, registered=False, identity='Trustsoft.NotifyIcon.Sample'.
+```
+
+The control's verdict is the absence of an activation, exactly as in S01 and S02: `registered=False`,
+`0` activations and `0` dismissals, and the seam's `setting=0 raw` acceptance line unchanged. The
+run also confirms the slice's own choice of surface: the control keeps driving `ToastShow` directly
+(no shortcut is created anywhere, and the read-back confirms `carriesTheIdentity=False`), while the
+public `ToastNotifier` always registers on its first show - which is why the negative control is the
+only path that can show for an identity that was never registered.
+
+### 7. The coexistence sentence, recorded for S05
+
+S05's README must copy this sentence **verbatim** (it is pinned in the generated documentation by
+`ToastEventTests.The_two_boundary_sentences_appear_verbatim_in_the_generated_documentation`, so the
+two slices cannot drift into two different promises):
+
+> Toasts and balloons are independent: showing a toast never suppresses, replaces or re-routes a balloon tip, and showing a balloon tip never replaces or re-routes a toast.
+
+**No M001 balloon behaviour changed.** S03 touched the toast path only; the single shared file it
+changed is `NotifyIconTrace.cs`, and the change is additive (one new member and a third event id,
+`3` - the tray's ids `1` and `2` and both tray writers are unchanged). The evidence is the M001
+complement of the suite (item 9): `--filter "FullyQualifiedName!~Toast"` ran **416 passed / 0 failed**,
+including `TrayIconBalloonTipTests` and `BalloonCallbackTests`. The capture quoted in item 5 also
+shows the balloon/tray totals counters all at `0` in a toast-only run, i.e. showing a toast requested
+no balloon, opened no menu and produced no notification-area traffic.
+
+### 8. Human follow-up: the click clauses of the demo
+
+**This is a follow-up, not a result. No run in this task proved a click.** The automated captures in
+items 5 and 6 prove the payload and the plumbing - that the document carries both buttons, that the
+subscriptions are established and released, and that a delivered argument reaches the handler and
+classifies. **Only a person can prove the click attribution**, because the platform reports no
+per-element information (item 2).
+
+To be performed by a human on a machine with a visible notification area, with the sample running as
+`--toast --toast-buttons --toast-after 2 --run-seconds 60`:
+
+1. click **Button 1** - the sample must print `element=button-1` for `sample-button-1`;
+2. click **Button 2** - the sample must print `element=button-2` for `sample-button-2`;
+3. click the toast **body** - the sample must print `element=body` for this show's
+   `sample-toast-N` launch argument;
+4. dismiss the toast (its close button, or letting it time out) - the sample must print one dismissal
+   with a reason from the three known values;
+5. confirm that after the teardown line nothing further is printed - which is the disposal guarantee
+   as a person sees it.
+
+Expected reading: **three distinct classified arguments plus one dismissal, and silence afterwards**.
+The classifier deliberately answers `unknown` for anything it cannot match against the arguments this
+run actually sent, so an `element=unknown` line is a finding, not a rounding error (S03/T04's decision:
+per-click attribution is not available to an automated instrument, so the classifier never guesses).
+
+### 9. What S03 deliberately did not deliver
+
+| Not delivered | Why / where it lands |
+| --- | --- |
+| **Images from an `ImageSource`** - `ToastImage.Reference` is still an already-formed reference string (D059) | S04 turns a WPF `ImageSource` into a `Reference` (the contract is S02 item 6) |
+| **The failure taxonomy** - `ToastError` reports a stable operation name and a code, not a classified cause | S04 owns the taxonomy; S03's contribution is the channel plus the pinned operation names (`NotificationFailed` and the seam member names) |
+| **The README and the package documentation** | S05; this slice only records the verbatim sentence S05 must carry (item 7) |
+| **The multi-TFM consumer proof and the exported-surface re-measurement from the packed artifact** | S05; the nineteen-type surface is pinned against the built assembly by three allow-lists, not against the `.nupkg` |
+| **Activation after the app has exited (closed-app relaunch)** | D054: v1 delivers activation only while the application is running, and no COM activator is registered |
+| **A live `ToastError`** | it cannot be forced on a healthy machine (item 3); the event is exercised by the fake, and the sample's stderr `toast error:` line plus the library's Error-level line are the two surfaces a live failure would travel |
+
+**The suite, run once in this task**
+(`dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build`):
+
+```text
+Passed!  - Failed:     0, Passed:   580, Skipped:     0, Total:   580, Duration: 1 m 14 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+```
+
+- **580 passed / 0 failed**, whole assembly, no filter - so the live probes
+  (`ToastApiLiveProbeTests`, `ToastIdentityLiveProbeTests`) ran live inside it. S02's sweep was 552;
+  the difference is this slice's tests (`ToastEventTests` contributes 18).
+- The toast/pin subset (`--filter "FullyQualifiedName~Toast|FullyQualifiedName~PackagePurity"`):
+  **176 passed / 0 failed**. The complement (`--filter "FullyQualifiedName!~Toast"`, i.e. the M001
+  classes): **416 passed / 0 failed**. 176 + 416 = 592 counts the 12 `PackagePurity` tests twice,
+  which is the 580 total.
+- **No M001 suite regressed**: the M001 classes are the 416-test complement and they are all green,
+  with the same 416 S02 measured.
+- Honest note on the one intermediate failure seen in this task: a single full-suite run (not one of
+  the two readings above) failed `TrayIconMenuActivationTests.A_second_right_click_while_the_menu_is_open_opens_nothing_new`
+  with `foreground=0x5A064E(Chrome_WidgetWin_1) anchorIsForeground=False` - an **environmental
+  foreground-stealing flake, not a regression**: the run's own diagnostic block shows another
+  application holding the foreground window. That class then passed **16/16 on three consecutive
+  isolated re-runs**, and the full sweep above is green. Nothing in this slice touches the menu path
+  (it is M001's); the reading is recorded rather than retried until green.
+- The slice's own contract class, `--filter "FullyQualifiedName~ToastEventTests"`: **18 passed /
+  0 failed** - the event surface, the failure split, the wording rule and all five disposal tests.
+
+### Files added or changed by S03
+
+- `src/Trustsoft.NotifyIcon/ToastNotifier.cs` - the three public events, the subscription wiring, the
+  `RaiseError` path, the four post-dispose refusals, and the `Show` failure split (D061).
+- `src/Trustsoft.NotifyIcon/ToastActivatedEventArgs.cs`, `ToastDismissedEventArgs.cs`,
+  `ToastDismissalReason.cs`, `ToastErrorEventArgs.cs` - the four public payload types (T01).
+- `src/Trustsoft.NotifyIcon/Interop/ToastApi.cs` - the callback read-back (`ReadDismissedReason`
+  returns `-1` on an unreadable payload), the event-name threading into the subscription, and the
+  Error-level backstop for a handler bug.
+- `src/Trustsoft.NotifyIcon/Interop/ToastShow.cs` - `Dispose` nulls the three callbacks before
+  unwinding (T03).
+- `src/Trustsoft.NotifyIcon/NotifyIconTrace.cs` - `ToastError` and event id 3 (additive; the tray
+  ids and writers are unchanged).
+- `samples/Trustsoft.NotifyIcon.Sample/App.xaml.cs` - the three event subscriptions, the
+  `element=...` classifier, the `toast error:` stderr line, `--toast-buttons` and
+  `--toast-dispose-after` with the post-teardown window.
+- `tests/Trustsoft.NotifyIcon.Tests/ToastEventTests.cs` - the slice's contract class (18 tests).
+- `tests/Trustsoft.NotifyIcon.Tests/Fakes/FakeToastApi.cs` - the opt-in handler capture and replay
+  members the disposal and race tests need.
+- `tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`, `TrayIconExceptionTests.cs` - the three
+  widened surface allow-lists.
+- `docs/TOAST-MEASUREMENT.md` - this section.
