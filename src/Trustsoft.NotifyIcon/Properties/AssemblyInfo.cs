@@ -4,15 +4,20 @@
 
 // The windowless sample, for the M002/S01 live end-to-end run.
 //
-// The toast seam (IToastApi, ToastApi, ToastIdentity, ToastShow, ToastPayload) is internal and S01 has
-// no public toast surface yet: the public ToastNotifier/ToastContent is S02/S03 work (D052, D056).
-// The slice's exit condition is nevertheless a live run from the windowless sample - register, show,
-// subscribe, print the activation - so the sample has to reach the seam that exists now. This is a
-// grant to a non-shipping project in this repository only (the sample declares IsPackable=false and
-// is not a package), it widens no public API, and it is temporary in spirit: once S02/S03 ship the
-// public toast surface the sample's demonstration moves onto it, and this line can go. The sample's
-// tray code stays free of library internals (it reaches the library's hidden host window only through
-// public window enumeration), so nothing about the shipped consumer surface changes.
+// The public toast surface now exists (ToastNotifier/ToastContent/ToastException, S02), and the sample's
+// normal toast run shows through it - but three things in that demonstration still have no public
+// equivalent: the fresh-link read-back the sample prints as its own identity evidence, the
+// --toast-skip-register negative control, which measures the case the public path cannot express (the
+// notifier always registers on its first show, D060), and the Verbose trace attachment that puts the
+// library's per-step lines - including the exact XML handed to IXmlDocumentIO.LoadXml - into the run's
+// own capture (the documented consumer spelling, a same-named TraceSource, receives nothing, as
+// measured in docs/UAT-S02.md). Those three keep reaching the internal seam (IToastApi, ToastApi,
+// ToastIdentity, ToastShow, ToastPayload, NotifyIconTrace), so the grant survives this slice.
+// It is a grant to a non-shipping project in this repository only (the sample declares IsPackable=false
+// and is not a package), it widens no public API, and it is temporary in spirit: S05's consumer proof
+// replaces the read-back and the control with the shipped surface, and this line can go then. The
+// sample's tray code stays free of library internals (it reaches the library's hidden host window only
+// through public window enumeration), so nothing about the shipped consumer surface changes.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Trustsoft.NotifyIcon.Sample")]
 
 // The consumer namespace for markup (S06).
