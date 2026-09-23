@@ -147,10 +147,11 @@ public sealed class TrayIconExceptionTests
     /// the lifecycle type does not exist yet, so the relationship asserted is "subset". M001/S02/T02
     /// adds <c>TrayIconClickEventArgs</c> and <c>TrayMenuActivation</c> to the allow-list
     /// deliberately, M001/S04/T02 adds <c>BalloonTipIcon</c> and <c>BalloonTipOptions</c> the same
-    /// way (D031), and M002/S02/T01 adds the six toast content-model types
+    /// way (D031), M002/S02/T01 adds the six toast content-model types
     /// (<c>ToastContent</c>, <c>ToastSeverity</c>, <c>ToastSound</c>, <c>ToastButton</c>,
-    /// <c>ToastImage</c>, <c>ToastImagePlacement</c>) - this list is an enumeration, not a pattern,
-    /// so a new public type has to be named here before it can ship.
+    /// <c>ToastImage</c>, <c>ToastImagePlacement</c>), and M002/S02/T05 adds the toast entry point
+    /// and failure type (<c>ToastNotifier</c>, <c>ToastException</c>) - this list is an enumeration,
+    /// not a pattern, so a new public type has to be named here before it can ship.
     /// </remarks>
     [Fact]
     public void Exported_types_are_in_the_library_namespace_and_within_the_documented_surface()
@@ -176,6 +177,8 @@ public sealed class TrayIconExceptionTests
             "ToastButton",
             "ToastImage",
             "ToastImagePlacement",
+            "ToastNotifier",
+            "ToastException",
         };
 
         string[] unexpected = exported

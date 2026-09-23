@@ -196,7 +196,8 @@ public class PackagePurityTests
     /// <summary>
     /// The exported type set is exactly the documented public types: the element, its two error
     /// types, the two click types the event surface needs, the two balloon types the balloon
-    /// surface needs, and the six toast content-model types M002/S02 adds for the toast surface.
+    /// surface needs, the six toast content-model types M002/S02/T01 added, and the two toast
+    /// show/failure types M002/S02/T05 adds to complete the toast surface.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -215,9 +216,9 @@ public class PackagePurityTests
     /// (<see cref="ToastSeverity"/> for D053's scenario mapping, <see cref="ToastSound"/>,
     /// <see cref="ToastImagePlacement"/>) and the two nested content shapes
     /// (<see cref="ToastButton"/>, <see cref="ToastImage"/>) - which is exactly the kind of widening
-    /// this test exists to make deliberate. The toast show/failure types
-    /// (<c>ToastNotifier</c>, <c>ToastException</c>) arrive later in this slice and have to be named
-    /// here again.
+    /// this test exists to make deliberate. M002/S02/T05 completes the toast surface with the
+    /// public entry point <see cref="ToastNotifier"/> and its failure type
+    /// <see cref="ToastException"/> (D052/D055/D057), which is the last named widening of S02.
     /// </para>
     /// </remarks>
     [Fact]
@@ -240,6 +241,8 @@ public class PackagePurityTests
             typeof(ToastButton),
             typeof(ToastImage),
             typeof(ToastImagePlacement),
+            typeof(ToastNotifier),
+            typeof(ToastException),
         ];
 
         // Compiler-generated types are filtered explicitly rather than tolerated wholesale: a
@@ -271,7 +274,8 @@ public class PackagePurityTests
     /// <see cref="System.Windows.Controls.ContextMenu"/> is used directly instead, so the context
     /// menu contributes no type of its own - the exported set has since grown to the seven M001
     /// documented types with S04's balloon enums (D031), and then to thirteen with M002/S02/T01's
-    /// nine-type-less toast content model, and none of them is for the menu.
+    /// nine-type-less toast content model, and to fifteen with M002/S02/T05's notifier and
+    /// exception, and none of them is for the menu.
     /// </para>
     /// <para>
     /// The property is asserted to be owned by <see cref="TrayIcon"/> with a <see langword="null"/>
@@ -301,8 +305,9 @@ public class PackagePurityTests
 
         // The property is a member of TrayIcon, and no type was added to carry it: the observed set
         // still has to be exactly the documented types - seven after S04 (D031) added the two
-        // balloon enums, thirteen after M002/S02/T01 added the six toast content-model types, and
-        // none of them for the menu.
+        // balloon enums, thirteen after M002/S02/T01 added the six toast content-model types,
+        // fifteen after M002/S02/T05 added ToastNotifier and ToastException, and none of them for
+        // the menu.
         Type[] exported = [.. typeof(TrayIcon).Assembly.GetExportedTypes().Where(type => !IsCompilerGenerated(type))];
 
         Assert.Equal(
@@ -321,6 +326,8 @@ public class PackagePurityTests
                 typeof(ToastButton),
                 typeof(ToastImage),
                 typeof(ToastImagePlacement),
+                typeof(ToastNotifier),
+                typeof(ToastException),
             }.OrderBy(type => type.FullName, StringComparer.Ordinal),
             exported.OrderBy(type => type.FullName, StringComparer.Ordinal));
     }
