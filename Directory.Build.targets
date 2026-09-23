@@ -1,0 +1,59 @@
+<Project>
+
+  <!--
+    Restore robustness in a minimal environment.
+
+    NuGet's restore constructs XPlatMachineWideSetting unconditionally, and that
+    constructor resolves the machine-wide config directory from the PROGRAMFILES
+    (or PROGRAMFILES(X86)) environment variable, the user config from APPDATA and
+    the HTTP/plugin caches from LOCALAPPDATA. In a minimal environment - a CI
+    runner or an automated host whose parent process was started without the
+    standard Windows folder variables - those variables are absent, so
+    Path.Combine(null, "NuGet") throws "Value cannot be null. (Parameter 'path1')"
+    and every restore fails before it reaches the project.
+
+    The variables cannot be injected through NuGet.config (the constructor is
+    eager and reads the environment directly), so this target re-derives them from
+    the known-folder API - which resolves through the registry and does not depend
+    on the environment - and publishes them as process environment variables
+    before the restore-settings task runs. In a normal environment the variables
+    are already set and the task is a no-op.
+  -->
+  <UsingTask TaskName="EnsureWindowsFolderEnvironment"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+          var folders = new System.Collections.Generic.Dictionary<string, System.Environment.SpecialFolder>
+          {
+              { "PROGRAMFILES", System.Environment.SpecialFolder.ProgramFiles },
+              { "PROGRAMFILES(X86)", System.Environment.SpecialFolder.ProgramFilesX86 },
+              { "APPDATA", System.Environment.SpecialFolder.ApplicationData },
+              { "LOCALAPPDATA", System.Environment.SpecialFolder.LocalApplicationData },
+              { "PROGRAMDATA", System.Environment.SpecialFolder.CommonApplicationData },
+              { "ALLUSERSPROFILE", System.Environment.SpecialFolder.CommonApplicationData },
+          };
+
+          foreach (var pair in folders)
+          {
+              if (string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable(pair.Key)))
+              {
+                  string value = System.Environment.GetFolderPath(pair.Value);
+                  if (!string.IsNullOrEmpty(value))
+                  {
+                      System.Environment.SetEnvironmentVariable(pair.Key, value);
+                  }
+              }
+          }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="_EnsureWindowsFolderEnvironment"
+          BeforeTargets="Restore;_GetRestoreSettings;_GetRestoreSettingsCurrentProject;_GetRestoreSettingsAllFrameworks;_GenerateRestoreGraphProjectEntry;Build;VSTest;Pack;Publish;ResolvePackageAssets;ResolveLockFileReferences;GenerateDepsFile;CoreCompile;ResolveAssemblyReferences">
+    <EnsureWindowsFolderEnvironment />
+  </Target>
+
+</Project>
