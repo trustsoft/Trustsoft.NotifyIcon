@@ -28,6 +28,8 @@ namespace Trustsoft.NotifyIcon.ProbeToast;
 /// <b>Usage.</b>
 /// <code>
 /// probe-toast [--aumid &lt;id&gt;] [--skip-register] [--wait-seconds &lt;N&gt;] [--expect-no-toast]
+///             [--image &lt;absolute path&gt; [--image-placement hero|appLogoOverride] [--image-id &lt;n&gt;]
+///              [--delete-image-after &lt;seconds&gt;]]
 /// probe-toast --history &lt;aumid&gt;
 /// probe-toast --clear-history &lt;aumid&gt;
 /// </code>
@@ -37,12 +39,30 @@ namespace Trustsoft.NotifyIcon.ProbeToast;
 /// inventory halves, run as separate process invocations so the observation is independent of the
 /// process that showed the toast.
 /// </para>
+/// <para>
+/// <b>The image variant (M002/S04).</b> <c>--image</c> injects one <c>&lt;image src="…" placement="…"
+/// [id="n"]/&gt;</c> element as the last child of the <c>ToastGeneric</c> binding - the exact position
+/// and shape S02's payload writer pins - so the shell's own reading of a file-backed image can be
+/// measured rather than assumed: whether <c>LoadXml</c> accepts it with and without <c>id</c>, whether a
+/// missing local file produces a <c>Failed</c> callback, and what a file deleted while the toast is
+/// live produces. The instrument prints the exact XML it hands to <c>LoadXml</c> and the image file's
+/// existence and byte length at send time, and it never XML-rewrites the path beyond attribute
+/// escaping (the same one-path rule as the library's builder).
+/// </para>
 /// </remarks>
 internal static class Program
 {
     /// <summary>The accepted command line, printed on every usage error.</summary>
     private const string Usage =
-        "usage: probe-toast [--aumid <id>] [--skip-register] [--wait-seconds <N>] [--expect-no-toast] | --history <aumid> | --clear-history <aumid>";
+        "usage: probe-toast [--aumid <id>] [--skip-register] [--wait-seconds <N>] [--expect-no-toast] " +
+        "[--image <absolute path> [--image-placement hero|appLogoOverride] [--image-id <n>] [--delete-image-after <seconds>]] " +
+        "| --history <aumid> | --clear-history <aumid>";
+
+    /// <summary>The <c>hero</c> placement value, written verbatim into the image element.</summary>
+    private const string ImagePlacementHero = "hero";
+
+    /// <summary>The <c>appLogoOverride</c> placement value, written verbatim into the image element.</summary>
+    private const string ImagePlacementAppLogoOverride = "appLogoOverride";
 
     /// <summary>The AppUserModelID used when none is supplied.</summary>
     private const string DefaultAumid = "Trustsoft.NotifyIcon.ToastProbe";
@@ -75,6 +95,11 @@ internal static class Program
         bool expectNoToast = false;
         string? historyAumid = null;
         string? clearHistoryAumid = null;
+        string? imagePath = null;
+        string imagePlacement = ImagePlacementHero;
+        bool imagePlacementGiven = false;
+        int? imageId = null;
+        int? deleteImageAfterSeconds = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -97,6 +122,37 @@ internal static class Program
                     }
                     i++;
                     break;
+                case "--image" when i + 1 < args.Length:
+                    imagePath = args[++i];
+                    break;
+                case "--image-placement" when i + 1 < args.Length:
+                    if (!IsKnownImagePlacement(args[i + 1]))
+                    {
+                        Console.Error.WriteLine($"probe-toast: '--image-placement' needs 'hero' or 'appLogoOverride', got '{args[i + 1]}'.");
+                        return 2;
+                    }
+                    imagePlacement = NormalizeImagePlacement(args[i + 1]);
+                    imagePlacementGiven = true;
+                    i++;
+                    break;
+                case "--image-id" when i + 1 < args.Length:
+                    if (!int.TryParse(args[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedImageId) || parsedImageId < 0)
+                    {
+                        Console.Error.WriteLine($"probe-toast: '--image-id' needs a non-negative integer, got '{args[i + 1]}'.");
+                        return 2;
+                    }
+                    imageId = parsedImageId;
+                    i++;
+                    break;
+                case "--delete-image-after" when i + 1 < args.Length:
+                    if (!int.TryParse(args[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedDeleteAfter) || parsedDeleteAfter <= 0)
+                    {
+                        Console.Error.WriteLine($"probe-toast: '--delete-image-after' needs a positive number of seconds, got '{args[i + 1]}'.");
+                        return 2;
+                    }
+                    deleteImageAfterSeconds = parsedDeleteAfter;
+                    i++;
+                    break;
                 case "--history" when i + 1 < args.Length:
                     historyAumid = args[++i];
                     break;
@@ -110,8 +166,41 @@ internal static class Program
             }
         }
 
+        // The three image sub-options only mean something with --image. This instrument does not accept
+        // an argument it would silently ignore, so a stray one is a usage error like any other.
+        if (imagePath is null && (imagePlacementGiven || imageId is not null || deleteImageAfterSeconds is not null))
+        {
+            Console.Error.WriteLine("probe-toast: '--image-placement', '--image-id' and '--delete-image-after' only apply with '--image <absolute path>'.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
+        // Measured platform requirement: the shell needs an absolute local image path. A relative one
+        // is a caller mistake, not a payload the shell can resolve.
+        if (imagePath is not null && !Path.IsPathRooted(imagePath))
+        {
+            Console.Error.WriteLine($"probe-toast: '--image' needs an absolute path, got '{imagePath}'.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
+        // The reference the payload carries is the absolute file URI, derived exactly the way the
+        // library's own resolver must derive it (R6: new Uri(path).AbsoluteUri, never "file:///" + path).
+        // A path the URI type cannot accept is a usage error here, not a silently different reference.
+        string? imageUri = null;
+        if (imagePath is not null && !TryToFileUri(imagePath, out imageUri))
+        {
+            Console.Error.WriteLine($"probe-toast: '--image' path '{imagePath}' cannot be expressed as a file URI.");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
+
         Console.WriteLine($"[probe] probe-toast start {DateTime.Now:yyyy-MM-dd HH:mm:ss}; os={Environment.OSVersion.VersionString}; machine={Environment.MachineName}; pid={Environment.ProcessId}");
         Console.WriteLine($"[probe] aumid={aumid}; skip-register={skipRegister}; wait-seconds={waitSeconds}; expect-no-toast={expectNoToast}");
+        if (imagePath is not null)
+        {
+            Console.WriteLine($"[probe] image: configured path={QuoteOrNull(imagePath)}; src={QuoteOrNull(imageUri)}; placement={imagePlacement}; id={FormatImageId(imageId)}; delete-image-after={FormatDeleteAfter(deleteImageAfterSeconds)}");
+        }
 
         // The two inventory modes are separate process invocations and never touch registration or show.
         if (historyAumid is not null)
@@ -124,7 +213,8 @@ internal static class Program
             return RunClearHistory(clearHistoryAumid);
         }
 
-        return RunShow(aumid, skipRegister, waitSeconds, expectNoToast);
+        ImageRequest? image = imagePath is null ? null : new ImageRequest(imagePath, imagePlacement, imageId, deleteImageAfterSeconds);
+        return RunShow(aumid, skipRegister, waitSeconds, expectNoToast, image);
     }
 
     /// <summary>
@@ -135,8 +225,9 @@ internal static class Program
     /// <param name="skipRegister">Whether to skip shortcut creation (the negative control).</param>
     /// <param name="waitSeconds">How long to wait for a click.</param>
     /// <param name="expectNoToast">Whether a delivered toast is a failure (the negative control).</param>
+    /// <param name="image">The image variant to inject, or <see langword="null"/> for the no-image payload.</param>
     /// <returns>The process exit code.</returns>
-    private static int RunShow(string aumid, bool skipRegister, int waitSeconds, bool expectNoToast)
+    private static int RunShow(string aumid, bool skipRegister, int waitSeconds, bool expectNoToast, ImageRequest? image)
     {
         int roHr = RoInitialize(RoInitSingleThreaded);
 
@@ -234,6 +325,21 @@ internal static class Program
         }
 
         string xml = string.Format(CultureInfo.InvariantCulture, ToastXmlTemplate, LaunchArgument);
+        if (image is not null)
+        {
+            xml = InsertImageElement(xml, BuildImageElement(ToFileUri(image.Path), image.Placement, image.Id));
+        }
+
+        // The exact bytes/characters the shell is asked to accept, plus the file state at that instant:
+        // the whole point of the image variant is that "accepted" and "the file exists" are two
+        // different readings, so neither is inferred from the other.
+        Console.WriteLine($"[probe] show: payload xml={xml}");
+        if (image is not null)
+        {
+            Console.WriteLine($"[probe] image: path={QuoteOrNull(image.Path)}; src={QuoteOrNull(ToFileUri(image.Path))}; placement={image.Placement}; id={FormatImageId(image.Id)}");
+            Console.WriteLine($"[probe] image: at send {DescribeImageFile(image.Path)}");
+        }
+
         using HString xmlHString = new(xml);
         var loadXml = Vtable<LoadXmlFn>(xmlIoPtr, 6);
         int loadHr = loadXml(xmlIoPtr, xmlHString.Handle);
@@ -277,14 +383,30 @@ internal static class Program
         // on this STA thread.
         Console.WriteLine($"[probe] wait: pumping for {waitSeconds}s for a click on the toast body");
         var stopwatch = Stopwatch.StartNew();
+        bool imageDeleted = false;
         while (stopwatch.Elapsed < TimeSpan.FromSeconds(waitSeconds))
         {
+            // The delete-while-live variant: the file is removed while the notification is on screen,
+            // so whatever the shell does about a reference it can no longer read is observed rather
+            // than guessed. The pump continues; only the file's lifetime changes.
+            if (image is { DeleteAfterSeconds: int deleteAfterSeconds } && !imageDeleted && stopwatch.Elapsed >= TimeSpan.FromSeconds(deleteAfterSeconds))
+            {
+                imageDeleted = true;
+                TryDeleteImage(image.Path);
+                Console.WriteLine($"[probe] image: delete requested after {deleteAfterSeconds}s, deleted at t={stopwatch.Elapsed.TotalSeconds:0.0}s; after delete {DescribeImageFile(image.Path)}");
+            }
+
             PumpMessages(100);
             if (received.ActivatedCount > 0)
             {
                 Console.WriteLine($"[probe] wait: activation received at t={stopwatch.Elapsed.TotalSeconds:0.0}s");
                 break;
             }
+        }
+
+        if (image is { DeleteAfterSeconds: not null } && !imageDeleted)
+        {
+            Console.WriteLine($"[probe] image: delete-after={image.DeleteAfterSeconds}s was requested but the wait loop ended first; the file was NOT deleted");
         }
 
         Console.WriteLine($"[probe] result: activated={received.ActivatedCount} arguments={QuoteOrNull(received.ActivatedArguments)} dismissed={received.DismissedCount} reason={received.DismissedReason} failed={received.FailedCount} errorCode=0x{received.FailedErrorCode:X8}");
@@ -316,6 +438,167 @@ internal static class Program
         Console.WriteLine("[probe] verdict: positive run complete; delivery is judged out of process by --history.");
         return 0;
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // The image variant (M002/S04): build the <image> element the way S02's writer would, inject it
+    // into the pinned template, and report the file's state without ever rewriting the path.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Reports whether the placement string is one of the two the toast schema allows here.</summary>
+    /// <param name="value">The candidate placement value.</param>
+    /// <returns><see langword="true"/> when the value is <c>hero</c> or <c>appLogoOverride</c>.</returns>
+    private static bool IsKnownImagePlacement(string value) =>
+        string.Equals(value, ImagePlacementHero, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, ImagePlacementAppLogoOverride, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Maps a case-insensitive placement to its canonical spelling.</summary>
+    /// <param name="value">A placement value already accepted by <see cref="IsKnownImagePlacement"/>.</param>
+    /// <returns>The canonical spelling the payload carries.</returns>
+    private static string NormalizeImagePlacement(string value) =>
+        string.Equals(value, ImagePlacementAppLogoOverride, StringComparison.OrdinalIgnoreCase)
+            ? ImagePlacementAppLogoOverride
+            : ImagePlacementHero;
+
+    /// <summary>Formats the optional image id for a capture line.</summary>
+    /// <param name="id">The id, or <see langword="null"/> when the payload omits the attribute.</param>
+    /// <returns><c>(none)</c> or the invariant integer.</returns>
+    private static string FormatImageId(int? id) => id is int value ? value.ToString(CultureInfo.InvariantCulture) : "(none)";
+
+    /// <summary>Formats the optional delete-after interval for a capture line.</summary>
+    /// <param name="seconds">The interval, or <see langword="null"/> when no delete is scheduled.</param>
+    /// <returns><c>(never)</c> or the invariant integer.</returns>
+    private static string FormatDeleteAfter(int? seconds) => seconds is int value ? value.ToString(CultureInfo.InvariantCulture) : "(never)";
+
+    /// <summary>
+    /// Derives the absolute <c>file:///</c> reference for a local image path, the rule the library's
+    /// own resolver must follow (R6): <c>new Uri(path).AbsoluteUri</c>, never <c>"file:///" + path</c>,
+    /// so a space or a non-ASCII character is percent-encoded by the URI type instead of breaking the
+    /// reference. Throws <see cref="UriFormatException"/> for a path the URI type rejects; callers that
+    /// must not throw use <see cref="TryToFileUri"/>.
+    /// </summary>
+    /// <param name="path">The absolute image path.</param>
+    /// <returns>The absolute file URI.</returns>
+    private static string ToFileUri(string path) => new Uri(path).AbsoluteUri;
+
+    /// <summary>Non-throwing form of <see cref="ToFileUri"/>, so a bad path is a usage error and not a crash.</summary>
+    /// <param name="path">The absolute image path.</param>
+    /// <param name="uri">Receives the absolute file URI on success.</param>
+    /// <returns><see langword="true"/> when the path can be expressed as a file URI.</returns>
+    private static bool TryToFileUri(string path, out string? uri)
+    {
+        try
+        {
+            uri = ToFileUri(path);
+            return true;
+        }
+        catch (UriFormatException)
+        {
+            uri = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Builds the image element with the same attribute order S02's writer pins - <c>src</c>,
+    /// <c>placement</c>, then the optional <c>id</c> - and the same single escaping path (attribute
+    /// escaping only: the reference is escaped but never rewritten or URL-encoded by this writer,
+    /// because the percent-encoding already happened in <see cref="ToFileUri"/>).
+    /// </summary>
+    /// <param name="source">The absolute <c>file:///</c> reference.</param>
+    /// <param name="placement">The canonical placement value.</param>
+    /// <param name="id">The optional id attribute value.</param>
+    /// <returns>The rendered element.</returns>
+    private static string BuildImageElement(string source, string placement, int? id)
+    {
+        var builder = new StringBuilder("<image src=\"");
+        builder.Append(EscapeAttribute(source));
+        builder.Append("\" placement=\"");
+        builder.Append(EscapeAttribute(placement));
+        builder.Append('"');
+        if (id is int value)
+        {
+            builder.Append(" id=\"");
+            builder.Append(value.ToString(CultureInfo.InvariantCulture));
+            builder.Append('"');
+        }
+        builder.Append("/>");
+        return builder.ToString();
+    }
+
+    /// <summary>Inserts the image element as the last child of the <c>ToastGeneric</c> binding.</summary>
+    /// <param name="xml">The rendered template.</param>
+    /// <param name="imageElement">The image element to insert.</param>
+    /// <returns>The payload with the image element after the <c>&lt;text&gt;</c> children.</returns>
+    private static string InsertImageElement(string xml, string imageElement)
+    {
+        int bindingEnd = xml.LastIndexOf("</binding>", StringComparison.Ordinal);
+        if (bindingEnd < 0)
+        {
+            throw new InvalidOperationException("the toast XML template lost its </binding> close tag");
+        }
+
+        return xml.Insert(bindingEnd, imageElement);
+    }
+
+    /// <summary>Escapes the four XML attribute characters, the same way S02's builder does.</summary>
+    /// <param name="value">The attribute value.</param>
+    /// <returns>The escaped value.</returns>
+    private static string EscapeAttribute(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (char c in value)
+        {
+            switch (c)
+            {
+                case '&': builder.Append("&amp;"); break;
+                case '<': builder.Append("&lt;"); break;
+                case '>': builder.Append("&gt;"); break;
+                case '"': builder.Append("&quot;"); break;
+                default: builder.Append(c); break;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>Describes the image file's state without throwing, so a missing file is a reading too.</summary>
+    /// <param name="path">The absolute image path.</param>
+    /// <returns>An <c>exists=… bytes=…</c> description.</returns>
+    private static string DescribeImageFile(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists
+                ? $"exists=True bytes={info.Length.ToString(CultureInfo.InvariantCulture)}"
+                : "exists=False bytes=(absent)";
+        }
+        catch (Exception ex)
+        {
+            return $"exists=unknown read-failed='{ex.Message}'";
+        }
+    }
+
+    /// <summary>Deletes the image file, recording rather than throwing a failure.</summary>
+    /// <param name="path">The absolute image path.</param>
+    private static void TryDeleteImage(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[probe] image: delete failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>One image variant: the absolute path, the placement, the optional id and the optional delete delay.</summary>
+    /// <param name="Path">The absolute image path handed to the payload.</param>
+    /// <param name="Placement">The canonical placement value.</param>
+    /// <param name="Id">The optional <c>id</c> attribute value.</param>
+    /// <param name="DeleteAfterSeconds">When set, the file is deleted that many seconds into the wait loop.</param>
+    private sealed record ImageRequest(string Path, string Placement, int? Id, int? DeleteAfterSeconds);
 
     /// <summary>
     /// Queries the notification history for an AppUserModelID and prints the count. This is the
