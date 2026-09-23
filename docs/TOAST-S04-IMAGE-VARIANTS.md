@@ -321,6 +321,12 @@ absolute reference:
   `file:///C:/Users/Maxim/AppData/Local/Temp/probe-image-variants/image%20variants%20%C3%A4%C3%B6%C3%BC/toast-applogo.png`
   — as single-byte UTF-8 (`latin1=True utf8=True utf16le=False`);
 - the platform's downloaded-image cache `…\Microsoft\Windows\Notifications\wpnidm` held **0 entries**.
+- **Re-capture (same runner, later run):** the main `wpndatabase.db` copy (still 1 048 576 B) **also**
+  held both references verbatim (`latin1=True utf8=True`), with the write-ahead log down to 90 672 B.
+  Which of the two files carries the string is therefore a **checkpoint-timing detail, not a fact
+  about the platform**: the row is written to the WAL first and folded into the main file when the
+  platform checkpoints. Both captures agree on the substantive reading - the URI string is present,
+  the image bytes are not.
 
 **What the wpndatabase copy shows about the reference-versus-bytes question:** the reference side wins.
 The platform keeps the URI string in its own notification state and holds no copy of the image; the
@@ -328,9 +334,11 @@ shell reads the file from disk when it renders. That is precisely why the file m
 notification, and why "own the file from `Show` until the show is torn down" is the correct lifetime
 rule.
 
-**Instrument note:** searching only `wpndatabase.db` would have produced a misleading "not present" —
-the un-checkpointed row lived in the WAL. The runner copies and searches both and reports which one
-hit.
+**Instrument note:** searching only `wpndatabase.db` would have produced a misleading "not present" in
+the first capture — the un-checkpointed row lived in the WAL. The runner copies and searches both and
+reports which one hit. Because the split between the two files moves with checkpointing, **a
+"not present in `wpndatabase.db`" reading is only meaningful together with the `-wal` result**; never
+read either file alone.
 
 ### 4. Deleting the file while the notification is live — bounded reading
 
@@ -357,12 +365,12 @@ and this instrument observed only a 3 s window in one process. Do not weaken the
 
 ### 6. Findings that ride along
 
-- The out-of-process history verdict was `count=1` in the captured run. The four payloads carry no
-  tag/group, so each replaces the previous in the Action Center instead of accumulating; the inventory
-  therefore confirms that the last payload reached the platform, not four separate entries (consistent
-  with the S01/S02 readings). This count is a **snapshot**: the Action Center entry can be purged
-  between runs (an earlier repeat of this run read `count=0`), so the runner reports it without making
-  it a variant failure.
+- The out-of-process history verdict was `count=1` in the captured run, but the same runner read
+  `count=1`, `count=0` and `count=3` across captures. The payloads carry no tag/group, and the count
+  moves with Action Center purge and coalescing timing, so the inventory only confirms that **the last
+  payload reached the platform**. It is a **snapshot**: the runner reports it without making it a
+  variant failure, and no claim is drawn here about entries replacing or accumulating, because the
+  captures do not settle that question either way.
 - `notifier.GetSetting` reported `0 (Enabled)` on every run — this run did not script the disabled
   state (S03's measurement), so nothing here contradicts it.
 - `RoInitialize hr=0x80010106` (`RPC_E_CHANGED_MODE`) appears on every run: pre-existing and benign,
