@@ -559,8 +559,14 @@ public class PackagePurityTests
     /// consumer would have read as "the package you just installed does not exist". A language
     /// check is neither possible nor wanted here; what is asserted is the small set of strings a
     /// reader copies verbatim and which rot silently: the <c>PackageReference</c> id and version,
-    /// the consumer namespace URI and prefix, the consumer sections in order, and the seven public
+    /// the consumer namespace URI and prefix, the consumer sections in order, and all twenty public
     /// type names.
+    /// </para>
+    /// <para>
+    /// The type list is widened from the seven tray types to the twenty M002 ships here, because the
+    /// README travels inside the package as its <c>PackageReadmeFile</c>: a toast type the readme
+    /// never names is a package fact a consumer cannot learn from the document they opened first,
+    /// and the T04 inspector rule reads the exported surface out of this same artifact.
     /// </para>
     /// <para>
     /// The version is read from the library project rather than repeated, so a version bump that
@@ -616,6 +622,11 @@ public class PackagePurityTests
             "## Declarative usage",
             "## Windowless shutdown",
             "## Interaction model",
+            // Added by M002/S05/T05. The section must carry the toast surface a consumer acts on:
+            // the code-first install/identity/event/button sample, the identity lifecycle with its
+            // override and removal, the coexistence sentence, the activation wording rule, the
+            // image temp-file lifetime and the failure taxonomy.
+            "## Toast notifications",
         ];
 
         foreach (string section in consumerSections)
@@ -624,7 +635,7 @@ public class PackagePurityTests
                 readme.Contains(section, StringComparison.Ordinal),
                 $"R010: the README must carry a '{section}' section. A consumer who installs the package reads this file first, "
                 + "and these are the questions they arrive with: how to install it, how to use it from code, how to declare it in markup, "
-                + "what a windowless application must do about shutdown, and how the interaction model behaves.");
+                + "what a windowless application must do about shutdown, how the interaction model behaves, and how to show a toast.");
         }
 
         // Repository-facing material belongs below the consumer material (T04), which is what keeps a
@@ -636,6 +647,32 @@ public class PackagePurityTests
             "R010: the README's repository-facing content must sit below the consumer content. "
             + "A '## Repository notes' heading that precedes the install line puts the repository's build instructions in front of a package user.");
 
+        // The two boundary sentences M002/S03 and S05 share, asserted verbatim in the README as well
+        // as in the generated documentation (ToastEventTests pins them there). The README ships
+        // inside the package, so the sentence a consumer reads must be the same sentence the XML
+        // documentation carries: pinning the same literal in both places is what keeps the two
+        // documents from drifting into two different promises.
+        string[] boundarySentences =
+        [
+            "Toasts and balloons are independent: showing a toast never suppresses, replaces or re-routes a balloon tip, "
+            + "and showing a balloon tip never replaces or re-routes a toast.",
+            "Activated reports that the toast's launch or button argument arrived; it is not a report that the user clicked the body.",
+        ];
+
+        // Whitespace is collapsed before the comparison because the README hard-wraps its prose: the
+        // sentence is the same words in the same order, but a line break sits where markdown renders
+        // a space. Only wrapping is tolerated - a reworded or reordered sentence still fails.
+        string unwrapped = string.Join(' ', readme.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        foreach (string sentence in boundarySentences)
+        {
+            Assert.True(
+                unwrapped.Contains(sentence, StringComparison.Ordinal),
+                $"R010: the README must carry this boundary sentence verbatim: '{sentence}'. "
+                + "It is the same promise the generated XML documentation makes (ToastEventTests.The_two_boundary_sentences_appear_verbatim_in_the_generated_documentation), "
+                + "and the README travels inside the package, so the two documents must not drift apart.");
+        }
+
         Type[] documentedTypes =
         [
             typeof(TrayIcon),
@@ -645,6 +682,19 @@ public class PackagePurityTests
             typeof(TrayMenuActivation),
             typeof(BalloonTipIcon),
             typeof(BalloonTipOptions),
+            typeof(ToastContent),
+            typeof(ToastSeverity),
+            typeof(ToastSound),
+            typeof(ToastButton),
+            typeof(ToastImage),
+            typeof(ToastImagePlacement),
+            typeof(ToastNotifier),
+            typeof(ToastException),
+            typeof(ToastActivatedEventArgs),
+            typeof(ToastDismissedEventArgs),
+            typeof(ToastDismissalReason),
+            typeof(ToastErrorEventArgs),
+            typeof(ToastNotificationSetting),
         ];
 
         string[] unnamed = [.. documentedTypes.Select(type => type.Name).Where(name => !readme.Contains(name, StringComparison.Ordinal))];

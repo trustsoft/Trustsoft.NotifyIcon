@@ -63,14 +63,42 @@ public sealed class ToastNotifierTests
         nameof(IToastApi.Show),
     ];
 
-    /// <summary>The public types this task and M002/S03/T01 add, used by the documentation guard.</summary>
+    /// <summary>
+    /// Every type in the shipped public surface, used by the documentation guard: all twenty, not
+    /// only the toast ones.
+    /// </summary>
     /// <remarks>
-    /// M002/S04/T04 adds <see cref="ToastNotificationSetting"/>, the outcome vocabulary
-    /// <see cref="ToastNotifier.NotificationSetting"/> reports, so it belongs in this list too: every
-    /// new public member of the toast surface must carry generated XML documentation (D010).
+    /// <para>
+    /// <b>Why all twenty and not just the notifier's own types.</b> The T04 inspector rule reads the
+    /// exported surface out of the packed XML documentation and asserts the set is exactly twenty
+    /// types. That rule is sound only while the exported set is pinned at twenty <em>and</em> every
+    /// public member of every one of those types actually carries generated documentation - a type
+    /// that ships with an undocumented member would satisfy the artifact rule while being unusable
+    /// from a consumer's point of view. This guard is the second half of that chain (D010), so it
+    /// walks the whole surface: the seven tray types, the six content-model types and the seven
+    /// notifier types. The content-model guard
+    /// (<c>ToastContentTests.Every_public_member_of_the_content_model_is_documented</c>) covers the
+    /// six as well; the overlap is deliberate, because a documentation gap must fail here too.
+    /// </para>
     /// </remarks>
-    private static readonly Type[] NotifierTypes =
+    private static readonly Type[] DocumentedSurfaceTypes =
     [
+        // Tray subsystem (M001).
+        typeof(TrayIcon),
+        typeof(TrayIconException),
+        typeof(TrayErrorEventArgs),
+        typeof(TrayIconClickEventArgs),
+        typeof(TrayMenuActivation),
+        typeof(BalloonTipIcon),
+        typeof(BalloonTipOptions),
+        // Toast content model (M002/S02).
+        typeof(ToastContent),
+        typeof(ToastSeverity),
+        typeof(ToastSound),
+        typeof(ToastButton),
+        typeof(ToastImage),
+        typeof(ToastImagePlacement),
+        // Toast notifier and its event surface (M002/S02/T05, S03/T01, S04/T04).
         typeof(ToastNotifier),
         typeof(ToastException),
         typeof(ToastActivatedEventArgs),
@@ -512,15 +540,17 @@ public sealed class ToastNotifierTests
     }
 
     /// <summary>
-    /// Every public type and member this task adds is documented in the generated documentation file
-    /// that ships beside the assembly (D010).
+    /// Every public type and member of the whole shipped surface is documented in the generated
+    /// documentation file that ships beside the assembly (D010).
     /// </summary>
     /// <remarks>
-    /// CS1591 is suppressed by name, so nothing else would notice an undocumented member; this is the
-    /// enforcement point for the two types T05 adds, the four types M002/S03/T01 adds and the
-    /// outcome vocabulary M002/S04/T04 adds, mirroring the content-model documentation guard. Events
-    /// are walked too (<c>E:</c> entries): an event is a public member like any other, and a missing
-    /// event entry is exactly the kind of gap a reader of the generated documentation would hit.
+    /// CS1591 is suppressed by name, so nothing else would notice an undocumented member. This is the
+    /// enforcement point for all twenty public types - the tray surface, the content model and the
+    /// notifier surface - mirroring (and overlapping on the content model with) the earlier
+    /// content-model documentation guard, and it is the second half of the T04 inspector rule that
+    /// pins the artifact's exported set at twenty. Events are walked too (<c>E:</c> entries): an event
+    /// is a public member like any other, and a missing event entry is exactly the kind of gap a
+    /// reader of the generated documentation would hit.
     /// </remarks>
     [Fact]
     public void Every_public_member_of_the_notifier_surface_is_documented()
@@ -541,7 +571,7 @@ public sealed class ToastNotifierTests
 
         List<string> missing = [];
 
-        foreach (Type type in NotifierTypes)
+        foreach (Type type in DocumentedSurfaceTypes)
         {
             if (!documented.Contains($"T:{type.FullName}"))
             {
