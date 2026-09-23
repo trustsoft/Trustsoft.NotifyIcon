@@ -10,6 +10,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Trustsoft.NotifyIcon;
+using Trustsoft.NotifyIcon.Interop;
 
 namespace Trustsoft.NotifyIcon.Sample;
 
@@ -79,6 +80,19 @@ namespace Trustsoft.NotifyIcon.Sample;
 /// - with the balloon call inside it - never reaches the sample. <c>--show-balloon-after [seconds]</c>
 /// shows one balloon with no click injected, which is what separates "the click path is broken" from
 /// "the balloon path is broken" in a single capture.
+/// </para>
+/// <para>
+/// <b>Toast demonstration (M002/S01).</b> <c>--toast</c> runs the slice's exit condition from this
+/// windowless process: it registers an AppUserModelID through the library's identity path, prints the
+/// value read back from a <em>fresh</em> shell link, shows a toast whose launch argument names the show
+/// (<c>sample-toast-N</c>), prints every activation, dismissal and delivery failure the shell reports,
+/// and removes the shortcut again on the way out. <c>--toast-repeat</c> keeps a banner available to
+/// click for the whole run; <c>--toast-skip-register</c> is the negative control, which never creates
+/// the shortcut and runs the identical show path. The demonstration is the only place in this file
+/// that touches the library's internals, and only because S01 predates the public toast surface
+/// (S02/S03): the tray code and every instrument stay on the public API. See
+/// <c>docs/TOAST-MEASUREMENT.md</c> for what each line was measured to mean, including the finding
+/// that <c>Show</c> succeeds for an identity that was never registered.
 /// </para>
 /// <para>
 /// <b>Raw callback trace (S02).</b> The sample prints the shell's undecoded callback messages next
@@ -177,6 +191,55 @@ public partial class App : Application
     /// </remarks>
     private static readonly TimeSpan SelfOpenedMenuHold = TimeSpan.FromSeconds(6);
 
+    /// <summary>
+    /// The delay <c>--toast-after</c> uses when it is given without a value: the M002/S01 toast
+    /// demonstration's first show.
+    /// </summary>
+    /// <remarks>
+    /// Three seconds, shorter than the menu and balloon defaults because the toast's own banner is
+    /// short-lived: the startup lines are still on the console before it appears, which is all a
+    /// capture needs, and a shorter delay leaves more of the run's wall time available for a click on
+    /// the banner.
+    /// </remarks>
+    private static readonly TimeSpan DefaultToastDelay = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The repeat interval <c>--toast-repeat</c> uses when it is given without a value, and the
+    /// interval that makes the slice's human half practical.
+    /// </summary>
+    /// <remarks>
+    /// A toast banner is on screen for seconds; a person who has to run the sample, find the banner
+    /// and click it cannot reliably do that inside one banner's lifetime. Re-showing the toast keeps a
+    /// banner in the notification area's corner, so the click is a click on <em>a</em> toast of this
+    /// registration rather than a race. Five seconds is the measurement's own banner lifetime
+    /// (<c>docs/TOAST-MEASUREMENT.md</c>), so the refresh is not faster than the platform's own
+    /// dismissal.
+    /// </remarks>
+    private static readonly TimeSpan DefaultToastRepeatInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>The S01 toast demonstration's title line.</summary>
+    private const string ToastTitle = "Trustsoft.NotifyIcon sample toast";
+
+    /// <summary>
+    /// The S01 toast demonstration's body line.
+    /// </summary>
+    /// <remarks>
+    /// It names the action the demonstration measures - clicking the body - because the body is the
+    /// only part of an unpackaged process's toast that produces an activation with an argument, and
+    /// because a capture should say what the person was asked to click.
+    /// </remarks>
+    private const string ToastBody = "Click this banner's body: the sample prints the activation it receives.";
+
+    /// <summary>
+    /// The prefix of the toast's <c>launch</c> argument, suffixed with the show's number.
+    /// </summary>
+    /// <remarks>
+    /// A distinct argument per show is what makes a captured activation attributable: with
+    /// <c>--toast-repeat</c> several banners are alive for the same identity, and the argument the
+    /// sample prints names the show it came from.
+    /// </remarks>
+    private const string ToastLaunchPrefix = "sample-toast-";
+
     /// <summary>The exit code an unrecognized command-line argument produces.</summary>
     /// <remarks>
     /// Distinct from the <c>1</c> a refused registration returns, so a caller can tell "this build
@@ -187,7 +250,8 @@ public partial class App : Application
     /// <summary>The one-line usage text printed when an argument is not understood.</summary>
     private const string SampleUsage =
         "[sample] usage: Trustsoft.NotifyIcon.Sample [--xaml] [--run-seconds N] [--cancel-preview [left|double|right|middle]] [--open-menu-after [seconds]] "
-        + "[--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]]";
+        + "[--balloon-icon none|info|warning|error] [--balloon-nosound] [--balloon-realtime] [--balloon-respect-quiet-time] [--show-balloon-after [seconds]] "
+        + "[--toast] [--toast-aumid <id>] [--toast-skip-register] [--toast-after [seconds]] [--toast-repeat [seconds]]";
 
     /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>: the pseudo-handle the manifest asks for.</summary>
     /// <remarks>
@@ -304,6 +368,98 @@ public partial class App : Application
     /// silent surprise.
     /// </remarks>
     private int _libraryTraceLineCount;
+
+    // ---------------------------------------------------------------------------------------------
+    // M002/S01 toast demonstration state (--toast).
+    //
+    // This is the one place in the sample that reaches the library's internal toast seam, and it does
+    // so for a measured reason: S01 owns the live end-to-end run and the public toast surface
+    // (ToastNotifier/ToastContent) is S02/S03 work, so the demonstration has to drive the seam that
+    // exists today (see the InternalsVisibleTo note in the library's AssemblyInfo.cs). Everything
+    // else about the sample - the tray icon, the menu, the balloon and the raw instruments - stays on
+    // the public surface.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The toast seam the demonstration drives, or <see langword="null"/> when <c>--toast</c> was not
+    /// given.
+    /// </summary>
+    /// <remarks>
+    /// One instance serves both halves: <see cref="ToastIdentity"/> writes and reads back the shortcut,
+    /// and each <see cref="ToastShow"/> renders and shows one payload through the same seam. The
+    /// production seam is one object over one set of raw vtables, so a wrong slot or GUID has a single
+    /// home to inspect (T04).
+    /// </remarks>
+    private ToastApi? _toastApi;
+
+    /// <summary>The identity service over <see cref="_toastApi"/>, or <see langword="null"/> without <c>--toast</c>.</summary>
+    private ToastIdentity? _toastIdentity;
+
+    /// <summary>
+    /// Every show this run created and has not disposed; all of them are disposed at shutdown.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="ToastShow"/> owns one shown toast and its subscription, so a repeated
+    /// demonstration needs one instance per show. They are kept alive until shutdown on purpose: the
+    /// activation the demonstration measures is delivered to the object that created the notification,
+    /// and disposing a show is what unsubscribes it - so a run that disposed the previous show on every
+    /// repeat would leave the on-screen banners with no live subscription to deliver to, which is the
+    /// opposite of what the demonstration is for.
+    /// </remarks>
+    private readonly List<ToastShow> _toastShows = [];
+
+    /// <summary>The timer that shows the first toast, or <see langword="null"/>.</summary>
+    private DispatcherTimer? _toastShowTimer;
+
+    /// <summary>The timer that re-shows the toast (<c>--toast-repeat</c>), or <see langword="null"/>.</summary>
+    private DispatcherTimer? _toastRepeatTimer;
+
+    /// <summary>
+    /// The identity this run used, or <see langword="null"/> without <c>--toast</c>.
+    /// </summary>
+    /// <remarks>
+    /// The override (<c>--toast-aumid</c>) when given, otherwise the library's own default for this
+    /// process - which is the entry assembly's simple name, so the sample registers and shows under
+    /// <c>Trustsoft.NotifyIcon.Sample</c> unless a caller says otherwise. Both are printed at startup.
+    /// </remarks>
+    private string? _toastAppUserModelId;
+
+    /// <summary>The shortcut path the demonstration registered (or would have), or <see langword="null"/>.</summary>
+    private string? _toastShortcutPath;
+
+    /// <summary>Whether this run created the shortcut (false for the <c>--toast-skip-register</c> control).</summary>
+    private bool _toastRegistered;
+
+    /// <summary>Shows this run asked the shell for, for the totals.</summary>
+    private int _toastShowCount;
+
+    /// <summary>
+    /// Shows the shell accepted (<c>Show</c> returned <c>S_OK</c>), for the totals.
+    /// </summary>
+    /// <remarks>
+    /// A <em>request</em>, deliberately not a confirmation: the measurement recorded in
+    /// <c>docs/TOAST-MEASUREMENT.md</c> showed that <c>Show</c> succeeds even for an identity that was
+    /// never registered, so this number says what the shell accepted, not that a banner appeared.
+    /// </remarks>
+    private int _toastShowAcceptedCount;
+
+    /// <summary>Activation callbacks the sample received, for the totals - the slice's exit condition.</summary>
+    private int _toastActivationCount;
+
+    /// <summary>Dismissal callbacks the sample received, for the totals.</summary>
+    private int _toastDismissedCount;
+
+    /// <summary>Delivery-failure callbacks the sample received, for the totals.</summary>
+    private int _toastFailedCount;
+
+    /// <summary>The argument string of the most recent activation, or <see langword="null"/>.</summary>
+    private string? _toastLastActivationArguments;
+
+    /// <summary>
+    /// Whether the toast demonstration has been torn down; the guard that makes
+    /// <see cref="StopToastDemonstration"/> idempotent across the sample's several exit paths.
+    /// </summary>
+    private bool _toastStopped;
 
     /// <inheritdoc />
     protected override void OnStartup(StartupEventArgs e)
@@ -552,7 +708,313 @@ public partial class App : Application
             _balloonShowTimer.Tick += OnBalloonShowRequestTick;
             _balloonShowTimer.Start();
         }
+
+        if (arguments.Toast)
+        {
+            // M002/S01's live end-to-end run. It is started last so every configuration line a capture
+            // needs to attribute the run is already on the console when the first toast appears.
+            StartToastDemonstration(arguments);
+        }
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // M002/S01 toast demonstration (--toast)
+    //
+    // The windowless form of the slice's exit condition: register an identity, show a toast from a
+    // process with no window, subscribe to activation, and print what arrives when the user clicks the
+    // banner's body. What each line is for, and what the measurement already fixed about this path, is
+    // in docs/TOAST-MEASUREMENT.md.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Starts the S01 toast demonstration: derives the identity, registers it (or deliberately does
+    /// not, for the negative control), and schedules the first show.
+    /// </summary>
+    /// <param name="arguments">The parsed switches; <see cref="SampleArguments.Toast"/> is true.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Registration is reported before anything is shown.</b> The identity is what a click would be
+    /// routed to, so a run has to say which identity it used and whether the shortcut really carries it
+    /// - the read-back from a <em>fresh</em> shell link, not the writer's own object. The measured trap
+    /// (<c>docs/TOAST-MEASUREMENT.md</c>, Contract 1) is that a shortcut can exist and still carry no
+    /// property, so the value is printed next to the write's result.
+    /// </para>
+    /// <para>
+    /// <b>The control is not a "registration failed" case.</b> With <c>--toast-skip-register</c> the
+    /// sample never writes the shortcut and runs the identical show path, because the measurement
+    /// recorded that <c>Show</c> succeeds anyway and the toast still reaches the Action Center. What
+    /// differs without registration is the routing of an activation, so the control's verdict is the
+    /// absence of an activation, and the sample prints the identity's read-back state up front so the
+    /// control's cleanliness is a reading rather than an assumption.
+    /// </para>
+    /// </remarks>
+    private void StartToastDemonstration(SampleArguments arguments)
+    {
+        _toastApi = new ToastApi();
+        _toastIdentity = new ToastIdentity(_toastApi);
+
+        string appUserModelId = string.IsNullOrEmpty(arguments.ToastAppUserModelId)
+            ? ToastIdentity.DeriveDefaultAppUserModelId()
+            : arguments.ToastAppUserModelId!;
+
+        _toastAppUserModelId = appUserModelId;
+        _toastShortcutPath = ToastIdentity.DefaultShortcutPath(appUserModelId);
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast demonstration: identity='{appUserModelId}' shortcut='{_toastShortcutPath}' register={!arguments.ToastSkipRegister} repeat={DescribeToastRepeat(arguments.ToastRepeat)} - the public toast API does not exist yet (S02/S03), so this demonstration drives the library's internal seam through the sample's InternalsVisibleTo grant."));
+
+        ToastIdentity identity = _toastIdentity;
+        string shortcutPath = _toastShortcutPath;
+
+        if (arguments.ToastSkipRegister)
+        {
+            ToastIdentityResult existing = identity.ReadBack(shortcutPath);
+            bool carriesTheIdentity = existing.Success
+                && string.Equals(existing.AppUserModelId, appUserModelId, StringComparison.Ordinal);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast demonstration negative control: no shortcut is created; read-back success={existing.Success} operation='{existing.Operation}' code=0x{existing.Code:X8} value='{existing.AppUserModelId ?? "(null)"}' carriesTheIdentity={carriesTheIdentity}"));
+
+            if (carriesTheIdentity)
+            {
+                Console.Error.WriteLine("[sample] toast demonstration negative control is NOT clean: this identity already carries the AppUserModelID, so an activation delivered in this run would not distinguish a registered identity from an unregistered one. Register under a different identity or remove that shortcut.");
+            }
+        }
+        else
+        {
+            ToastIdentityResult register = identity.Register(appUserModelId, shortcutPath);
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast registration: success={register.Success} operation='{register.Operation}' code=0x{register.Code:X8} aumid='{register.AppUserModelId ?? "(null)"}'"));
+
+            ToastIdentityResult readBack = identity.ReadBack(shortcutPath);
+            bool matches = readBack.Success
+                && string.Equals(readBack.AppUserModelId, appUserModelId, StringComparison.Ordinal);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast registration read-back (fresh shell link): success={readBack.Success} operation='{readBack.Operation}' code=0x{readBack.Code:X8} value='{readBack.AppUserModelId ?? "(null)"}' matchesExpected={matches}"));
+
+            if (!register.Success || !matches)
+            {
+                // Loud and named, and no toast is shown: the one thing this demonstration must never do
+                // is appear to succeed with an identity that is not routable (R013/D055 posture).
+                Console.Error.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"[sample] toast registration failed ({register.Operation} 0x{register.Code:X8}; read-back matches={matches}), so no toast is shown: without the identity in the shortcut an activation has nowhere to be routed to."));
+                Console.Out.Flush();
+                return;
+            }
+
+            _toastRegistered = true;
+        }
+
+        TimeSpan delay = arguments.ToastAfter ?? DefaultToastDelay;
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast show scheduled: first show after {delay.TotalSeconds:0.#}s (--toast-after); the toast's launch argument is '{ToastLaunchPrefix}N', so the activation a click delivers names the show it came from."));
+
+        _toastShowTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = delay };
+        _toastShowTimer.Tick += OnToastShowTick;
+        _toastShowTimer.Start();
+
+        if (arguments.ToastRepeat is TimeSpan repeatInterval)
+        {
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast repeat requested: the toast is re-shown every {repeatInterval.TotalSeconds:0.#}s (--toast-repeat), so a banner is available to click for as long as the run lasts."));
+
+            _toastRepeatTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = repeatInterval };
+            _toastRepeatTimer.Tick += OnToastRepeatTick;
+            _toastRepeatTimer.Start();
+        }
+
+        Console.Out.Flush();
+    }
+
+    /// <summary>Shows the first toast once the scheduled delay has elapsed.</summary>
+    private void OnToastShowTick(object? sender, EventArgs e)
+    {
+        _toastShowTimer?.Stop();
+        _toastShowTimer = null;
+        ShowToastOnce();
+    }
+
+    /// <summary>Re-shows the toast on the repeat interval, so a banner stays available to click.</summary>
+    private void OnToastRepeatTick(object? sender, EventArgs e) => ShowToastOnce();
+
+    /// <summary>
+    /// Asks the shell for one toast over a fresh <see cref="ToastShow"/>, and prints what the shell
+    /// answered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>One instance per show.</b> A <see cref="ToastShow"/> owns one shown toast and its
+    /// subscription, so a repeated demonstration creates one per repeat and keeps every one of them
+    /// alive until shutdown: disposing a show unsubscribes it, and a banner whose subscription is gone
+    /// is a banner whose click this process cannot report.
+    /// </para>
+    /// <para>
+    /// <b>What the line claims.</b> <c>Show</c> returning <c>S_OK</c> means the shell accepted the
+    /// toast, not that a banner appeared - the measurement showed the same <c>S_OK</c> for an identity
+    /// that was never registered. So the line says <em>accepted</em> and names the out-of-process
+    /// inventory as the delivery evidence.
+    /// </para>
+    /// </remarks>
+    private void ShowToastOnce()
+    {
+        _toastShowCount++;
+
+        string launch = ToastLaunchPrefix + _toastShowCount.ToString(CultureInfo.InvariantCulture);
+        var payload = new ToastPayload(ToastTitle, ToastBody, launch);
+        var show = new ToastShow(_toastApi!, payload)
+        {
+            Activated = OnToastActivated,
+            Dismissed = OnToastDismissed,
+            Failed = OnToastFailed,
+        };
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast show #{_toastShowCount}: asking the shell for identity='{_toastAppUserModelId}' launch='{launch}' title='{ToastTitle}'"));
+
+        ToastShowResult result = show.Show(_toastAppUserModelId);
+
+        if (result.Success)
+        {
+            _toastShowAcceptedCount++;
+            _toastShows.Add(show);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast show #{_toastShowCount}: the shell accepted it (setting={result.NotificationSetting} raw; S_OK is acceptance, not visibility); delivery is judged out of process with scripts/probe-toast --history '{_toastAppUserModelId}'"));
+        }
+        else
+        {
+            // The show path unwinds itself on failure; Dispose here is the belt to that brace and is
+            // documented idempotent, so a failed show leaves no handle and no subscription behind.
+            show.Dispose();
+            Console.Error.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast show #{_toastShowCount}: REFUSED operation='{result.Operation}' code=0x{result.Code:X8} - the shell did not accept a toast for identity='{_toastAppUserModelId}'"));
+        }
+
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Prints an activation - the slice's exit condition: a click on the toast's body arrives here as
+    /// the launch argument the toast was created with.
+    /// </summary>
+    /// <param name="arguments">The argument string Windows reported, or <see langword="null"/>.</param>
+    /// <remarks>
+    /// The measured delivery scope is D054: an activation arrives only while this process is running
+    /// and pumping, and the argument string is the only payload an unpackaged process receives.
+    /// </remarks>
+    private void OnToastActivated(string? arguments)
+    {
+        _toastActivationCount++;
+        _toastLastActivationArguments = arguments;
+
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast activated: arguments='{arguments ?? "(null)"}' (activation {_toastActivationCount} of {_toastShowCount} show(s))"));
+        Console.Out.Flush();
+    }
+
+    /// <summary>Prints a toast dismissal with the raw reason Windows reported.</summary>
+    /// <param name="reason">The raw <c>ToastDismissedReason</c> (<c>0</c> = user canceled, <c>1</c> = hidden, <c>2</c> = timed out).</param>
+    private void OnToastDismissed(int reason)
+    {
+        _toastDismissedCount++;
+        Console.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast dismissed: reason={reason} ({(reason == 2 ? "timed out" : reason == 1 ? "application hidden" : "user canceled")})"));
+        Console.Out.Flush();
+    }
+
+    /// <summary>Prints a toast delivery failure with the raw code Windows reported.</summary>
+    /// <param name="errorCode">The raw error code from the <c>Failed</c> event.</param>
+    private void OnToastFailed(int errorCode)
+    {
+        _toastFailedCount++;
+        Console.Error.WriteLine(string.Create(
+            CultureInfo.InvariantCulture,
+            $"[sample] toast failed: code=0x{errorCode:X8}"));
+        Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Stops the toast timers, unsubscribes and releases every show, and removes the shortcut this run
+    /// created; safe to call more than once.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The unregistration is part of the demonstration, not housekeeping.</b> The library's identity
+    /// contract is register / read back / remove, so the run ends by removing what it created and then
+    /// reading the shortcut back: the removal is a measurement (the read-back fails at the open step
+    /// once the file is gone) rather than a claim, and the machine is left as the run found it.
+    /// </para>
+    /// <para>
+    /// <b>Disposal is what removes the subscriptions.</b> Each show unsubscribes its three handlers and
+    /// releases its handles, so the process exits with no live toast subscription - the teardown half of
+    /// the measured sequence.
+    /// </para>
+    /// </remarks>
+    private void StopToastDemonstration()
+    {
+        if (_toastStopped)
+        {
+            return;
+        }
+
+        _toastStopped = true;
+
+        _toastShowTimer?.Stop();
+        _toastShowTimer = null;
+        _toastRepeatTimer?.Stop();
+        _toastRepeatTimer = null;
+
+        if (_toastShows.Count > 0)
+        {
+            foreach (ToastShow show in _toastShows)
+            {
+                show.Dispose();
+            }
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast teardown: {_toastShows.Count} show(s) unsubscribed and released - no activation subscription outlives the process."));
+
+            _toastShows.Clear();
+        }
+
+        if (_toastRegistered && _toastIdentity is not null && _toastShortcutPath is not null)
+        {
+            ToastIdentity identity = _toastIdentity;
+            string shortcutPath = _toastShortcutPath;
+
+            ToastIdentityResult remove = identity.Remove(shortcutPath);
+            ToastIdentityResult after = identity.ReadBack(shortcutPath);
+
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast unregistration: remove success={remove.Success} operation='{remove.Operation}' code=0x{remove.Code:X8}; read-back after remove success={after.Success} operation='{after.Operation}' code=0x{after.Code:X8} (a failure at OpenShellLink is the shortcut being gone)"));
+        }
+
+        Console.Out.Flush();
+    }
+
+    /// <summary>Names the effective repeat behaviour for the startup line.</summary>
+    /// <param name="repeatInterval">The parsed interval, or <see langword="null"/>.</param>
+    /// <returns><c>off</c>, or the interval in seconds.</returns>
+    private static string DescribeToastRepeat(TimeSpan? repeatInterval) =>
+        repeatInterval is TimeSpan interval
+            ? string.Create(CultureInfo.InvariantCulture, $"every {interval.TotalSeconds:0.#}s")
+            : "off";
 
     /// <summary>
     /// Opens the assigned menu once, on the sample's own initiative, through the library's click path.
@@ -1350,6 +1812,11 @@ public partial class App : Application
         bool balloonRespectQuietTime = false;
         TimeSpan? showBalloonAfter = null;
         bool declarative = false;
+        bool toast = false;
+        string? toastAppUserModelId = null;
+        bool toastSkipRegister = false;
+        TimeSpan? toastAfter = null;
+        TimeSpan? toastRepeat = null;
         error = null;
         arguments = default!;
 
@@ -1466,6 +1933,79 @@ public partial class App : Application
                     showBalloonAfter = TimeSpan.FromSeconds(balloonDelaySeconds);
                     break;
 
+                case "--toast":
+                    // A flag, like --xaml: the demonstration is the sample's own, so there is nothing
+                    // for the caller to pass and a '=value' spelling would be swallowed silently.
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --toast.";
+                        return false;
+                    }
+
+                    toast = true;
+                    break;
+
+                case "--toast-aumid":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? toastAumidValue))
+                    {
+                        error = $"[sample] '{argument}' needs an identity: use --toast-aumid <id> or --toast-aumid=<id>.";
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(toastAumidValue))
+                    {
+                        error = "[sample] '--toast-aumid' needs a non-empty identity.";
+                        return false;
+                    }
+
+                    toastAppUserModelId = toastAumidValue;
+                    break;
+
+                case "--toast-skip-register":
+                    if (inlineValue is not null)
+                    {
+                        error = $"[sample] '{argument}' takes no value: write it as --toast-skip-register.";
+                        return false;
+                    }
+
+                    toastSkipRegister = true;
+                    break;
+
+                case "--toast-after":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? toastAfterValue))
+                    {
+                        toastAfter = DefaultToastDelay;
+                        break;
+                    }
+
+                    if (!double.TryParse(toastAfterValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double toastDelaySeconds) || toastDelaySeconds < 0)
+                    {
+                        error = $"[sample] '--toast-after' needs a delay in seconds, got '{toastAfterValue}'.";
+                        return false;
+                    }
+
+                    toastAfter = TimeSpan.FromSeconds(toastDelaySeconds);
+                    break;
+
+                case "--toast-repeat":
+                    if (!TryTakeValue(inlineValue, args, ref i, out string? toastRepeatValue))
+                    {
+                        toastRepeat = DefaultToastRepeatInterval;
+                        break;
+                    }
+
+                    // Zero is rejected rather than read as "show once": a repeat interval of zero would
+                    // re-show the toast in a tight loop, and a caller who wants one show writes --toast
+                    // without this switch.
+                    if (!double.TryParse(toastRepeatValue, NumberStyles.Float, CultureInfo.InvariantCulture, out double toastRepeatSeconds) || toastRepeatSeconds <= 0)
+                    {
+                        error = $"[sample] '--toast-repeat' needs a positive interval in seconds, got '{toastRepeatValue}'.";
+                        return false;
+                    }
+
+                    toastRepeat = TimeSpan.FromSeconds(toastRepeatSeconds);
+                    break;
+
                 case "--xaml":
                     // A flag, not a switch with a value: the declaration lives in App.xaml, so there is
                     // nothing for the caller to pass. Combining it with the wiring switches is legal
@@ -1479,7 +2019,15 @@ public partial class App : Application
             }
         }
 
-        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter, declarative);
+        // The toast switches select behaviour inside the demonstration, so one of them without
+        // --toast would be a switch that does nothing - the one failure mode this parser refuses.
+        if (!toast && (toastAppUserModelId is not null || toastSkipRegister || toastAfter is not null || toastRepeat is not null))
+        {
+            error = "[sample] --toast-aumid, --toast-skip-register, --toast-after and --toast-repeat only apply to the toast demonstration: add --toast.";
+            return false;
+        }
+
+        arguments = new SampleArguments(runSeconds, cancelledClickType, openMenuAfter, balloonIconKeyword, balloonNoSound, balloonRealtime, balloonRespectQuietTime, showBalloonAfter, declarative, toast, toastAppUserModelId, toastSkipRegister, toastAfter, toastRepeat);
         return true;
     }
 
@@ -1836,6 +2384,11 @@ public partial class App : Application
         _balloonShowTimer?.Stop();
         _balloonShowTimer = null;
 
+        // Before the icon is disposed, so the toast totals DetachObservers prints are the settled
+        // ones: the teardown below unsubscribes every handler, and a callback arriving after the totals
+        // line would be an activation the capture reports nowhere.
+        StopToastDemonstration();
+
         TrayIcon? trayIcon = _trayIcon;
         _trayIcon = null;
 
@@ -1920,6 +2473,15 @@ public partial class App : Application
         Console.WriteLine(string.Create(
             CultureInfo.InvariantCulture,
             $"[sample] totals: raw callback lines={_rawMessageCount}, pump-observed private-range messages={_pumpMessageCount}, library trace lines={_libraryTraceLineCount}, clicks={_clickCount}, cancelled by a Preview handler={_cancelledClickCount}, balloon show requests={_balloonShowRequestCount} (self={_selfBalloonShowCount}), balloon clicked deliveries={_balloonClickCount}, balloon preview deliveries={_balloonPreviewCount}, menu opens={_menuOpenCount}, menu dismissals={_menuDismissedCount}."));
+
+        if (_toastApi is not null)
+        {
+            // Its own line rather than a longer totals line, so a capture of the S01 toast run can be
+            // compared with the M001-era captures that quote the totals line verbatim.
+            Console.WriteLine(string.Create(
+                CultureInfo.InvariantCulture,
+                $"[sample] toast totals: shows={_toastShowCount}, accepted={_toastShowAcceptedCount}, activations={_toastActivationCount} (last arguments='{_toastLastActivationArguments ?? "(none)"}'), dismissals={_toastDismissedCount}, failures={_toastFailedCount}, registered={_toastRegistered}, identity='{_toastAppUserModelId}'."));
+        }
 
         // Flushed by hand rather than left to the process exit path: the whole point of the raw
         // capture is that the last lines of a run survive it.
@@ -2027,6 +2589,24 @@ public partial class App : Application
     /// assigns a property or subscribes to an event on the icon: markup carries the whole declaration,
     /// which is the thing this mode exists to prove.
     /// </param>
+    /// <param name="Toast">Whether the M002/S01 toast demonstration runs (<c>--toast</c>).</param>
+    /// <param name="ToastAppUserModelId">
+    /// The identity the demonstration registers and shows under (<c>--toast-aumid</c>), or
+    /// <see langword="null"/> to take the library's default for this process (the entry assembly's
+    /// simple name).
+    /// </param>
+    /// <param name="ToastSkipRegister">
+    /// Whether the demonstration never creates the shortcut (<c>--toast-skip-register</c>) - the
+    /// negative control, which runs the same show path with an identity that was never registered.
+    /// </param>
+    /// <param name="ToastAfter">
+    /// The delay after which the demonstration shows its first toast, or <see langword="null"/> when
+    /// <c>--toast-after</c> was not given (the first show then uses the default delay).
+    /// </param>
+    /// <param name="ToastRepeat">
+    /// The interval at which the demonstration re-shows the toast, or <see langword="null"/> for a
+    /// single show.
+    /// </param>
     private sealed record SampleArguments(
         TimeSpan? RunSeconds,
         string? CancelledClickType,
@@ -2036,7 +2616,12 @@ public partial class App : Application
         bool BalloonRealtime,
         bool BalloonRespectQuietTime,
         TimeSpan? ShowBalloonAfter,
-        bool Declarative);
+        bool Declarative,
+        bool Toast,
+        string? ToastAppUserModelId,
+        bool ToastSkipRegister,
+        TimeSpan? ToastAfter,
+        TimeSpan? ToastRepeat);
 
     /// <summary>
     /// Prints what this process's DPI awareness actually is, and whether the manifested PerMonitorV2

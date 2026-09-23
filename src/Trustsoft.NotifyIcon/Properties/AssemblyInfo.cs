@@ -2,6 +2,19 @@
 // from the test assembly without widening the shipped public API (D009).
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Trustsoft.NotifyIcon.Tests")]
 
+// The windowless sample, for the M002/S01 live end-to-end run.
+//
+// The toast seam (IToastApi, ToastApi, ToastIdentity, ToastShow, ToastPayload) is internal and S01 has
+// no public toast surface yet: the public ToastNotifier/ToastContent is S02/S03 work (D052, D056).
+// The slice's exit condition is nevertheless a live run from the windowless sample - register, show,
+// subscribe, print the activation - so the sample has to reach the seam that exists now. This is a
+// grant to a non-shipping project in this repository only (the sample declares IsPackable=false and
+// is not a package), it widens no public API, and it is temporary in spirit: once S02/S03 ship the
+// public toast surface the sample's demonstration moves onto it, and this line can go. The sample's
+// tray code stays free of library internals (it reaches the library's hidden host window only through
+// public window enumeration), so nothing about the shipped consumer surface changes.
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Trustsoft.NotifyIcon.Sample")]
+
 // The consumer namespace for markup (S06).
 //
 // Without this, a declarative consumer has to write the CLR namespace and the assembly name by hand -
