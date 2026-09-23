@@ -85,6 +85,27 @@ public sealed class ToastException : Exception
     public const string OperationNotificationFailed = ToastShow.OperationNotificationFailed;
 
     /// <summary>
+    /// The <see cref="Operation"/> value for an image the notifier could not turn into what the
+    /// shell needs: a <see cref="ToastImage.Source"/> that could not be read, PNG-encoded or
+    /// written to the library's temp folder.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is a <em>value-level</em> operation name like <see cref="OperationInvalidArgument"/> and
+    /// <see cref="OperationReadBackMismatch"/>: the failure can come from the rasterizer (which
+    /// reports a Win32 code, usually <c>0</c>), from WPF's PNG encoder, or from the file system, so
+    /// <see cref="ErrorCode"/> is the most specific code the failing step reported - a Win32 error
+    /// for the rasterizer, the failing exception's <c>HRESULT</c> otherwise - or <c>0</c> when no
+    /// code describes it. <b><c>0</c> never means the operation succeeded.</b>
+    /// </para>
+    /// <para>
+    /// It mirrors the internal <c>ToastImageFile.OperationImageResolution</c> constant so the
+    /// resolver and this type cannot spell the same failure differently.
+    /// </para>
+    /// </remarks>
+    public const string OperationImageResolution = "ImageResolution";
+
+    /// <summary>
     /// The <see cref="Operation"/> value for the identity-level silent failure: the shortcut was
     /// written, the read-back completed, and the value it read did not match the value that was
     /// written (or was absent).

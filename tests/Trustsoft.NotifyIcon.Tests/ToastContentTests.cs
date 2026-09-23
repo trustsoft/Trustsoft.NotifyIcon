@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Xml.Linq;
 using Xunit;
 
@@ -80,11 +82,13 @@ public sealed class ToastContentTests
     public void Every_content_field_round_trips()
     {
         var expiry = new DateTimeOffset(2026, 9, 23, 14, 30, 0, TimeSpan.FromHours(3));
+        BitmapSource source = BitmapSource.Create(1, 1, 96, 96, PixelFormats.Bgra32, null, new byte[4], 4);
         var image = new ToastImage
         {
             Reference = "file:///C:/images/logo.png",
             Placement = ToastImagePlacement.Hero,
             CircleCrop = true,
+            Source = source,
         };
 
         var content = new ToastContent
@@ -110,6 +114,7 @@ public sealed class ToastContentTests
         Assert.Equal("file:///C:/images/logo.png", content.Image!.Reference);
         Assert.Equal(ToastImagePlacement.Hero, content.Image.Placement);
         Assert.True(content.Image.CircleCrop);
+        Assert.Same(source, content.Image.Source);
         Assert.Equal("build", content.Tag);
         Assert.Equal("ci", content.Group);
         Assert.Equal(expiry, content.Expiry);
@@ -269,6 +274,7 @@ public sealed class ToastContentTests
         var image = new ToastImage();
 
         Assert.Equal(string.Empty, image.Reference);
+        Assert.Null(image.Source);
         Assert.Equal(ToastImagePlacement.AppLogoOverride, image.Placement);
         Assert.False(image.CircleCrop);
     }
