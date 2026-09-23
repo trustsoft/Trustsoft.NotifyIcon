@@ -70,6 +70,18 @@ internal enum ToastOperation
     /// <summary><see cref="IToastApi.CreateToastNotification"/>.</summary>
     CreateToastNotification,
 
+    /// <summary><see cref="IToastApi.SetNotificationTag"/>. A notification property, not toast XML.</summary>
+    SetNotificationTag,
+
+    /// <summary><see cref="IToastApi.SetNotificationGroup"/>. A notification property, not toast XML.</summary>
+    SetNotificationGroup,
+
+    /// <summary><see cref="IToastApi.CreateDateTimePropertyValue"/>. The expiry's boxing step.</summary>
+    CreateDateTimePropertyValue,
+
+    /// <summary><see cref="IToastApi.SetNotificationExpirationTime"/>. A notification property, not toast XML.</summary>
+    SetNotificationExpirationTime,
+
     /// <summary><see cref="IToastApi.Show"/>.</summary>
     Show,
 
@@ -588,6 +600,59 @@ internal sealed class FakeToastApi : IToastApi
 
         notification = NextHandle();
         return RecordHandle(ToastOperation.CreateToastNotification, notification, "CreateToastNotification");
+    }
+
+    /// <inheritdoc />
+    public int SetNotificationTag(IntPtr notification, string tag)
+    {
+        if (ConsumeFailure(ToastOperation.SetNotificationTag))
+        {
+            _calls.Add(new ToastCall(nameof(SetNotificationTag), FailureHResult, "scripted failure"));
+            return FailureHResult;
+        }
+
+        _calls.Add(new ToastCall(nameof(SetNotificationTag), 0, $"put_Tag=\"{tag}\""));
+        return 0;
+    }
+
+    /// <inheritdoc />
+    public int SetNotificationGroup(IntPtr notification, string group)
+    {
+        if (ConsumeFailure(ToastOperation.SetNotificationGroup))
+        {
+            _calls.Add(new ToastCall(nameof(SetNotificationGroup), FailureHResult, "scripted failure"));
+            return FailureHResult;
+        }
+
+        _calls.Add(new ToastCall(nameof(SetNotificationGroup), 0, $"put_Group=\"{group}\""));
+        return 0;
+    }
+
+    /// <inheritdoc />
+    public int CreateDateTimePropertyValue(long winrtUniversalTime, out IntPtr propertyValue)
+    {
+        if (ConsumeFailure(ToastOperation.CreateDateTimePropertyValue))
+        {
+            propertyValue = IntPtr.Zero;
+            _calls.Add(new ToastCall(nameof(CreateDateTimePropertyValue), FailureHResult, "scripted failure"));
+            return FailureHResult;
+        }
+
+        propertyValue = NextHandle();
+        return RecordHandle(ToastOperation.CreateDateTimePropertyValue, propertyValue, $"CreateDateTime(universalTime={winrtUniversalTime})");
+    }
+
+    /// <inheritdoc />
+    public int SetNotificationExpirationTime(IntPtr notification, IntPtr propertyValue)
+    {
+        if (ConsumeFailure(ToastOperation.SetNotificationExpirationTime))
+        {
+            _calls.Add(new ToastCall(nameof(SetNotificationExpirationTime), FailureHResult, "scripted failure"));
+            return FailureHResult;
+        }
+
+        _calls.Add(new ToastCall(nameof(SetNotificationExpirationTime), 0, $"put_ExpirationTime(propertyValue=0x{propertyValue.ToInt64():X})"));
+        return 0;
     }
 
     /// <inheritdoc />

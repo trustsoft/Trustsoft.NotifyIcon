@@ -58,12 +58,19 @@ internal sealed class ToastApi : IToastApi
     private const string ToastNotificationManagerClassName = "Windows.UI.Notifications.ToastNotificationManager";
     private const string ToastNotificationClassName = "Windows.UI.Notifications.ToastNotification";
     private const string XmlDocumentClassName = "Windows.Data.Xml.Dom.XmlDocument";
+    private const string PropertyValueClassName = "Windows.Foundation.PropertyValue";
 
     // Not readonly: the raw COM interop passes them by ref (CS0199 for a static readonly field).
     private static Guid IidToastNotificationManagerStatics = new("50AC103F-D235-4598-BBEF-98FE4D1A3AD4");
     private static Guid IidToastNotificationFactory = new("04124B20-82C6-4229-B109-FD9ED4662B53");
     private static Guid IidXmlDocument = new("F7F3A506-1E87-42D6-BCFB-B8C809FA5494");
     private static Guid IidXmlDocumentIO = new("6CD0E74E-EE65-4489-9EBF-CA43E87BA637");
+
+    /// <summary><c>IToastNotification2</c>: carries the tag and group (not toast XML).</summary>
+    private static Guid IidToastNotification2 = new("9DFB9FD1-143A-490E-90BF-B9FBA7132DE7");
+
+    /// <summary><c>IPropertyValueStatics</c>: the <c>Windows.Foundation.PropertyValue</c> statics that box the expiry.</summary>
+    private static Guid IidPropertyValueStatics = new("629BDBC8-D932-4FF4-96B9-8D96C5C1E858");
 
     /// <summary><c>IToastNotificationManagerStatics.CreateToastNotifierWithId</c>.</summary>
     private const int StaticsCreateToastNotifierWithIdSlot = 7;
@@ -76,6 +83,29 @@ internal sealed class ToastApi : IToastApi
 
     /// <summary><c>IToastNotificationFactory.CreateToastNotification</c>.</summary>
     private const int NotificationFactoryCreateToastNotificationSlot = 6;
+
+    /// <summary>
+    /// <c>IToastNotification2.put_Tag</c>: <c>put_Tag</c> 6, <c>get_Tag</c> 7, <c>put_Group</c> 8,
+    /// <c>get_Group</c> 9 (windows.ui.notifications.idl, uuid 9DFB9FD1-143A-490E-90BF-B9FBA7132DE7).
+    /// </summary>
+    private const int ToastNotification2PutTagSlot = 6;
+
+    /// <summary><c>IToastNotification2.put_Group</c>.</summary>
+    private const int ToastNotification2PutGroupSlot = 8;
+
+    /// <summary>
+    /// <c>IToastNotification.put_ExpirationTime</c>: <c>get_Content</c> 6, <c>put_ExpirationTime</c> 7,
+    /// <c>get_ExpirationTime</c> 8, then the event pairs at 9-14
+    /// (windows.ui.notifications.idl, uuid 997E2675-059E-4E60-8B06-1760917C8B80).
+    /// </summary>
+    private const int ToastPutExpirationTimeSlot = 7;
+
+    /// <summary>
+    /// <c>IPropertyValueStatics.CreateDateTime</c>: the statics' methods start at slot 6
+    /// (<c>CreateEmpty</c>), and <c>CreateDateTime</c> is the sixteenth of them
+    /// (windows.foundation.idl, uuid 629BDBC8-D932-4FF4-96B9-8D96C5C1E858).
+    /// </summary>
+    private const int PropertyValueStaticsCreateDateTimeSlot = 21;
 
     /// <summary><c>IXmlDocumentIO.LoadXml</c>.</summary>
     private const int XmlDocumentIoLoadXmlSlot = 6;
@@ -270,6 +300,94 @@ internal sealed class ToastApi : IToastApi
             ReleaseHandle(content);
         }
     }
+
+    /// <inheritdoc />
+    public int SetNotificationTag(IntPtr notification, string tag)
+    {
+        // put_Tag lives on IToastNotification2, which the notification exposes by QueryInterface.
+        int hr = QueryInterface(notification, ref IidToastNotification2, out IntPtr notification2);
+        if (hr < 0)
+        {
+            NotifyIconTrace.Verbose($"toast: QueryInterface(IToastNotification2) hr=0x{hr:X8}");
+            return hr;
+        }
+
+        try
+        {
+            using HString value = new(tag);
+            if (value.HResult < 0)
+            {
+                return value.HResult;
+            }
+
+            hr = Vtable<PutHStringFn>(notification2, ToastNotification2PutTagSlot)(notification2, value.Handle);
+            NotifyIconTrace.Verbose($"toast: put_Tag('{tag}') hr=0x{hr:X8}");
+            return hr;
+        }
+        finally
+        {
+            ReleaseHandle(notification2);
+        }
+    }
+
+    /// <inheritdoc />
+    public int SetNotificationGroup(IntPtr notification, string group)
+    {
+        int hr = QueryInterface(notification, ref IidToastNotification2, out IntPtr notification2);
+        if (hr < 0)
+        {
+            NotifyIconTrace.Verbose($"toast: QueryInterface(IToastNotification2) hr=0x{hr:X8}");
+            return hr;
+        }
+
+        try
+        {
+            using HString value = new(group);
+            if (value.HResult < 0)
+            {
+                return value.HResult;
+            }
+
+            hr = Vtable<PutHStringFn>(notification2, ToastNotification2PutGroupSlot)(notification2, value.Handle);
+            NotifyIconTrace.Verbose($"toast: put_Group('{group}') hr=0x{hr:X8}");
+            return hr;
+        }
+        finally
+        {
+            ReleaseHandle(notification2);
+        }
+    }
+
+    /// <inheritdoc />
+    public int CreateDateTimePropertyValue(long winrtUniversalTime, out IntPtr propertyValue)
+    {
+        propertyValue = IntPtr.Zero;
+        InitializeRuntime();
+
+        // The statics factory is an implementation detail of this member: it is acquired and
+        // released here and hands out no handle of its own.
+        int hr = AcquireActivationFactory(PropertyValueClassName, ref IidPropertyValueStatics, out IntPtr statics);
+        if (hr < 0)
+        {
+            NotifyIconTrace.Verbose($"toast: RoGetActivationFactory({PropertyValueClassName} -> IPropertyValueStatics) hr=0x{hr:X8}");
+            return hr;
+        }
+
+        try
+        {
+            hr = Vtable<CreateDateTimeFn>(statics, PropertyValueStaticsCreateDateTimeSlot)(statics, winrtUniversalTime, out propertyValue);
+            NotifyIconTrace.Verbose($"toast: PropertyValue.CreateDateTime(universalTime={winrtUniversalTime}) hr=0x{hr:X8}");
+            return hr;
+        }
+        finally
+        {
+            ReleaseHandle(statics);
+        }
+    }
+
+    /// <inheritdoc />
+    public int SetNotificationExpirationTime(IntPtr notification, IntPtr propertyValue) =>
+        Vtable<PutExpirationTimeFn>(notification, ToastPutExpirationTimeSlot)(notification, propertyValue);
 
     /// <inheritdoc />
     public int Show(IntPtr notifier, IntPtr notification) =>
@@ -638,6 +756,21 @@ internal sealed class ToastApi : IToastApi
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int CreateToastNotificationFn(IntPtr self, IntPtr content, out IntPtr notification);
 
+    /// <summary><c>put_Tag</c> / <c>put_Group</c>: an HSTRING taken by value.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int PutHStringFn(IntPtr self, IntPtr value);
+
+    /// <summary>
+    /// <c>IPropertyValueStatics.CreateDateTime</c>: a <c>Windows.Foundation.DateTime</c> (a single
+    /// <c>INT64</c>) by value, returning the boxed value through an <c>IInspectable*</c> out-parameter.
+    /// </summary>
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int CreateDateTimeFn(IntPtr self, long universalTime, out IntPtr propertyValue);
+
+    /// <summary><c>put_ExpirationTime</c>: an <c>IReference&lt;DateTime&gt;*</c> taken as an interface pointer.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int PutExpirationTimeFn(IntPtr self, IntPtr propertyValue);
+
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate int ShowFn(IntPtr self, IntPtr notification);
 
@@ -793,6 +926,13 @@ internal sealed class ToastShow : IDisposable
     private IntPtr _notifier;
     private IntPtr _notification;
 
+    /// <summary>
+    /// The boxed <c>IReference&lt;DateTime&gt;</c> this show created for the expiry, tracked so it
+    /// is released exactly once - at teardown on the success path and during the unwind on the
+    /// failure path.
+    /// </summary>
+    private IntPtr _expirationPropertyValue;
+
     private long _activatedToken;
     private long _dismissedToken;
     private long _failedToken;
@@ -830,6 +970,22 @@ internal sealed class ToastShow : IDisposable
 
     /// <summary>Gets whether a notification is currently live (shown and not yet torn down).</summary>
     internal bool IsShown => _notification != IntPtr.Zero;
+
+    /// <summary>
+    /// Converts a <see cref="DateTimeOffset"/> to the instant representation
+    /// <c>Windows.Foundation.DateTime</c> carries: 100-nanosecond ticks since 1601-01-01T00:00:00Z.
+    /// </summary>
+    /// <param name="value">The instant to convert.</param>
+    /// <returns>The universal-time value for the property-value boxing step.</returns>
+    /// <remarks>
+    /// The epoch offset is the number of 100-ns ticks between the WinRT epoch (1601-01-01) and the
+    /// CLR epoch (0001-01-01), <c>504_911_232_000_000_000</c>. The conversion goes through
+    /// <c>UtcDateTime</c> so a <see cref="DateTimeOffset"/>'s own offset cannot shift the instant;
+    /// 1970-01-01T00:00:00Z then yields <c>116_444_736_000_000_000</c> (the 11,644,473,600 seconds
+    /// between the two epochs, in 100-ns units).
+    /// </remarks>
+    internal static long ToWinRtUniversalTime(DateTimeOffset value) =>
+        value.UtcDateTime.Ticks - 504_911_232_000_000_000L;
 
     /// <summary>
     /// Runs the measured show sequence for one identity.
@@ -904,6 +1060,53 @@ internal sealed class ToastShow : IDisposable
         if (hr < 0)
         {
             return Fail(nameof(IToastApi.CreateToastNotification), hr);
+        }
+
+        // Tag, group and expiry are ToastNotification properties, not toast XML: the document has
+        // no attribute for them, so they are written onto the notification object itself, in one
+        // fixed order, before the subscriptions.
+        ToastContent content = _payload.Content;
+
+        if (!string.IsNullOrEmpty(content.Tag))
+        {
+            hr = _api.SetNotificationTag(_notification, content.Tag);
+            if (hr < 0)
+            {
+                return Fail(nameof(IToastApi.SetNotificationTag), hr);
+            }
+
+            NotifyIconTrace.Verbose($"toast show: SetNotificationTag(put_Tag) hr=0x{hr:X8} tag='{content.Tag}'");
+        }
+
+        if (!string.IsNullOrEmpty(content.Group))
+        {
+            hr = _api.SetNotificationGroup(_notification, content.Group);
+            if (hr < 0)
+            {
+                return Fail(nameof(IToastApi.SetNotificationGroup), hr);
+            }
+
+            NotifyIconTrace.Verbose($"toast show: SetNotificationGroup(put_Group) hr=0x{hr:X8} group='{content.Group}'");
+        }
+
+        if (content.Expiry is { } expiry)
+        {
+            long universalTime = ToWinRtUniversalTime(expiry);
+            hr = _api.CreateDateTimePropertyValue(universalTime, out _expirationPropertyValue);
+            if (hr < 0)
+            {
+                return Fail(nameof(IToastApi.CreateDateTimePropertyValue), hr);
+            }
+
+            NotifyIconTrace.Verbose($"toast show: CreateDateTimePropertyValue(CreateDateTime) hr=0x{hr:X8} universalTime={universalTime}");
+
+            hr = _api.SetNotificationExpirationTime(_notification, _expirationPropertyValue);
+            if (hr < 0)
+            {
+                return Fail(nameof(IToastApi.SetNotificationExpirationTime), hr);
+            }
+
+            NotifyIconTrace.Verbose($"toast show: SetNotificationExpirationTime(put_ExpirationTime) hr=0x{hr:X8} expiry='{expiry:O}'");
         }
 
         // Subscribe before Show so an activation that races the display is not lost.
@@ -993,6 +1196,7 @@ internal sealed class ToastShow : IDisposable
     /// </remarks>
     private void ReleaseHandles()
     {
+        Release(ref _expirationPropertyValue);
         Release(ref _notification);
         Release(ref _notifier);
         Release(ref _xmlDocument);

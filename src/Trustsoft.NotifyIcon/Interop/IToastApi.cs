@@ -352,6 +352,92 @@ internal interface IToastApi
     int CreateToastNotification(IntPtr factory, IntPtr xmlDocument, out IntPtr notification);
 
     /// <summary>
+    /// Sets the notification's tag through <c>IToastNotification2.put_Tag</c>.
+    /// </summary>
+    /// <param name="notification">The notification handle from <see cref="CreateToastNotification"/>.</param>
+    /// <param name="tag">The tag to write; the shell pairs it with the group to identify the toast.</param>
+    /// <returns>The raw <c>HRESULT</c> of the <c>QueryInterface</c> or of <c>put_Tag</c>.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The tag is not toast XML.</b> The toast document has exactly five attributes
+    /// (<c>launch</c>, <c>duration</c>, <c>displayTimestamp</c>, <c>scenario</c>,
+    /// <c>useButtonStyle</c>) and no tag, group or expiry, so these three fields are applied to the
+    /// notification object instead. Authority: the 10.0.26100 WinRT metadata
+    /// (<c>windows.ui.notifications.idl</c>, <c>IToastNotification2</c>, uuid
+    /// <c>9DFB9FD1-143A-490E-90BF-B9FBA7132DE7</c>, <c>put_Tag</c> at vtable slot 6; the interface
+    /// is flat over <c>IInspectable</c>, so its own methods start at slot 6).
+    /// </para>
+    /// <para>
+    /// The implementation queries <c>IToastNotification2</c> from the notification and then calls
+    /// <c>put_Tag</c>; the queried interface is released inside this member, and the
+    /// <paramref name="notification"/> handle stays owned by the caller. <b>Consumed by T03</b>
+    /// (<c>ToastShow</c>).
+    /// </para>
+    /// </remarks>
+    int SetNotificationTag(IntPtr notification, string tag);
+
+    /// <summary>
+    /// Sets the notification's group through <c>IToastNotification2.put_Group</c>.
+    /// </summary>
+    /// <param name="notification">The notification handle from <see cref="CreateToastNotification"/>.</param>
+    /// <param name="group">The group to write; the shell pairs it with the tag to identify the toast.</param>
+    /// <returns>The raw <c>HRESULT</c> of the <c>QueryInterface</c> or of <c>put_Group</c>.</returns>
+    /// <remarks>
+    /// Like <see cref="SetNotificationTag"/>, a group is a property of the notification object
+    /// rather than a toast-XML attribute. Authority: <c>windows.ui.notifications.idl</c>,
+    /// <c>IToastNotification2</c> (uuid <c>9DFB9FD1-143A-490E-90BF-B9FBA7132DE7</c>),
+    /// <c>put_Group</c> at vtable slot 8 (<c>put_Tag</c> 6, <c>get_Tag</c> 7, <c>put_Group</c> 8).
+    /// <b>Consumed by T03.</b>
+    /// </remarks>
+    int SetNotificationGroup(IntPtr notification, string group);
+
+    /// <summary>
+    /// Boxes a WinRT universal-time value into a new <c>IReference&lt;DateTime&gt;</c> through
+    /// <c>Windows.Foundation.PropertyValue.CreateDateTime</c>.
+    /// </summary>
+    /// <param name="winrtUniversalTime">
+    /// The instant as Windows.Foundation.DateTime expects it: 100-nanosecond ticks since
+    /// 1601-01-01T00:00:00Z (see <c>ToastShow.ToWinRtUniversalTime</c> for the conversion).
+    /// </param>
+    /// <param name="propertyValue">
+    /// Receives the boxed property value; <see cref="IntPtr.Zero"/> on failure. It is an
+    /// <c>IInspectable*</c> at the ABI, which is why it crosses the seam as an opaque handle, and it
+    /// is owned by the caller and must be released through <see cref="ReleaseHandle"/>.
+    /// </param>
+    /// <returns>The raw <c>HRESULT</c> of <c>RoGetActivationFactory</c> or of <c>CreateDateTime</c>.</returns>
+    /// <remarks>
+    /// The expiry path's second half: <c>IToastNotification.put_ExpirationTime</c> takes an
+    /// <c>IReference&lt;DateTime&gt;</c>, so the library boxes its own through the
+    /// <c>Windows.Foundation.PropertyValue</c> statics rather than through a projection type.
+    /// Authority: <c>windows.foundation.idl</c>, <c>IPropertyValueStatics</c> (uuid
+    /// <c>629BDBC8-D932-4FF4-96B9-8D96C5C1E858</c>), <c>CreateDateTime</c> at vtable slot 21. The
+    /// statics factory is an implementation detail of this member - it is acquired and released
+    /// here and hands out no handle of its own; the returned <paramref name="propertyValue"/> is the
+    /// caller's to release. <b>Consumed by T03.</b>
+    /// </remarks>
+    int CreateDateTimePropertyValue(long winrtUniversalTime, out IntPtr propertyValue);
+
+    /// <summary>
+    /// Sets the notification's expiry through <c>IToastNotification.put_ExpirationTime</c>.
+    /// </summary>
+    /// <param name="notification">The notification handle from <see cref="CreateToastNotification"/>.</param>
+    /// <param name="propertyValue">
+    /// The boxed <c>IReference&lt;DateTime&gt;</c> from <see cref="CreateDateTimePropertyValue"/>.
+    /// Ownership stays with the caller: the notification borrows it for the write only, and the
+    /// caller releases it through <see cref="ReleaseHandle"/>.
+    /// </param>
+    /// <returns>The raw <c>HRESULT</c> of <c>put_ExpirationTime</c>.</returns>
+    /// <remarks>
+    /// The expiry is not toast XML either; it is written onto the notification object. Authority:
+    /// <c>windows.ui.notifications.idl</c>, <c>IToastNotification</c> (uuid
+    /// <c>997E2675-059E-4E60-8B06-1760917C8B80</c>): <c>get_Content</c> is slot 6,
+    /// <c>put_ExpirationTime</c> slot 7 (propput precedes propget), <c>get_ExpirationTime</c> slot 8,
+    /// and the <c>Dismissed</c>/<c>Activated</c>/<c>Failed</c> add/remove pairs at 9-14 match the
+    /// constants S01 already ships. <b>Consumed by T03.</b>
+    /// </remarks>
+    int SetNotificationExpirationTime(IntPtr notification, IntPtr propertyValue);
+
+    /// <summary>
     /// Shows the notification through <c>IToastNotifier.Show</c>.
     /// </summary>
     /// <param name="notifier">The notifier bound to the registered identity.</param>

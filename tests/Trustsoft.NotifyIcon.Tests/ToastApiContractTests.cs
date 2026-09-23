@@ -62,6 +62,28 @@ public sealed class ToastApiContractTests
     });
 
     /// <summary>
+    /// Content whose tag, group and expiry must be applied to the notification object rather than
+    /// rendered into the toast XML (the three non-XML fields of D056).
+    /// </summary>
+    private static ToastPayload TaggedPayload => new(new ToastContent
+    {
+        Title = "T03 title",
+        Body = "T03 body",
+        Tag = "t03-tag",
+        Group = "t03-group",
+        Expiry = new DateTimeOffset(2030, 1, 2, 3, 4, 5, TimeSpan.Zero),
+    });
+
+    /// <summary>The four notification-property steps, in the one order the show path must run them.</summary>
+    private static readonly string[] NotificationPropertySequence =
+    [
+        nameof(IToastApi.SetNotificationTag),
+        nameof(IToastApi.SetNotificationGroup),
+        nameof(IToastApi.CreateDateTimePropertyValue),
+        nameof(IToastApi.SetNotificationExpirationTime),
+    ];
+
+    /// <summary>
     /// A successful show produces exactly the measured sequence, binds the notifier to the
     /// registered identity, hands the exact payload XML over, and tearing it down appends the three
     /// unsubscribes and the five releases - nothing more.
@@ -316,6 +338,126 @@ public sealed class ToastApiContractTests
     }
 
     /// <summary>
+    /// Tag, group and expiry are ToastNotification properties, not toast XML: the show path applies
+    /// them, in one fixed order, after the notification exists and before the event subscribes. The
+    /// boxed expiry property value is tracked and released exactly once, with the other handles.
+    /// </summary>
+    [Fact]
+    public void Show_applies_tag_group_and_expiry_as_notification_properties_in_order()
+    {
+        var fake = new FakeToastApi();
+        ToastPayload payload = TaggedPayload;
+        var show = new ToastShow(fake, payload);
+
+        Assert.True(show.Show(AppUserModelId).Success);
+
+        // The four steps run after CreateToastNotification and before SubscribeActivated.
+        int created = IndexOf(fake, nameof(IToastApi.CreateToastNotification));
+        int tag = IndexOf(fake, nameof(IToastApi.SetNotificationTag));
+        int group = IndexOf(fake, nameof(IToastApi.SetNotificationGroup));
+        int propertyValue = IndexOf(fake, nameof(IToastApi.CreateDateTimePropertyValue));
+        int expiry = IndexOf(fake, nameof(IToastApi.SetNotificationExpirationTime));
+        int subscribe = IndexOf(fake, nameof(IToastApi.SubscribeActivated));
+
+        Assert.True(created < tag, "the notification must exist before its tag is set");
+        Assert.True(tag < group, "put_Tag must precede put_Group");
+        Assert.True(group < propertyValue, "the group must be set before the expiry is boxed");
+        Assert.True(propertyValue < expiry, "the boxed property value must exist before put_ExpirationTime");
+        Assert.True(expiry < subscribe, "the notification properties must be applied before the event subscribes");
+
+        // The recorded arguments are the content's own values, converted as documented.
+        Assert.Contains("t03-tag", DetailOf(fake, nameof(IToastApi.SetNotificationTag)), StringComparison.Ordinal);
+        Assert.Contains("t03-group", DetailOf(fake, nameof(IToastApi.SetNotificationGroup)), StringComparison.Ordinal);
+
+        long expectedUniversalTime = ToastShow.ToWinRtUniversalTime(payload.Content.Expiry!.Value);
+        Assert.Contains(expectedUniversalTime.ToString(), DetailOf(fake, nameof(IToastApi.CreateDateTimePropertyValue)), StringComparison.Ordinal);
+
+        show.Dispose();
+
+        // Five handles for the show sequence plus the one boxed property value; each released once.
+        Assert.Equal(6, fake.ReleasedHandles.Count);
+        Assert.Equal(6, fake.ReleasedHandles.Distinct().Count());
+        Assert.DoesNotContain(IntPtr.Zero, fake.ReleasedHandles);
+    }
+
+    /// <summary>
+    /// Content with no tag, group or expiry records none of the four notification-property steps:
+    /// the XML-only path is unchanged, which is what keeps the measured plain-toast sequence valid.
+    /// </summary>
+    [Fact]
+    public void Show_without_tag_group_or_expiry_skips_the_notification_property_steps()
+    {
+        var fake = new FakeToastApi();
+        var show = new ToastShow(fake, Payload);
+
+        Assert.True(show.Show(AppUserModelId).Success);
+
+        foreach (string operation in NotificationPropertySequence)
+        {
+            Assert.DoesNotContain(operation, fake.Operations);
+        }
+
+        show.Dispose();
+
+        Assert.Equal(HandleReturningOperations, fake.ReleasedHandles.Count);
+    }
+
+    /// <summary>
+    /// A failure at any notification-property step is surfaced as that seam member's name plus the
+    /// injected <c>HRESULT</c> and unwinds every handle acquired so far - including the boxed
+    /// property value when the failure is at <c>put_ExpirationTime</c> - leaving no subscription.
+    /// </summary>
+    /// <param name="operationName">The notification-property seam member scripted to fail.</param>
+    /// <param name="expectedReleases">The number of handles acquired before the failing step.</param>
+    [Theory]
+    [InlineData(nameof(IToastApi.SetNotificationTag), 5)]
+    [InlineData(nameof(IToastApi.SetNotificationGroup), 5)]
+    [InlineData(nameof(IToastApi.CreateDateTimePropertyValue), 5)]
+    [InlineData(nameof(IToastApi.SetNotificationExpirationTime), 6)]
+    public void A_failing_notification_property_step_is_surfaced_and_unwinds(string operationName, int expectedReleases)
+    {
+        var fake = new FakeToastApi();
+        fake.FailNext(Enum.Parse<ToastOperation>(operationName));
+
+        var show = new ToastShow(fake, TaggedPayload);
+
+        ToastShowResult result = show.Show(AppUserModelId);
+
+        Assert.False(result.Success);
+        Assert.Equal(operationName, result.Operation);
+        Assert.Equal(FakeToastApi.DefaultFailureHResult, result.Code);
+        Assert.False(show.IsShown);
+
+        // Every handle acquired before the failure was released, exactly once each, and no handler
+        // was ever subscribed (the failure precedes the subscriptions).
+        Assert.Equal(expectedReleases, fake.CallCount(ToastOperation.ReleaseHandle));
+        Assert.Equal(expectedReleases, fake.ReleasedHandles.Distinct().Count());
+        Assert.Empty(fake.UnsubscribedTokens);
+        Assert.False(fake.RaiseActivated("late"));
+
+        // The failure is terminal: disposing afterwards invokes nothing further.
+        int afterFailure = fake.Operations.Count;
+        show.Dispose();
+        Assert.Equal(afterFailure, fake.Operations.Count);
+    }
+
+    /// <summary>
+    /// The expiry conversion maps the 1601-01-01 WinRT epoch and preserves a single 100-ns tick:
+    /// 1970-01-01T00:00:00Z is 116,444,736,000,000,000.
+    /// </summary>
+    [Fact]
+    public void ToWinRtUniversalTime_maps_the_1601_epoch_and_round_trips_a_tick()
+    {
+        Assert.Equal(116444736000000000L, ToastShow.ToWinRtUniversalTime(DateTimeOffset.UnixEpoch));
+
+        // A non-UTC offset must not shift the instant: the conversion goes through UtcDateTime.
+        var instant = new DateTimeOffset(2026, 9, 23, 12, 34, 56, 789, TimeSpan.FromHours(2));
+        Assert.Equal(instant.UtcDateTime.Ticks - 504_911_232_000_000_000L, ToastShow.ToWinRtUniversalTime(instant));
+
+        Assert.Equal(1L, ToastShow.ToWinRtUniversalTime(instant) - ToastShow.ToWinRtUniversalTime(instant.AddTicks(-1)));
+    }
+
+    /// <summary>
     /// <c>GetSetting</c> returning <c>E_NOT_FOUND</c> on first use is measured as benign: the show
     /// must continue (the identity has no notification-setting entry yet).
     /// </summary>
@@ -432,6 +574,13 @@ public sealed class ToastApiContractTests
 
     private static int IndexOf(FakeToastApi fake, string operation) =>
         fake.Operations.ToList().IndexOf(operation);
+
+    /// <summary>Returns the single recorded call's diagnostic detail for one seam operation.</summary>
+    /// <param name="fake">The fake that recorded it.</param>
+    /// <param name="operation">The seam member name.</param>
+    /// <returns>The recorded detail string.</returns>
+    private static string DetailOf(FakeToastApi fake, string operation) =>
+        Assert.Single(fake.Calls.Where(call => call.Operation == operation)).Detail;
 }
 
 /// <summary>

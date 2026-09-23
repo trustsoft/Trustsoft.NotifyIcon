@@ -293,6 +293,18 @@ internal sealed class ShortcutLink : IToastApi
     public int CreateToastNotification(IntPtr factory, IntPtr xmlDocument, out IntPtr notification) => throw NotSupported(nameof(CreateToastNotification));
 
     /// <inheritdoc />
+    public int SetNotificationTag(IntPtr notification, string tag) => throw NotSupported(nameof(SetNotificationTag));
+
+    /// <inheritdoc />
+    public int SetNotificationGroup(IntPtr notification, string group) => throw NotSupported(nameof(SetNotificationGroup));
+
+    /// <inheritdoc />
+    public int CreateDateTimePropertyValue(long winrtUniversalTime, out IntPtr propertyValue) => throw NotSupported(nameof(CreateDateTimePropertyValue));
+
+    /// <inheritdoc />
+    public int SetNotificationExpirationTime(IntPtr notification, IntPtr propertyValue) => throw NotSupported(nameof(SetNotificationExpirationTime));
+
+    /// <inheritdoc />
     public int Show(IntPtr notifier, IntPtr notification) => throw NotSupported(nameof(Show));
 
     /// <inheritdoc />

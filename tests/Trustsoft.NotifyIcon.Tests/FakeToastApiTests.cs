@@ -225,6 +225,97 @@ public sealed class FakeToastApiTests
         Assert.Equal(0, fake.GetLastError());
     }
 
+    /// <summary>
+    /// The four notification-property members (the ones that apply tag, group and expiry to the
+    /// notification object rather than to the toast XML) are recorded with their arguments and can
+    /// each be scripted to fail like every other seam member.
+    /// </summary>
+    [Fact]
+    public void NotificationPropertyMembers_AreRecordedWithTheirArguments()
+    {
+        var fake = new FakeToastApi();
+
+        Assert.Equal(0, fake.SetNotificationTag(IntPtr.Zero, "tag-1"));
+        Assert.Equal(0, fake.SetNotificationGroup(IntPtr.Zero, "group-1"));
+        Assert.Equal(0, fake.CreateDateTimePropertyValue(116444736000000000L, out IntPtr propertyValue));
+        Assert.Equal(0, fake.SetNotificationExpirationTime(IntPtr.Zero, propertyValue));
+        Assert.Equal(0, fake.ReleaseHandle(propertyValue));
+
+        // The recorded order is the order the seam was called in.
+        Assert.Equal(
+            [
+                nameof(IToastApi.SetNotificationTag),
+                nameof(IToastApi.SetNotificationGroup),
+                nameof(IToastApi.CreateDateTimePropertyValue),
+                nameof(IToastApi.SetNotificationExpirationTime),
+                nameof(IToastApi.ReleaseHandle),
+            ],
+            fake.Operations.ToArray());
+
+        // The arguments are the caller's own values, observable without a live shell.
+        Assert.Contains("tag-1", SingleDetail(fake, nameof(IToastApi.SetNotificationTag)), StringComparison.Ordinal);
+        Assert.Contains("group-1", SingleDetail(fake, nameof(IToastApi.SetNotificationGroup)), StringComparison.Ordinal);
+        Assert.Contains("116444736000000000", SingleDetail(fake, nameof(IToastApi.CreateDateTimePropertyValue)), StringComparison.Ordinal);
+
+        // The property value is a fresh non-zero handle that joins the released set, so the show
+        // path's release accounting can be asserted against it.
+        Assert.NotEqual(IntPtr.Zero, propertyValue);
+        Assert.Contains(propertyValue, fake.ReleasedHandles);
+    }
+
+    /// <summary>Each of the four notification-property members can be scripted to fail.</summary>
+    /// <param name="operationName">The seam member scripted to fail.</param>
+    [Theory]
+    [InlineData(nameof(IToastApi.SetNotificationTag))]
+    [InlineData(nameof(IToastApi.SetNotificationGroup))]
+    [InlineData(nameof(IToastApi.CreateDateTimePropertyValue))]
+    [InlineData(nameof(IToastApi.SetNotificationExpirationTime))]
+    public void NotificationPropertyMembers_CanBeScriptedToFail(string operationName)
+    {
+        var operation = Enum.Parse<ToastOperation>(operationName);
+        var fake = new FakeToastApi();
+        fake.FailNext(operation);
+
+        int hr;
+
+        switch (operation)
+        {
+            case ToastOperation.SetNotificationTag:
+                hr = fake.SetNotificationTag(IntPtr.Zero, "scripted-tag");
+                break;
+
+            case ToastOperation.SetNotificationGroup:
+                hr = fake.SetNotificationGroup(IntPtr.Zero, "scripted-group");
+                break;
+
+            case ToastOperation.CreateDateTimePropertyValue:
+                hr = fake.CreateDateTimePropertyValue(1L, out IntPtr failedPropertyValue);
+
+                // A failed boxing step hands out no handle, so there is nothing to release.
+                Assert.Equal(IntPtr.Zero, failedPropertyValue);
+                break;
+
+            default:
+                hr = fake.SetNotificationExpirationTime(IntPtr.Zero, new IntPtr(0x1234));
+                break;
+        }
+
+        Assert.Equal(FakeToastApi.DefaultFailureHResult, hr);
+
+        // The failure is data and is still recorded with its code - never an exception, and never
+        // invisible in the log.
+        ToastCall call = Assert.Single(fake.Calls.Where(candidate => candidate.Operation == operationName));
+        Assert.Equal(FakeToastApi.DefaultFailureHResult, call.HResult);
+        Assert.True(call.HResult < 0);
+    }
+
+    /// <summary>Finds the single recorded call to one operation and returns its diagnostic detail.</summary>
+    /// <param name="fake">The fake that recorded it.</param>
+    /// <param name="operation">The seam member name.</param>
+    /// <returns>The recorded detail string.</returns>
+    private static string SingleDetail(FakeToastApi fake, string operation) =>
+        Assert.Single(fake.Calls.Where(call => call.Operation == operation)).Detail;
+
     private static int IndexOf(FakeToastApi fake, string operation) =>
         fake.Operations.ToList().IndexOf(operation);
 
