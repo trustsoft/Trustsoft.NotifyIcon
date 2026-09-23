@@ -901,9 +901,11 @@ internal readonly struct ToastShowResult
 /// </para>
 /// <para>
 /// <b>Disposal is idempotent and leaves no subscription behind.</b> <see cref="Dispose"/>
-/// unsubscribes the three handlers and releases the notifier, the notification, the document and
-/// both factories exactly once; every later call is a no-op, so a caller can dispose in a
-/// <c>finally</c> without knowing whether <see cref="Show"/> ran or succeeded.
+/// nulls the three callbacks, unsubscribes the three handlers and releases the notifier, the
+/// notification, the document and both factories exactly once; every later call is a no-op, so a
+/// caller can dispose in a <c>finally</c> without knowing whether <see cref="Show"/> ran or
+/// succeeded. Nulling the callbacks is deliberate: an unsubscribe detaches the registration, but a
+/// callback the shell already dequeued can still be invoked, and it must find nothing to invoke.
 /// </para>
 /// <para>
 /// <b>One show per instance.</b> A second <see cref="Show"/> on the same instance is refused as
@@ -1176,9 +1178,15 @@ internal sealed class ToastShow : IDisposable
     }
 
     /// <summary>
-    /// Unsubscribes the three handlers and releases every handle this instance acquired.
+    /// Nulls the three callbacks, unsubscribes the three handlers and releases every handle this
+    /// instance acquired.
     /// </summary>
-    /// <remarks>Idempotent: after the first call every handle is zero and no seam member is invoked again.</remarks>
+    /// <remarks>
+    /// Idempotent: after the first call every handle is zero and no seam member is invoked again.
+    /// The callbacks are nulled <em>before</em> <see cref="Unwind"/> runs: unsubscribing detaches the
+    /// registration, but a callback the shell already dequeued can still be invoked, and it must find
+    /// nothing to invoke rather than re-enter the notifier after teardown.
+    /// </remarks>
     public void Dispose()
     {
         if (_disposed)
@@ -1188,6 +1196,13 @@ internal sealed class ToastShow : IDisposable
 
         _disposed = true;
         NotifyIconTrace.Verbose("toast show: dispose");
+
+        // Null the callbacks first: a dequeued callback that runs after the unsubscribe must find
+        // nothing to invoke, so the show cannot reach the notifier once it has been torn down.
+        Activated = null;
+        Dismissed = null;
+        Failed = null;
+
         Unwind();
     }
 

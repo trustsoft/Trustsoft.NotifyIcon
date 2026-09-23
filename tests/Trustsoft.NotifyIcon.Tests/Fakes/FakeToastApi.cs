@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Trustsoft.NotifyIcon.Interop;
 
 namespace Trustsoft.NotifyIcon.Tests;
@@ -150,6 +151,14 @@ internal readonly record struct ToastCall(string Operation, int HResult, string 
 /// click on a real banner.
 /// </para>
 /// <para>
+/// <b>Dequeued-callback capture.</b> With <see cref="CaptureHandlers"/> set, the fake also retains
+/// the last handler handed to each subscribe member, so <see cref="ReplayActivated"/>,
+/// <see cref="ReplayDismissed"/> and <see cref="ReplayFailed"/> can invoke it <em>after</em> the
+/// matching unsubscribe removed it from the live handler table. That models the race the disposal
+/// guarantee must survive: an unsubscribe detaches the registration, but a callback the shell had
+/// already dequeued can still be invoked.
+/// </para>
+/// <para>
 /// <b>Handles are distinct per call.</b> Each handle-returning member yields a fresh non-zero
 /// handle, so a test can assert that the caller released exactly the handles it was handed rather
 /// than counting releases blind.
@@ -171,6 +180,7 @@ internal sealed class FakeToastApi : IToastApi
     private readonly List<(string Operation, long Token)> _unsubscribeCalls = [];
     private readonly Dictionary<long, Delegate> _handlers = [];
     private readonly Dictionary<ToastOperation, long> _subscriptionTokens = [];
+    private readonly Dictionary<ToastOperation, Delegate> _capturedHandlers = [];
 
     private IntPtr _nextHandle = new(0x5001);
     private long _nextToken = 0x1001;
@@ -281,6 +291,69 @@ internal sealed class FakeToastApi : IToastApi
         return true;
     }
 
+    /// <summary>Invokes the retained <c>Activated</c> handler, even after the matching unsubscribe.</summary>
+    /// <param name="arguments">The argument string to deliver.</param>
+    /// <returns>
+    /// <see langword="true"/> when a handler had been captured and was invoked; <see langword="false"/>
+    /// when nothing was captured (including while <see cref="CaptureHandlers"/> is off).
+    /// </returns>
+    /// <remarks>Models a callback the shell dequeued before the unsubscribe took effect.</remarks>
+    internal bool ReplayActivated(string? arguments)
+    {
+        if (!TryGetCaptured<ToastActivatedHandler>(ToastOperation.SubscribeActivated, out ToastActivatedHandler? handler))
+        {
+            return false;
+        }
+
+        handler(arguments);
+        return true;
+    }
+
+    /// <summary>Invokes the retained <c>Dismissed</c> handler, even after the matching unsubscribe.</summary>
+    /// <param name="reason">The dismissal reason to deliver.</param>
+    /// <returns>
+    /// <see langword="true"/> when a handler had been captured and was invoked; <see langword="false"/>
+    /// when nothing was captured (including while <see cref="CaptureHandlers"/> is off).
+    /// </returns>
+    internal bool ReplayDismissed(int reason)
+    {
+        if (!TryGetCaptured<ToastDismissedHandler>(ToastOperation.SubscribeDismissed, out ToastDismissedHandler? handler))
+        {
+            return false;
+        }
+
+        handler(reason);
+        return true;
+    }
+
+    /// <summary>Invokes the retained <c>Failed</c> handler, even after the matching unsubscribe.</summary>
+    /// <param name="errorCode">The error code to deliver.</param>
+    /// <returns>
+    /// <see langword="true"/> when a handler had been captured and was invoked; <see langword="false"/>
+    /// when nothing was captured (including while <see cref="CaptureHandlers"/> is off).
+    /// </returns>
+    internal bool ReplayFailed(int errorCode)
+    {
+        if (!TryGetCaptured<ToastFailedHandler>(ToastOperation.SubscribeFailed, out ToastFailedHandler? handler))
+        {
+            return false;
+        }
+
+        handler(errorCode);
+        return true;
+    }
+
+    /// <summary>
+    /// Gets or sets whether the fake retains the last handler handed to each subscribe member, so
+    /// the <c>Replay*</c> members can invoke it after the matching unsubscribe removed it from the
+    /// live handler table.
+    /// </summary>
+    /// <remarks>
+    /// Defaults to <see langword="false"/> so no existing test's behaviour changes: every handler
+    /// still records nothing extra and the live handler table is untouched.
+    /// </remarks>
+    internal bool CaptureHandlers { get; set; }
+
     /// <summary>
     /// Gets or sets the value <see cref="IToastApi.GetAppUserModelId"/> reads back.
     /// </summary>
@@ -311,6 +384,19 @@ internal sealed class FakeToastApi : IToastApi
         }
 
         return null;
+    }
+
+    private bool TryGetCaptured<TDelegate>(ToastOperation operation, [NotNullWhen(true)] out TDelegate? handler)
+        where TDelegate : Delegate
+    {
+        if (_capturedHandlers.TryGetValue(operation, out Delegate? stored) && stored is TDelegate typed)
+        {
+            handler = typed;
+            return true;
+        }
+
+        handler = null;
+        return false;
     }
 
     private bool ConsumeFailure(ToastOperation operation)
@@ -682,6 +768,12 @@ internal sealed class FakeToastApi : IToastApi
         _handlers[token] = handler;
         _subscriptionTokens[ToastOperation.SubscribeActivated] = token;
         _subscribedTokens.Add(token);
+
+        if (CaptureHandlers)
+        {
+            _capturedHandlers[ToastOperation.SubscribeActivated] = handler;
+        }
+
         _calls.Add(new ToastCall(nameof(SubscribeActivated), 0, $"add_Activated token=0x{token:X}"));
         return 0;
     }
@@ -700,6 +792,12 @@ internal sealed class FakeToastApi : IToastApi
         _handlers[token] = handler;
         _subscriptionTokens[ToastOperation.SubscribeDismissed] = token;
         _subscribedTokens.Add(token);
+
+        if (CaptureHandlers)
+        {
+            _capturedHandlers[ToastOperation.SubscribeDismissed] = handler;
+        }
+
         _calls.Add(new ToastCall(nameof(SubscribeDismissed), 0, $"add_Dismissed token=0x{token:X}"));
         return 0;
     }
@@ -718,6 +816,12 @@ internal sealed class FakeToastApi : IToastApi
         _handlers[token] = handler;
         _subscriptionTokens[ToastOperation.SubscribeFailed] = token;
         _subscribedTokens.Add(token);
+
+        if (CaptureHandlers)
+        {
+            _capturedHandlers[ToastOperation.SubscribeFailed] = handler;
+        }
+
         _calls.Add(new ToastCall(nameof(SubscribeFailed), 0, $"add_Failed token=0x{token:X}"));
         return 0;
     }

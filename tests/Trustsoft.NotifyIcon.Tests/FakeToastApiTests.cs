@@ -196,6 +196,82 @@ public sealed class FakeToastApiTests
         Assert.False(fired);
     }
 
+    /// <summary>
+    /// With capture on, the fake retains a subscribed handler past the matching unsubscribe, and the
+    /// <c>Replay*</c> members invoke it - the in-process model of a callback the shell had already
+    /// dequeued when the unsubscribe landed.
+    /// </summary>
+    [Fact]
+    public void CapturedHandlers_ReplayAfterTheMatchingUnsubscribe()
+    {
+        var fake = new FakeToastApi { CaptureHandlers = true };
+
+        string? activatedArguments = null;
+        int dismissedReason = -1;
+        int failedErrorCode = -1;
+
+        Assert.Equal(0, fake.SubscribeActivated(IntPtr.Zero, arguments => activatedArguments = arguments, out long activatedToken));
+        Assert.Equal(0, fake.SubscribeDismissed(IntPtr.Zero, reason => dismissedReason = reason, out long dismissedToken));
+        Assert.Equal(0, fake.SubscribeFailed(IntPtr.Zero, errorCode => failedErrorCode = errorCode, out long failedToken));
+
+        Assert.Equal(0, fake.UnsubscribeActivated(IntPtr.Zero, activatedToken));
+        Assert.Equal(0, fake.UnsubscribeDismissed(IntPtr.Zero, dismissedToken));
+        Assert.Equal(0, fake.UnsubscribeFailed(IntPtr.Zero, failedToken));
+
+        // The live handler table no longer has any of them...
+        Assert.False(fake.RaiseActivated("live-table-empty"));
+        Assert.False(fake.RaiseDismissed(0));
+        Assert.False(fake.RaiseFailed(0));
+
+        // ...but the retained delegates are still invocable, which is the race the capture models.
+        Assert.True(fake.ReplayActivated("dequeued"));
+        Assert.True(fake.ReplayDismissed(2));
+        Assert.True(fake.ReplayFailed(unchecked((int)0x80004005)));
+
+        Assert.Equal("dequeued", activatedArguments);
+        Assert.Equal(2, dismissedReason);
+        Assert.Equal(unchecked((int)0x80004005), failedErrorCode);
+    }
+
+    /// <summary>
+    /// Capture is opt-in: with it off nothing is retained and every <c>Replay*</c> member reports
+    /// that nothing was delivered, so the existing tests' behaviour cannot change.
+    /// </summary>
+    [Fact]
+    public void Replay_ReturnsFalseWhenCaptureIsOff()
+    {
+        var fake = new FakeToastApi();
+
+        Assert.False(fake.CaptureHandlers);
+
+        Assert.Equal(0, fake.SubscribeActivated(IntPtr.Zero, _ => { }, out _));
+        Assert.Equal(0, fake.SubscribeDismissed(IntPtr.Zero, _ => { }, out _));
+        Assert.Equal(0, fake.SubscribeFailed(IntPtr.Zero, _ => { }, out _));
+
+        Assert.False(fake.ReplayActivated("never-retained"));
+        Assert.False(fake.ReplayDismissed(0));
+        Assert.False(fake.ReplayFailed(0));
+    }
+
+    /// <summary>
+    /// Capture changes nothing about the live handler table: after an unsubscribe a raise still
+    /// reports that nothing was delivered, capture or not.
+    /// </summary>
+    [Fact]
+    public void Capture_LeavesTheLiveRaiseSemanticsUnchanged()
+    {
+        var fake = new FakeToastApi { CaptureHandlers = true };
+        bool fired = false;
+
+        Assert.Equal(0, fake.SubscribeActivated(IntPtr.Zero, _ => fired = true, out long token));
+        Assert.True(fake.RaiseActivated("while-live"));
+        Assert.True(fired);
+
+        Assert.Equal(0, fake.UnsubscribeActivated(IntPtr.Zero, token));
+
+        Assert.False(fake.RaiseActivated("after-unsubscribe"));
+    }
+
     [Fact]
     public void DisposalContract_RecordsEveryReleasedHandle()
     {

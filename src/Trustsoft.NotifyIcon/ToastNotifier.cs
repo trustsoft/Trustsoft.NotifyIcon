@@ -391,33 +391,67 @@ public sealed class ToastNotifier : IDisposable
     /// </summary>
     /// <param name="arguments">The launch or button argument Windows delivered, or <see langword="null"/> when the toast carried none.</param>
     /// <remarks>
+    /// <para>
     /// Internal rather than private so the disposal guarantee can be exercised directly: a caller
     /// outside the show path can prove that a raise reaching a disposed notifier does nothing,
     /// without a live shell and without reflection.
+    /// </para>
+    /// <para>
+    /// A disposed notifier refuses every raise. This is the race-narrowing complement to the
+    /// show-side detach: <see cref="Dispose"/> sets <c>_disposed</c> before it disposes the live
+    /// shows, so a callback that reaches the notifier after that point raises nothing.
+    /// </para>
     /// </remarks>
-    internal void OnShowActivated(string? arguments) =>
+    internal void OnShowActivated(string? arguments)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
         RaiseSafely(
             nameof(Activated),
             () => Activated?.Invoke(this, new ToastActivatedEventArgs(arguments)));
+    }
 
     /// <summary>
     /// Raises <see cref="Dismissed"/> for one raw dismissal reason the shell reported.
     /// </summary>
     /// <param name="reason">The raw reason, mapped to the public vocabulary before it is published.</param>
-    /// <remarks>Internal for the same reason as <see cref="OnShowActivated"/>.</remarks>
-    internal void OnShowDismissed(int reason) =>
+    /// <remarks>
+    /// Internal for the same reason as <see cref="OnShowActivated"/>, and it refuses to raise after
+    /// disposal for the same reason.
+    /// </remarks>
+    internal void OnShowDismissed(int reason)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
         RaiseSafely(
             nameof(Dismissed),
             () => Dismissed?.Invoke(this, new ToastDismissedEventArgs(MapDismissalReason(reason))));
+    }
 
     /// <summary>
     /// Raises <see cref="ToastError"/> for the shell's asynchronous delivery failure: Windows could
     /// not deliver a toast that had already been accepted for display.
     /// </summary>
     /// <param name="errorCode">The <c>HRESULT</c> the shell reported on the notification's <c>Failed</c> callback.</param>
-    /// <remarks>Internal for the same reason as <see cref="OnShowActivated"/>.</remarks>
-    internal void OnShowFailed(int errorCode) =>
+    /// <remarks>
+    /// Internal for the same reason as <see cref="OnShowActivated"/>, and it refuses to raise after
+    /// disposal for the same reason.
+    /// </remarks>
+    internal void OnShowFailed(int errorCode)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
         RaiseError(ToastException.OperationNotificationFailed, errorCode, exception: null);
+    }
 
     /// <summary>
     /// Reports one toast failure the library survived: exactly one Error-level trace line, then
@@ -430,10 +464,16 @@ public sealed class ToastNotifier : IDisposable
     /// Internal for the same reason as <see cref="OnShowActivated"/>. Both failure sources of the
     /// toast subsystem - the shell's asynchronous callback and the show path's own failure - report
     /// through this one method, so the event and the trace line can never disagree about what
-    /// happened.
+    /// happened. A disposed notifier refuses to report: it writes no line and raises no event, which
+    /// is the same refusal every other raise path applies after disposal.
     /// </remarks>
     internal void RaiseError(string operation, int errorCode, Exception? exception)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         NotifyIconTrace.ToastError(operation, errorCode, exception);
 
         RaiseSafely(

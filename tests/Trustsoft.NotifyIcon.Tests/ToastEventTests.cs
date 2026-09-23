@@ -483,6 +483,164 @@ public sealed class ToastEventTests
     }
 
     /// <summary>
+    /// Disposal detaches the source outright: after <c>Dispose</c> the fake reports that none of the
+    /// three handlers is subscribed any more, and no event fires (milestone success criterion 3).
+    /// </summary>
+    [Fact]
+    public void After_dispose_the_source_is_detached_and_nothing_fires()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId, CaptureHandlers = true };
+        var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        int activations = 0;
+        int dismissals = 0;
+        int errors = 0;
+
+        notifier.Activated += (_, _) => activations++;
+        notifier.Dismissed += (_, _) => dismissals++;
+        notifier.ToastError += (_, _) => errors++;
+
+        notifier.Show(Content());
+
+        // Before disposal the wiring delivers, so the test cannot pass by never having connected.
+        Assert.True(fake.RaiseActivated("before-dispose"));
+        Assert.Equal(1, activations);
+
+        notifier.Dispose();
+
+        Assert.False(fake.RaiseActivated("after-dispose"));
+        Assert.False(fake.RaiseDismissed((int)ToastDismissalReason.UserCanceled));
+        Assert.False(fake.RaiseFailed(FakeToastApi.DefaultFailureHResult));
+
+        Assert.Equal(1, activations);
+        Assert.Equal(0, dismissals);
+        Assert.Equal(0, errors);
+    }
+
+    /// <summary>
+    /// The race the unsubscribe alone cannot close: a callback the shell had already dequeued is
+    /// still invocable after disposal, but it finds the show's callbacks nulled and raises nothing.
+    /// </summary>
+    [Fact]
+    public void A_dequeued_callback_that_runs_after_dispose_raises_nothing()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId, CaptureHandlers = true };
+        var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        int activations = 0;
+        int dismissals = 0;
+        int errors = 0;
+
+        notifier.Activated += (_, _) => activations++;
+        notifier.Dismissed += (_, _) => dismissals++;
+        notifier.ToastError += (_, _) => errors++;
+
+        notifier.Show(Content());
+        notifier.Dispose();
+
+        // The retained delegates are invoked exactly as a dequeued callback would be, and they all
+        // reach a show whose callbacks are null.
+        Assert.True(fake.ReplayActivated("dequeued"));
+        Assert.True(fake.ReplayDismissed((int)ToastDismissalReason.TimedOut));
+        Assert.True(fake.ReplayFailed(FakeToastApi.DefaultFailureHResult));
+
+        Assert.Equal(0, activations);
+        Assert.Equal(0, dismissals);
+        Assert.Equal(0, errors);
+    }
+
+    /// <summary>
+    /// The notifier's own guard, proven directly: the internal raise paths T01 declared refuse to
+    /// raise once disposed, so the guarantee does not depend on the show-side detach alone.
+    /// </summary>
+    [Fact]
+    public void The_notifiers_own_raise_paths_refuse_after_dispose()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId };
+        var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        int activations = 0;
+        int dismissals = 0;
+        int errors = 0;
+
+        notifier.Activated += (_, _) => activations++;
+        notifier.Dismissed += (_, _) => dismissals++;
+        notifier.ToastError += (_, _) => errors++;
+
+        notifier.Show(Content());
+        notifier.Dispose();
+
+        notifier.OnShowActivated("direct");
+        notifier.OnShowDismissed((int)ToastDismissalReason.UserCanceled);
+        notifier.OnShowFailed(FakeToastApi.DefaultFailureHResult);
+        notifier.RaiseError(nameof(IToastApi.Show), FakeToastApi.DefaultFailureHResult, exception: null);
+
+        Assert.Equal(0, activations);
+        Assert.Equal(0, dismissals);
+        Assert.Equal(0, errors);
+    }
+
+    /// <summary>
+    /// The guarantee is disposal-scoped, not global: a show that was not disposed still delivers
+    /// through a retained callback, so the nulling cannot be a blanket teardown of the seam.
+    /// </summary>
+    [Fact]
+    public void The_disposal_guarantee_is_scoped_to_the_disposed_show()
+    {
+        var fake = new FakeToastApi { CaptureHandlers = true };
+        var show = new ToastShow(fake, new ToastPayload(Content()));
+
+        string? delivered = null;
+        show.Activated = arguments => delivered = arguments;
+
+        ToastShowResult result = show.Show(OverrideId);
+
+        Assert.True(result.Success);
+        Assert.True(show.IsShown);
+
+        // While the show is live, a callback the shell had already dequeued still delivers.
+        Assert.True(fake.ReplayActivated("still-live"));
+        Assert.Equal("still-live", delivered);
+
+        show.Dispose();
+
+        Assert.False(show.IsShown);
+
+        // The retained delegate is still invocable, but this show's callbacks were nulled with it.
+        Assert.True(fake.ReplayActivated("after-dispose"));
+        Assert.Equal("still-live", delivered);
+    }
+
+    /// <summary>
+    /// A handler that disposes the notifier while an activation is being delivered must not let the
+    /// next queued callback of the same burst raise: the notifier refuses once disposed, even
+    /// mid-delivery.
+    /// </summary>
+    [Fact]
+    public void A_handler_that_disposes_the_notifier_stops_a_replayed_callback()
+    {
+        var fake = new FakeToastApi { AppUserModelIdToReadBack = OverrideId, CaptureHandlers = true };
+        var notifier = new ToastNotifier(fake) { AppUserModelId = OverrideId };
+
+        int activations = 0;
+        notifier.Activated += (_, _) =>
+        {
+            activations++;
+            notifier.Dispose();
+        };
+
+        notifier.Show(Content());
+
+        // The first delivery disposes the notifier from inside the handler...
+        Assert.True(fake.RaiseActivated("first"));
+        Assert.Equal(1, activations);
+
+        // ...so the second, already-dequeued callback finds nothing to raise into.
+        Assert.True(fake.ReplayActivated("second"));
+        Assert.Equal(1, activations);
+    }
+
+    /// <summary>
     /// A representative content, with a launch argument the way the sample's runs use one.
     /// </summary>
     /// <param name="title">The title; the two-show test varies it.</param>
