@@ -171,3 +171,32 @@ control must use an identity that was never registered at all.
 - `scripts/probe-toast/ProbeToast.csproj` — the probe project (absent from the solution, no package/projection references).
 - `scripts/probe-toast/Program.cs` — the instrument (shortcut COM interop + raw-vtable WinRT interop).
 - `scripts/probe-toast/run.ps1` — the orchestrator (clean state, positive control, negative control, out-of-process inventory).
+
+## T03 re-measurement: the library's own read-back (ShortcutLink + ToastIdentity)
+
+T03 moved the measured shortcut/AUMID write into the library's own interop layer
+(`src/Trustsoft.NotifyIcon/Interop/ShortcutLink.cs` + `ToastIdentity.cs`), re-implementing the
+Contract 1 sequence with raw-vtable dispatch over `IShellLinkW`/`IPropertyStore`/`IPersistFile`
+(no RCW, no `[ComImport]` projection; `Marshal.Release` owns the references). The probe's read-back
+was re-measured on this machine with that library code, not with the throwaway instrument, because a
+shortcut that exists but carries no property is the silent failure this slice exists to rule out.
+
+Raw capture (`ToastIdentityLiveProbeTests`, run on `MINIBOOKX`, Windows NT 10.0.26200.0):
+
+```
+[live] identity: shortcut=C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.T03.LiveProbe.lnk
+[live] identity: register aumid='Trustsoft.NotifyIcon.T03.LiveProbe' success=True operation='' code=0x00000000
+[live] identity: read-back success=True value='Trustsoft.NotifyIcon.T03.LiveProbe'
+[live] identity: read-back matches expected = True
+[live] identity: remove success=True operation='' code=0x00000000
+[live] identity: read-back after remove success=False operation='OpenShellLink' code=0x80070002
+```
+
+- The write (create shortcut → `IPropertyStore.SetValue(PKEY_AppUserModel_ID, VT_LPWSTR)` → `Commit`
+  → `IPersistFile.Save`) reads back the exact value from a **fresh** shell link, reproducing the
+  probe's `vt=31` result with the shipped interop. The library path confirms the measurement the
+  probe made by hand.
+- The read-back after removal fails at `OpenShellLink` with `0x80070002` (`ERROR_FILE_NOT_FOUND`):
+  the identity carrier is gone - the "shortcut absent" case, distinct from the "shortcut present but
+  carries no property" case that the mismatch check in the T03 contract tests (`ToastIdentityTests`)
+  covers deterministically.
