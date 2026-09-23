@@ -32,12 +32,26 @@ namespace Trustsoft.NotifyIcon.ProbeToast;
 ///              [--delete-image-after &lt;seconds&gt;]]
 /// probe-toast --history &lt;aumid&gt;
 /// probe-toast --clear-history &lt;aumid&gt;
+/// probe-toast --read-shortcut &lt;aumid&gt;
 /// </code>
 /// The default run registers the identity, shows a toast, subscribes to activation, waits for a click
 /// and prints what arrives. <c>--skip-register</c> runs the same show path with the shortcut absent
 /// (the negative control). <c>--history</c> and <c>--clear-history</c> are the out-of-process
 /// inventory halves, run as separate process invocations so the observation is independent of the
-/// process that showed the toast.
+/// process that showed the toast. <c>--read-shortcut</c> is the out-of-process identity reading:
+/// it opens the shortcut named after the identity it was asked about and prints whether that
+/// shortcut exists and what AppUserModelID it carries, so a caller (the S05 consumer proof) can
+/// assert a clean slate before a run, a matching value while the run is live, and an absent shortcut
+/// after teardown - from a process other than the one that registered it.
+/// </para>
+/// <para>
+/// <b>The shortcut is per identity, never a fixed file.</b> The path is derived the way the library
+/// derives it (<c>Path.Combine(SpecialFolder.Programs, aumid + ".lnk")</c>), so reading back an
+/// identity other than the default one reads that identity's own <c>.lnk</c>. The default identity
+/// string is still <c>Trustsoft.NotifyIcon.ToastProbe</c>, but it is only the default <c>--aumid</c>
+/// value: it is never used as a file name, because a fixed file name would make a read-back of any
+/// other identity return this probe's shortcut (measured: a stale unrelated value that would look
+/// like evidence).
 /// </para>
 /// <para>
 /// <b>The image variant (M002/S04).</b> <c>--image</c> injects one <c>&lt;image src="…" placement="…"
@@ -56,7 +70,7 @@ internal static class Program
     private const string Usage =
         "usage: probe-toast [--aumid <id>] [--skip-register] [--wait-seconds <N>] [--expect-no-toast] " +
         "[--image <absolute path> [--image-placement hero|appLogoOverride] [--image-id <n>] [--delete-image-after <seconds>]] " +
-        "| --history <aumid> | --clear-history <aumid>";
+        "| --history <aumid> | --clear-history <aumid> | --read-shortcut <aumid>";
 
     /// <summary>The <c>hero</c> placement value, written verbatim into the image element.</summary>
     private const string ImagePlacementHero = "hero";
@@ -70,8 +84,11 @@ internal static class Program
     /// <summary>How long the show run waits for a click before reporting no activation.</summary>
     private const int DefaultWaitSeconds = 20;
 
-    /// <summary>The shortcut file name in the per-user Start menu.</summary>
-    private const string ShortcutFileName = "Trustsoft.NotifyIcon.ToastProbe.lnk";
+    /// <summary><c>HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)</c>: what the shell link open returns for an absent shortcut.</summary>
+    private const int HresultFileNotFound = unchecked((int)0x80070002);
+
+    /// <summary><c>HRESULT_FROM_WIN32(ERROR_NOT_FOUND)</c>: a shortcut that exists but carries no property.</summary>
+    private const int HresultNotFound = unchecked((int)0x80070490);
 
     /// <summary>The <c>launch</c> attribute the payload carries, so the activation arguments name the run.</summary>
     private const string LaunchArgument = "probe-activation";
@@ -95,6 +112,7 @@ internal static class Program
         bool expectNoToast = false;
         string? historyAumid = null;
         string? clearHistoryAumid = null;
+        string? readShortcutAumid = null;
         string? imagePath = null;
         string imagePlacement = ImagePlacementHero;
         bool imagePlacementGiven = false;
@@ -159,6 +177,9 @@ internal static class Program
                 case "--clear-history" when i + 1 < args.Length:
                     clearHistoryAumid = args[++i];
                     break;
+                case "--read-shortcut" when i + 1 < args.Length:
+                    readShortcutAumid = args[++i];
+                    break;
                 default:
                     Console.Error.WriteLine($"probe-toast: unknown argument '{args[i]}' - this instrument does not ignore arguments it does not understand.");
                     Console.Error.WriteLine(Usage);
@@ -213,6 +234,13 @@ internal static class Program
             return RunClearHistory(clearHistoryAumid);
         }
 
+        // The identity reading: like the two inventory modes it is a separate process invocation, so
+        // what it reports was not learned from the process that registered the shortcut.
+        if (readShortcutAumid is not null)
+        {
+            return RunReadShortcut(readShortcutAumid);
+        }
+
         ImageRequest? image = imagePath is null ? null : new ImageRequest(imagePath, imagePlacement, imageId, deleteImageAfterSeconds);
         return RunShow(aumid, skipRegister, waitSeconds, expectNoToast, image);
     }
@@ -234,7 +262,7 @@ internal static class Program
         // Phase 1: identity. The shortcut is the AppUserModelID carrier; read-before/write/read-after
         // is the whole identity contract, because a shortcut that exists but carries no property is the
         // exact silent failure this slice exists to rule out.
-        string shortcutPath = GetShortcutPath();
+        string shortcutPath = GetShortcutPath(aumid);
         Console.WriteLine($"[probe] identity: shortcut path={shortcutPath}");
 
         string? before = null;
@@ -692,12 +720,17 @@ internal static class Program
     // IPropertyStore. Every call is a recorded HRESULT.
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>The per-user Start menu shortcut path for this probe.</summary>
-    /// <returns>The full path to the shortcut file.</returns>
-    private static string GetShortcutPath()
+    /// <summary>
+    /// The per-user Start menu shortcut path of one identity: the id itself names the file, which is
+    /// the convention the library's own registration path uses (<c>ToastIdentity.DefaultShortcutPath</c>),
+    /// mirrored here rather than shared so this instrument stays independent of the code it measures.
+    /// </summary>
+    /// <param name="aumid">The identity whose shortcut path is derived.</param>
+    /// <returns>The full path to that identity's shortcut file.</returns>
+    private static string GetShortcutPath(string aumid)
     {
         string programs = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-        return Path.Combine(programs, ShortcutFileName);
+        return Path.Combine(programs, aumid + ".lnk");
     }
 
     /// <summary>Creates the shortcut and writes the AppUserModelID property through IPropertyStore.</summary>
@@ -766,45 +799,123 @@ internal static class Program
     /// <returns>The property value, or <see langword="null"/> when the shortcut or the property is absent.</returns>
     private static string? ReadAppUserModelId(string path)
     {
-        if (!File.Exists(path))
+        ShortcutReading reading = ReadShortcutIdentity(path);
+
+        // The show path records the step that failed, exactly as it always did. An absent shortcut is
+        // reported by the caller as a null reading and was never given a diagnostic line of its own.
+        if (reading.DiagnosticLine is not null && File.Exists(path))
         {
-            return null;
+            Console.WriteLine(reading.DiagnosticLine);
         }
 
+        return reading.Value;
+    }
+
+    /// <summary>
+    /// One reading of an identity's shortcut: the value read back, or the library-named step that
+    /// failed and its HRESULT, plus the diagnostic line the show path records for that same step.
+    /// </summary>
+    /// <param name="Value">The AppUserModelID read back, or <see langword="null"/> when nothing was read.</param>
+    /// <param name="FailedOperation">The step that failed, or <see langword="null"/> when a value was read.</param>
+    /// <param name="FailureCode">The HRESULT of <paramref name="FailedOperation"/>, or <c>0</c> when a value was read.</param>
+    /// <param name="DiagnosticLine">The show path's line for this reading, or <see langword="null"/> when it records none.</param>
+    private sealed record ShortcutReading(string? Value, string? FailedOperation, int FailureCode, string? DiagnosticLine);
+
+    /// <summary>
+    /// Reads one shortcut through this instrument's own interop (never the library's) and names the
+    /// failing step in the library's vocabulary, so a reading says whether the shortcut was absent,
+    /// unreadable or present without the property, instead of collapsing every failure into null.
+    /// </summary>
+    /// <param name="path">The shortcut file path.</param>
+    /// <returns>The reading.</returns>
+    private static ShortcutReading ReadShortcutIdentity(string path)
+    {
         int hr = CoCreateInstance(ref ClsidShellLink, IntPtr.Zero, ClsctxInprocServer, ref IidIShellLinkW, out IntPtr shellLinkPtr);
         if (hr < 0)
         {
-            Console.WriteLine($"[probe] identity: read-back CoCreateInstance hr=0x{hr:X8}");
-            return null;
+            return new ShortcutReading(null, "CreateShellLink", hr, $"[probe] identity: read-back CoCreateInstance hr=0x{hr:X8}");
         }
 
         int persistHr = Marshal.QueryInterface(shellLinkPtr, ref IidIPersistFile, out IntPtr persistPtr);
         if (persistHr < 0)
         {
-            Console.WriteLine($"[probe] identity: read-back QueryInterface(IPersistFile) hr=0x{persistHr:X8}");
-            return null;
+            return new ShortcutReading(null, "GetShortcutPersistFile", persistHr, $"[probe] identity: read-back QueryInterface(IPersistFile) hr=0x{persistHr:X8}");
         }
 
         IPersistFile persist = (IPersistFile)Wrap(persistPtr);
         int loadHr = persist.Load(path, 0);
         if (loadHr < 0)
         {
-            Console.WriteLine($"[probe] identity: read-back IPersistFile.Load hr=0x{loadHr:X8}");
-            return null;
+            // The whole open sequence is one step in the library's vocabulary; an absent file is the
+            // ERROR_FILE_NOT_FOUND it produces there (0x80070002), which is a reading, not a defect.
+            return new ShortcutReading(null, "OpenShellLink", loadHr, $"[probe] identity: read-back IPersistFile.Load hr=0x{loadHr:X8}");
         }
 
         int storeHr = Marshal.QueryInterface(shellLinkPtr, ref IidIPropertyStore, out IntPtr storePtr);
         if (storeHr < 0)
         {
-            Console.WriteLine($"[probe] identity: read-back QueryInterface(IPropertyStore) hr=0x{storeHr:X8}");
-            return null;
+            return new ShortcutReading(null, "GetShortcutPropertyStore", storeHr, $"[probe] identity: read-back QueryInterface(IPropertyStore) hr=0x{storeHr:X8}");
         }
 
         IPropertyStore store = (IPropertyStore)Wrap(storePtr);
         int getHr = store.GetValue(ref PkeyAppUserModelId, out PropVariant value);
-        Console.WriteLine($"[probe] identity: read-back IPropertyStore.GetValue hr=0x{getHr:X8} vt={value.Vt}");
+        string diagnostic = $"[probe] identity: read-back IPropertyStore.GetValue hr=0x{getHr:X8} vt={value.Vt}";
+        if (getHr < 0)
+        {
+            return new ShortcutReading(null, "GetAppUserModelId", getHr, diagnostic);
+        }
 
-        return value.ReadString();
+        string? read = value.ReadString();
+        if (string.IsNullOrEmpty(read))
+        {
+            // The shortcut exists but carries no System.AppUserModelID: the silent failure S01 measured
+            // (vt=0 on read-back). It is not a value, and saying "success" here would hide exactly the
+            // defect the read-back exists to expose.
+            return new ShortcutReading(null, "GetAppUserModelId", HresultNotFound, diagnostic);
+        }
+
+        return new ShortcutReading(read, null, 0, diagnostic);
+    }
+
+    /// <summary>
+    /// Reads one identity's shortcut out of process and prints the single reading line this mode
+    /// exists to produce: <c>success=True value='...'</c> when the shortcut exists and carries a value,
+    /// <c>success=False operation='...' code=0x...</c> when it does not. Either shape is a reading, so
+    /// the exit code stays 0 for both and the caller asserts on the line.
+    /// </summary>
+    /// <param name="aumid">The identity whose own shortcut is read.</param>
+    /// <returns>0 for either reading; 1 when the path cannot be computed or the open failed for a
+    /// reason other than the shortcut being absent (a broken oracle is not a "not registered" answer).</returns>
+    private static int RunReadShortcut(string aumid)
+    {
+        string path;
+        try
+        {
+            path = GetShortcutPath(aumid);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[probe] shortcut read-back: identity='{aumid}' FAILED - the shortcut path could not be computed: {ex.GetType().Name}: {ex.Message}");
+            return 1;
+        }
+
+        ShortcutReading reading = ReadShortcutIdentity(path);
+
+        if (reading.FailedOperation is null)
+        {
+            Console.WriteLine($"[probe] shortcut read-back: identity='{aumid}' path='{path}' success=True value='{reading.Value}'");
+            return 0;
+        }
+
+        Console.WriteLine($"[probe] shortcut read-back: identity='{aumid}' path='{path}' success=False operation='{reading.FailedOperation}' code=0x{reading.FailureCode:X8}");
+
+        if (reading.FailureCode == HresultFileNotFound)
+        {
+            return 0;
+        }
+
+        Console.Error.WriteLine($"[probe] shortcut read-back: FAILED - identity '{aumid}' could not be read (operation='{reading.FailedOperation}' code=0x{reading.FailureCode:X8}); that is not the absent-shortcut reading, so it is not reported as one.");
+        return 1;
     }
 
     /// <summary>Writes a <c>VT_LPWSTR</c> value through an IPropertyStore.</summary>
