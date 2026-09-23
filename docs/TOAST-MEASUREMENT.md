@@ -1393,3 +1393,443 @@ Passed!  - Failed:     0, Passed:   580, Skipped:     0, Total:   580, Duration:
 - `tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`, `TrayIconExceptionTests.cs` - the three
   widened surface allow-lists.
 - `docs/TOAST-MEASUREMENT.md` - this section.
+---
+
+## S04: images from an `ImageSource`, the setting as an outcome and the failure taxonomy, measured live
+
+Scope: M002/S04/T06. S04 gave the toast subsystem the **image half of R017** - `ToastImage.Source`
+accepts a WPF `ImageSource`, the library persists it to a PNG in its own temp folder, hands the shell an
+absolute `file:///` reference, owns that file from `Show` until the show is torn down and deletes it in
+the one unwind path - and the **"reports the documented outcome" half**: the `NotificationSetting` the
+seam already read on every show became a documented public outcome (`ToastNotificationSetting` +
+`ToastNotifier.NotificationSetting`) instead of a fake failure, and the platform's delivery-failure
+codes got a named internal taxonomy carried by one Verbose trace line, the sample's error line and this
+record - with **no new event and no change to S03's pinned Error-line shape**.
+
+Every claim below is one of exactly three kinds and says which one it is:
+
+1. a **line captured live in this task** (quoted verbatim, with the command that produced it),
+2. a **string, ordinal or behaviour pinned by a named test**, or
+3. a **source, SDK-IDL or SDK-header reading**, named as such.
+
+Nothing here claims a **visible** shell effect. S04's image demo proves the temp file's lifetime and the
+payload the shell accepted; it does not prove that pixels were painted (item 7).
+
+### 1. The image contract as measured
+
+S02 handed S04 two questions it deliberately left open (S02 item 6). Both are settled by the
+independent probe T01 added, whose raw capture is its own document: **`docs/TOAST-S04-IMAGE-VARIANTS.md`**
+(four variants, the exact XML, every HRESULT chain and the database-copy reading). This record carries
+the readings and what they decided; the probe document carries the bytes.
+
+| Reading (live-captured in T01; quoted from `docs/TOAST-S04-IMAGE-VARIANTS.md`) | What it decided |
+| --- | --- |
+| `placement="hero"` with **no** `id` and `placement="appLogoOverride" id="1"` produced the same chain - `LoadXml hr=0x00000000`, `CreateToastNotification(xml) hr=0x00000000`, `notifier.Show(toast) hr=0x00000000`, `failed=0 errorCode=0x00000000` | **Keep omitting `id`.** S02's pinned payload shape and its 27 exact-string tests stand unchanged; the schema's "Required" marking on `id` is tile-template heritage, not a `ToastGeneric` acceptance rule. |
+| `src` naming a file that does not exist (`exists=False bytes=(absent)` at send time) still produced `LoadXml` / `CreateToastNotification` / `Show` all `0x00000000`, `GetSetting … value=0 (Enabled)`, and **no** `Failed` callback for the whole wait window - no `0x803E0202 WPN_E_IMAGE_NOT_FOUND_IN_CACHE` or any other code | **The shell's silent drop is the reason the library checks the file itself.** The library's own pre-show `File.Exists` is the only honest "image missing" report a consumer can get, so it is a requirement of this slice, not a courtesy. |
+| The platform's database copy held the `file:///` reference **verbatim** (`latin1=True utf8=True utf16le=False`) - in the `-wal` copy in the first capture, in the main copy in the re-capture - while `…\Microsoft\Windows\Notifications\wpnidm` held **0 entries** | **The reference wins over the bytes.** The platform stores the URI string and keeps no copy of the image, so the shell reads the file from disk when it renders. That is precisely why the file must outlive the notification, and why "own the file from `Show` until the show is torn down" is the correct lifetime rule. |
+| The file deleted at t=2.0 s with the notification already shown, pump continuing to t=3 s, still `failed=0 errorCode=0x00000000` | **Bounded, and it licenses nothing.** The 3 s single-process window contradicts the conservative rule nowhere, but the banner and the Action Center can render later - so do not weaken the rule on this reading. |
+
+**The reference is built, never concatenated** (pinned by a named test, not by a capture): it comes from
+`new Uri(path, UriKind.Absolute).AbsoluteUri`, and the payload builder deliberately never URL-encodes an
+attribute value, so `"file:///" + path` would ship a raw space to the shell. The pinning test
+(`ToastImageFileTests.Reference_is_an_escaped_absolute_file_uri_for_a_folder_with_a_space`) drives a
+folder name containing a space **and** a non-ASCII character; T01's probe independently measured the
+escaped form surviving end to end (`%20`, `%C3%A4%C3%B6%C3%BC`) and being stored escaped.
+
+### 2. The temp-file rule and its consequences
+
+**The rule (read-from-source: `Interop/ToastImageFile.cs` + `Interop/ToastApi.cs`).** The file is
+`toast-<guid:N>.png` under `Path.Combine(Path.GetTempPath(), "Trustsoft.NotifyIcon")`
+(`ToastImageFile.DefaultFolder`, `TempFolderName = "Trustsoft.NotifyIcon"`). It is **written before the
+show** - `ToastNotifier.ResolveImage` runs after `EnsureRegistered()` and before the show object is
+constructed, so a registration failure can never strand a file - and it is **deleted in the show's one
+unwind path** (`ToastShow.DeleteImageFile`, reached from both `Dispose` and `Fail`, after the three
+unsubscribes and the handle releases). The owning field is cleared before the delete runs, so a `Dispose`
+that follows a `Fail` finds nothing left to remove and no second delete is attempted.
+
+**Live-captured-in-this-task (the two-process demo, item 5).** The sample traced
+
+```text
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: image resolved path='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon\toast-a731e89496c840f69df2f7392ce13240.png' reference='file:///C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon/toast-a731e89496c840f69df2f7392ce13240.png' bytes=5424 pixels=256x256
+```
+
+and later
+
+```text
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: delete image file='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon\toast-a731e89496c840f69df2f7392ce13240.png' existed=True
+```
+
+while the **second** process - which never loads the library and only counts what is on disk - read the
+folder as `files=0` before the show, `files=1 present=True [toast-…png bytes=5424]` for six consecutive
+ticks while the toast was live, and `files=0` again from the tick after the teardown (item 5 quotes every
+tick). The runner's own post-run count is `0` as well.
+
+Three consequences, each deliberate and each documented rather than discovered later:
+
+1. **An Action Center entry whose file is already gone can render without its image.** This is a
+   **documented consequence, not a defect**: the platform stores the reference (item 1), so once the show
+   is torn down that entry holds a URI that no longer resolves.
+2. **A process killed before teardown can leave one orphan file**, and there is **no sweeper** - by
+   design. The folder is a fixed, documented location rather than a cache, and the delete is best-effort:
+   `IOException` (the shell still holds the file while it renders) and `UnauthorizedAccessException` are
+   caught and swallowed, because a cleanup failure during an unwind must not replace the failure that
+   caused the unwind.
+3. **A failed resolution leaves no half-written file.** `ToastImageFile.Create` has its own single unwind
+   (`DeleteFileIfPresent`) and throws `ToastException` with `OperationImageResolution`; a disk-full or
+   encoder failure cannot leave a partial PNG in the library's folder forever.
+
+### 3. The setting is an outcome, and the live disabled capture
+
+**Pinned by named tests.** `ToastNotificationSetting`'s five members are the platform's own ordinals -
+`Enabled = 0`, `DisabledForApplication = 1`, `DisabledForUser = 2`, `DisabledByGroupPolicy = 3`,
+`DisabledByManifest = 4` (`ToastNotificationSettingTests.The_members_are_the_platforms_own_ordinals`,
+`A_show_reports_the_setting_the_platform_returned`) - and the widest scope wins when several are set.
+`ToastNotifier.NotificationSetting` is **nullable on purpose** so `null` ("nothing was read") can never be
+conflated with `Enabled` (the read value `0`): it is `null` before the first show, stays `null` when a show
+failed before the setting step, and a failure **at** the setting step leaves it `null` too
+(`The_setting_is_null_before_the_first_show`, `A_show_that_failed_before_the_setting_step_leaves_the_setting_null`,
+`A_failure_at_the_setting_step_leaves_the_setting_null`).
+
+**The rule, stated once for the record.** A non-`Enabled` value is **never** raised on `ToastError`, never
+turns `Show` into a failure and never makes `Show` throw: it is a routine Windows state the user or an
+administrator chose. The shell's own asynchronous `Failed` callback is the failure, and it arrives
+**beside** this outcome rather than instead of it
+(`ToastNotificationSettingTests.A_disabled_setting_raises_no_ToastError_and_writes_no_Error_level_line`,
+`The_setting_is_named_on_the_trace_channel`).
+
+**Live-captured-in-this-task.** The recipe is exactly T05's instrument; the commands, in order:
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/toast-notification-setting.ps1 -Action status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/toast-notification-setting.ps1 -Action set
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe --toast --toast-after 2 --run-seconds 12
+samples/Trustsoft.NotifyIcon.Sample/bin/Release/net8.0-windows/Trustsoft.NotifyIcon.Sample.exe --toast --toast-after 2 --run-seconds 12
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/toast-notification-setting.ps1 -Action clear
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/toast-notification-setting.ps1 -Action status
+```
+
+`-Action status` **before** the run - the baseline the machine has to return to:
+
+```text
+[setting] key exists=True
+[setting] read-back: Enabled=(absent) - no per-application override is stored, so the platform default applies (the shell will show this application's toasts)
+[setting] reading: enabled=absent value=(absent) key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Trustsoft.NotifyIcon.Sample'
+```
+
+`-Action set` - note that only the **value** is written; the key already existed and is never deleted,
+because it holds the platform's own counters:
+
+```text
+[setting] the key 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Trustsoft.NotifyIcon.Sample' already exists; only the Enabled value is written
+[setting] wrote Enabled = DWORD 0
+[setting] read-back: Enabled=0 (DWORD) - notifications are disabled for this application: the shell will not show its toasts
+```
+
+Run **1 of 2** (verbatim from the toast block; the sample's tray/balloon preamble is omitted, nothing is
+reordered):
+
+```text
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: GetNotifierSetting hr=0x00000000 setting=1
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: notification setting=DisabledForApplication (1)
+[sample] toast show #1: the shell accepted the show, but the documented outcome is that it will not be shown - the platform reports setting=DisabledForApplication (1) for this identity, which means the shell will not show this application's toasts; S_OK is acceptance, not visibility, and delivery is judged out of process with scripts/probe-toast --history 'Trustsoft.NotifyIcon.Sample'
+[sample] toast setting: DisabledForApplication (1) - the shell will not show this application's toasts, because notifications are disabled for this application.
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast failure taxonomy: code=0x803E0111 name='NotificationsDisabled'
+Trustsoft.NotifyIcon Error: 3 : [trace] Toast NotificationFailed failed (code -2143420143, 0x803E0111). No exception detail was supplied.
+[sample] toast totals: shows=1, accepted=1, activations=0 (last arguments='(none)'), dismissals=0, failures=0, errors=1, refused=0, image=0, setting=DisabledForApplication, libraryTrace=27, registered=True, identity='Trustsoft.NotifyIcon.Sample'.
+[sample] toast error: operation='NotificationFailed' code=0x803E0111 taxonomy=NotificationsDisabled exception='(null)' (non-fatal)
+```
+
+Run **2 of 2** produced the identical reading set - `GetNotifierSetting hr=0x00000000 setting=1`,
+`setting=DisabledForApplication`, `errors=1`, the same stderr line - with one difference worth recording:
+the two asynchronous lines landed **before** the `[sample] toast setting:` line in run 2 and **after** it in
+run 1. The shell's `Failed` callback is asynchronous and lands wherever it lands, which is exactly why the
+outcome is printed from the show's own result rather than from the callback.
+
+**So the demo clause holds, and it holds twice.** The run reads `setting=DisabledForApplication`; the
+accepted wording is **replaced** ("the shell accepted the show, but the documented outcome is that it will
+not be shown"); the totals carry `setting=DisabledForApplication` and `errors=1`; the asynchronous
+`0x803E0111` failure arrives at some point during the run. A disabled run cannot be read as a plain
+success. **Both runs reported `DisabledForApplication` in the very first fresh process.** The "can lag a
+registry change by one process" caveat the enum's remarks carry describes a process that had **already
+read** the value before the change - it did not reproduce for a fresh process here, and this section says
+so rather than repeating the caveat as if it had been re-measured.
+
+`-Action clear`, then the read-back that proves the machine was left as found:
+
+```text
+[setting] removed only the Enabled value from 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Trustsoft.NotifyIcon.Sample'; the key itself is kept (it holds the platform's own counters)
+[setting] key exists=True
+[setting] read-back: Enabled=(absent) - no per-application override is stored, so the platform default applies (the shell will show this application's toasts)
+[setting] reading: enabled=absent value=(absent) key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Trustsoft.NotifyIcon.Sample'
+```
+
+**Finding: removing the value did not restore the reported setting inside this run's window.** The
+registry read-back is `enabled=absent` at every check after the clear, and the key is intact, yet every
+fresh process started afterwards still reported `GetNotifierSetting hr=0x00000000 setting=1`:
+
+| Live-captured-in-this-task | When, relative to the `-Action clear` |
+| --- | --- |
+| the two-process image demo (item 5) reads `setting=1` and `errors=1` | ~10 s after the clear |
+| `-Action status` `enabled=absent` **and** a sample run reading `setting=1` | 22:49:44 |
+| `-Action status` `enabled=absent` **and** a sample run reading `setting=1` | 22:56:48, and again at 23:00:20 - the state had still not reverted roughly 11 minutes after the clear |
+
+**What this is, and what it is not.** The registry value is gone and the key is untouched - the slice's
+requirement is met exactly. What lags is the **value the platform reports**: the platform keeps its own
+notification state (the same store item 1 found holding the reference), and a direct registry write is not
+the shell's Settings UI. The operational lesson is narrow and important: **a `-Action status` read-back is
+evidence about the registry, never evidence that the platform's effective setting has returned to
+`Enabled`**, so the two must not be conflated. It is recorded here as a limit with a follow-up (item 7), not
+dressed up as a clean revert.
+
+### 4. The failure taxonomy, and the two lines it travels on
+
+**Read-from-source plus SDK-header reading.** `Interop/ToastFailureTaxonomy.cs` (internal, deliberately
+not a public type) names the notification platform's delivery-failure codes. The authority is the local SDK
+header `C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared\winerror.h`, whose `WPN_E_*`
+block declares them as `_HRESULT_TYPEDEF_(0x803E….)` values:
+
+| Code | Name in the taxonomy | What it means | `winerror.h` macro line |
+| --- | --- | --- | --- |
+| `0x803E0102` | `InvalidApp` | the identity the toast was sent with is not a known application | 56698 `WPN_E_INVALID_APP` |
+| `0x803E0105` | `PlatformUnavailable` | the notification platform is not available in this session | 56725 `WPN_E_PLATFORM_UNAVAILABLE` |
+| `0x803E0111` | `NotificationsDisabled` | notifications are disabled for the identity - **measured live in item 3** | 56806 `WPN_E_NOTIFICATION_DISABLED` |
+| `0x803E0112` | `DeviceIncapable` | this device cannot show the notification | 56815 `WPN_E_NOTIFICATION_INCAPABLE` |
+| `0x803E0114` | `TypeDisabled` | the notification type is disabled | 56833 `WPN_E_NOTIFICATION_TYPE_DISABLED` |
+| `0x803E0115` | `PayloadTooLarge` | the payload is too large for the platform | 56842 `WPN_E_NOTIFICATION_SIZE` |
+| `0x803E0116` | `TagTooLong` | the notification's tag exceeds the platform's limit | 56851 `WPN_E_TAG_SIZE` |
+| `0x803E0201` | `PowerSave` | the notification was suppressed by power-saving policy | 56923 `WPN_E_POWER_SAVE` |
+| `0x803E0202` | `ImageMissing` | the platform could not resolve the image (cloud-cache name; local behaviour is item 1's silent drop) | 56932 `WPN_E_IMAGE_NOT_FOUND_IN_CACHE` |
+| `0x803E0207` | `Dropped` | the toast was dropped without being displayed | 56977 `WPN_E_TOAST_NOTIFICATION_DROPPED` |
+| `0x803E0209` | `GroupTooLong` | the notification's group exceeds the platform's limit | 56995 `WPN_E_GROUP_SIZE` |
+| `0x803E020A` | `GroupNotAlphanumeric` | the notification's group is not alphanumeric | 57004 `WPN_E_GROUP_ALPHANUMERIC` |
+
+`NameOf(int)` is **total**: every recognised code has exactly one name, and everything else - including
+`0`, and the show path's own value-level codes `E_INVALIDARG`, `E_UNEXPECTED` and the benign first-use
+`E_NOT_FOUND` - maps to `Unknown` rather than a guess, the same posture `ToastDismissalReason.Unknown` takes
+for dismissal reasons (`ToastFailureTaxonomyTests.Every_listed_code_maps_to_its_stable_name`,
+`An_unlisted_code_maps_to_Unknown`, `The_unknown_name_is_pinned`).
+
+**The channel grew; the line listeners filter on did not.** Live-captured in run 1 of item 3:
+
+```text
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast failure taxonomy: code=0x803E0111 name='NotificationsDisabled'
+Trustsoft.NotifyIcon Error: 3 : [trace] Toast NotificationFailed failed (code -2143420143, 0x803E0111). No exception detail was supplied.
+```
+
+- The **Error-level line's event id (3), severity, shape and wording are S03's, unchanged** - the captured
+  line is the shape S03 pinned, and the name is never appended to it.
+- The taxonomy name rides **one Verbose line** beside it
+  (`ToastFailureTaxonomyTests.A_failure_names_its_code_verbosely_beside_the_unchanged_error_line`), so a
+  support capture that raised the trace level reads the failure as a name while a listener filtering on
+  event id 3 sees exactly what it saw in S03.
+- The taxonomy added **no public type**: the exported surface stays at **twenty** documented types, pinned
+  by the three allow-lists in `PackagePurityTests` and `TrayIconExceptionTests`.
+- **Quiet hours / Do Not Disturb is deliberately absent.** The only public API in that area,
+  `SHQueryUserNotificationState`, reports the legacy logon-quiet-time state rather than Windows 11 Focus
+  Assist, and a suppressed toast is not reported as a delivery failure - so no quiet-hours code is named or
+  claimed, and nothing scrapes the registry to invent one.
+
+### 5. The live capture, verbatim: the two-process image demo
+
+Reproduce with (the runner resolves the real `APPDATA` / `LOCALAPPDATA` / `TEMP` itself, because the sandbox
+these runs happen in strips them):
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/probe-toast/run-image-demo.ps1
+```
+
+The runner's own lines, verbatim and complete:
+
+```text
+runner: environment resolved for the child process - APPDATA='C:\Users\Maxim\AppData\Roaming' LOCALAPPDATA='C:\Users\Maxim\AppData\Local' TEMP='C:\Users\Maxim\AppData\Local\Temp' TMP='C:\Users\Maxim\AppData\Local\Temp'
+runner: the library's temp folder is Path.Combine(Path.GetTempPath(), 'Trustsoft.NotifyIcon') = 'C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon'
+
+runner: clearing 'C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' of toast-*.png files before the run
+runner: removed 0 leftover file(s); folder exists=True
+
+runner: starting the observer as a separate process for 20s (it only reads the folder; the library is not loaded in it)
+runner: observer pid=2424 log='C:\Users\Maxim\AppData\Local\Temp\toast-image-demo\observe-toast-temp.log'
+
+runner: launching 'C:\Users\Maxim\Desktop\Trustsoft.NotifyIcon\.gsd-worktrees\M002\samples\Trustsoft.NotifyIcon.Sample\bin\Release\net8.0-windows\Trustsoft.NotifyIcon.Sample.exe' --toast --toast-image --toast-after 2 --toast-dispose-after 8 --run-seconds 18
+runner: sample exit=0
+runner: observer finishedInTime=True
+```
+
+The sample's toast block, verbatim (its tray/balloon preamble is omitted; nothing is reordered):
+
+```text
+[sample] toast content: title='Trustsoft.NotifyIcon sample toast' body='Click this banner's body: the sample prints the activation it receives.' severity=Default launch='sample-toast-1' image=source(frame=Frames[0], placement=AppLogoOverride)
+[sample] toast show #1: asking the shell for identity='Trustsoft.NotifyIcon.Sample' launch='sample-toast-1' title='Trustsoft.NotifyIcon sample toast'
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: image resolved path='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon\toast-a731e89496c840f69df2f7392ce13240.png' reference='file:///C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon/toast-a731e89496c840f69df2f7392ce13240.png' bytes=5424 pixels=256x256
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: GetNotifierSetting hr=0x00000000 setting=1
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: LoadXml hr=0x00000000 xml=<toast launch="sample-toast-1"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon sample toast</text><text>Click this banner's body: the sample prints the activation it receives.</text><image src="file:///C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon/toast-a731e89496c840f69df2f7392ce13240.png" placement="appLogoOverride"/></binding></visual></toast>
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast notifier: notification setting=DisabledForApplication (1)
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast failure taxonomy: code=0x803E0111 name='NotificationsDisabled'
+[sample] toast show #1: the shell accepted the show, but the documented outcome is that it will not be shown - the platform reports setting=DisabledForApplication (1) for this identity, which means the shell will not show this application's toasts; S_OK is acceptance, not visibility, and delivery is judged out of process with scripts/probe-toast --history 'Trustsoft.NotifyIcon.Sample'
+[sample] toast setting: DisabledForApplication (1) - the shell will not show this application's toasts, because notifications are disabled for this application.
+Trustsoft.NotifyIcon Error: 3 : [trace] Toast NotificationFailed failed (code -2143420143, 0x803E0111). No exception detail was supplied.
+Trustsoft.NotifyIcon Verbose: 2 : [trace] toast show: delete image file='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon\toast-a731e89496c840f69df2f7392ce13240.png' existed=True
+[sample] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+[sample] toast image temp folder: 0 file(s) after teardown (0 is the lifetime rule) - folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon'
+[sample] toast totals: shows=1, accepted=1, activations=0 (last arguments='(none)'), dismissals=0, failures=0, errors=1, refused=0, image=1, setting=DisabledForApplication, libraryTrace=29, registered=True, identity='Trustsoft.NotifyIcon.Sample'.
+```
+
+Note what this demo run also shows: it ran **after** the `-Action clear` of item 3 and its fresh process
+still read `setting=1` - the demo's `errors=1` comes from that lag, not from anything about the image. The
+demo's own claim (the temp file's lifetime) is unaffected, and the runner asserts it independently of the
+setting.
+
+The second process's reading, verbatim and complete - this is the half the library cannot produce for
+itself:
+
+```text
+observer: watching 'C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' for 20s, one tick every 1s (a separate process; the library is not loaded here)
+observer: t+0.0s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+1.1s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+2.1s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+3.1s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+4.2s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+5.2s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+6.2s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+7.2s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+8.2s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=1 present=True [toast-a731e89496c840f69df2f7392ce13240.png bytes=5424]
+observer: t+9.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+10.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+11.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+12.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+13.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+14.3s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+15.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+16.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+17.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+18.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+19.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: t+20.4s folder='C:\Users\Maxim\AppData\Local\Temp\Trustsoft.NotifyIcon' exists=True files=0 present=False []
+observer: complete at 22:49:33.735
+```
+
+The runner's own asserted readings, verbatim:
+
+```text
+runner: reading present - the content line names the image source
+runner: reading present - the library traced the resolved reference
+runner: reading present - the library deleted the file on the unwind path
+runner: reading present - a second process saw the file while the toast was live
+runner: reading present - the observer ran to completion
+runner: reading present - the teardown line
+runner: reading present - the sample counted 0 files after teardown
+runner: reading present - the totals line reports no refused show
+runner: the folder holds 0 toast-*.png file(s) after the run, read by the runner itself (the sample said 0 above)
+
+runner verdict: PASS (the image was shown from an ImageSource, a second process saw the temp file while the toast was live, and the folder was empty after teardown)
+runner: captures kept at 'C:\Users\Maxim\AppData\Local\Temp\toast-image-demo'
+```
+
+### 6. The suite, run once in this task
+
+**Not a live probe of the whole slice - one reading, labelled as such.** Run with
+`dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build`:
+
+```text
+Passed!  - Failed:     0, Passed:   633, Skipped:     0, Total:   633, Duration: 1 m 16 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+```
+
+- **633 passed / 0 failed**, whole assembly, no filter - so the live probe classes
+  (`ToastApiLiveProbeTests`, `ToastIdentityLiveProbeTests`) ran live inside it. S03's sweep was 580, so this
+  slice added **53** test cases; S04's four new classes account for 47 of them, measured individually:
+  `ToastImageResolutionTests` 6, `ToastImageFileTests` 6, `ToastNotificationSettingTests` 11,
+  `ToastFailureTaxonomyTests` 24. The remaining six are additions to existing classes, reported here as the
+  measured delta rather than attributed one by one.
+- The toast/pin subset (`--filter "FullyQualifiedName~Toast|FullyQualifiedName~PackagePurity"`):
+  **229 passed / 0 failed**.
+- **No M001 suite regressed.** The complement (`--filter "FullyQualifiedName!~Toast"`, the M001 classes) has
+  the same 416 cases S02 and S03 measured, and no case was removed. **Honest note on this task's one
+  unstable reading:** the first complement run reported `Failed: 4, Passed: 412` out of 416, and only its
+  summary line was kept - **the four names are not available**, so they are recorded as unnamed rather than
+  guessed at (S03 saw a comparable environmental foreground-stealing flake in this area). The identical
+  filter then ran **twice consecutively green, 416 passed / 0 failed**, the second time with a `.trx` whose
+  zero `outcome="Failed"` rows were read back. Nothing in S04 touches the tray or menu path; the reading is
+  recorded rather than retried until green.
+
+### 7. What S04 deliberately did not deliver
+
+| Not delivered | Why / where it lands |
+| --- | --- |
+| **No Do Not Disturb / quiet-hours detection.** Nothing asks `SHQueryUserNotificationState` and nothing scrapes the registry for a Focus Assist state | The API reports the legacy logon-quiet-time state, and a suppressed toast is not a delivery failure (item 4); inventing a code for it would be a claim, not a reading |
+| **No image cache and no sweeper.** One PNG per show, written before the show and deleted in its unwind path; killed processes can leave an orphan | Deliberate: the folder is a fixed documented location, and a sweeper would need lifetime rules the shell does not expose (item 2) |
+| **No rendering confirmation.** Whether the banner or the Action Center entry actually painted the picture - pixels, crop, hero versus app-logo scaling - **is not established by anything here** | Needs a human at a screen. It is a follow-up, not a result, and no claim is drawn about it |
+| **No claim that the platform's effective notification setting returns to `Enabled` after the value is removed** | Item 3's finding: the registry read-back is not the platform's state. Follow-up: re-check the identity with notifications enabled, or do not read meaning into `setting=` in a later demo, before S05's consumer proof runs |
+| **No raw (non-URI) Windows path form** | Not measured by T01's probe; neither claimed supported nor claimed broken (T01 item 5) |
+
+### 8. Failure Modes (Q5)
+
+| External dependency | Failure path | Handling, as measured or as read from source |
+| --- | --- | --- |
+| The Windows registry value this slice writes | access denied, or the value absent when `-Action clear` runs | The script stops on error (`$ErrorActionPreference = 'Stop'`) and exits non-zero; a key that does not exist or holds no `Enabled` value is reported as "nothing to remove" rather than an error, and the key itself is **never** deleted (live-captured: `the key itself is kept (it holds the platform's own counters)`). |
+| The notification platform's reported setting | the platform lags a registry change, or `GetSetting` fails outright | **Measured lag** (item 3): the value was removed and fresh processes still read `setting=1` - twice inside the run and once more roughly 11 minutes later. Nothing in the library depends on freshness - it reports the value it read. A hard `GetSetting` failure sets `SettingRead = false`, so the outcome stays `null` instead of claiming the failed call's `0 = Enabled` (`ToastNotificationSettingTests.A_failure_at_the_setting_step_leaves_the_setting_null`). |
+| The sample process | it hangs, or exits non-zero | It bounds itself with `--run-seconds`; the runner launches it with `Start-Process -Wait` because this PowerShell leaves `ExitCode` empty without it (measured by T05), and a non-zero exit is added to the failure list. All five runs in this task exited `0`. |
+| The observer process | it hangs or dies early | Its completeness is judged on **its own final line** (`observer: complete at …`) rather than an exit code, because `Start-Process` without `-Wait` exposes none here; a hung observer is killed after `observerSeconds + 20` and reported as `finishedInTime=False`. |
+| The image file on disk | an unreadable source, or a delete that fails | Resolution failures throw `ToastException` with `OperationImageResolution` and leave no partial file; `IOException` / `UnauthorizedAccessException` on the delete are caught, traced and swallowed so cleanup cannot replace the failure that caused the unwind. |
+| The platform's delivery-failure callbacks | an unknown or unexpected `HRESULT` | The taxonomy is total: anything unlisted - including `0` and the show path's own `E_INVALIDARG` / `E_UNEXPECTED` / `E_NOT_FOUND` - is named `Unknown` rather than guessed (item 4). |
+| The image demo's own expectations | any expected reading missing | The runner collects **every** unmet pattern and exits non-zero listing them, and independently re-counts the temp folder after the run instead of trusting the sample's own count. |
+| `rg` in this task's Verify string | the record has no S04 section | The clause is `rg -q "^## S04" docs/TOAST-MEASUREMENT.md`, which fails loudly on a missing or renamed section. |
+
+### 9. Load Profile (Q6)
+
+There is no service-level load dimension here: this task is a measurement session of five short-lived sample
+processes, one two-process demo and a test sweep. The resource that saturates first at 10x is the
+**interactive notification surface** - 10 toasts contending on the user's desktop - followed by the
+sequential wall time (`runs x --run-seconds`), because every instrument is serial by construction.
+
+- The library's own per-show cost is **one PNG on disk** (measured: `bytes=5424 pixels=256x256`,
+  `ToastImageFile.VectorPixelSize = 256`) and one GUID-named file per show, so 10 concurrent shows would
+  hold 10 files, each deleted by its own show's unwind. Nothing is pooled, cached or queued, and there is
+  deliberately no sweeper.
+- Every instrument is bounded rather than throttled: the sample by `--run-seconds`, the observer by
+  `-Seconds` with an `-IntervalSeconds` tick, the variant runner by a fixed four-variant list and a
+  `-WaitSeconds` pump, and the demo by `-RunSeconds` / `-DisposeAfterSeconds` validation that refuses an
+  incoherent combination up front.
+- The platform's own coalescing, not this library, is the limiting factor beyond that: identical payloads
+  coalesce into one Action Center entry, which T01 measured as a history `count` that moved between 0, 1 and
+  3 across captures - a snapshot, never a verdict.
+
+### 10. Negative Tests (Q7)
+
+The negative surface of S04 is asserted in three layers - the probe's variants, the library's tests, and the
+runners' own expectations:
+
+| Negative case | Where it is asserted |
+| --- | --- |
+| `src` names a file that does not exist | probe variant `missing-file` (T01): expects `image: at send exists=False bytes=(absent)` **and** the whole `LoadXml` / `CreateToastNotification` / `Show` / `result` chain, so "the shell silently accepted a missing image" is a pinned reading (item 1) |
+| The image is deleted while the notification is live | probe variant `delete-at-t-plus-2s` (T01), plus the runner's independent post-run file check |
+| A temp path with a space and a non-ASCII character | probe variant `id-1-applogo-space-nonascii`; `ToastImageFileTests.Reference_is_an_escaped_absolute_file_uri_for_a_folder_with_a_space` |
+| A source that cannot be read or encoded | `ToastImageFileTests.A_source_that_cannot_be_encoded_fails_with_the_named_resolution_operation`; `ToastImageResolutionTests.A_source_that_cannot_be_encoded_throws_named_and_records_no_seam_call` |
+| A null source | `ToastImageFileTests.Create_refuses_a_null_source` |
+| A delete called twice, or after the file is gone | `ToastImageFileTests.File_exists_after_create_and_delete_removes_it_idempotently` |
+| A show that fails after resolving the image | `ToastImageResolutionTests.A_scripted_show_failure_leaves_no_temp_file_behind_and_still_reports_through_ToastError` |
+| A registration failure | `ToastImageResolutionTests.A_registration_failure_leaves_no_temp_file_because_resolution_runs_after_it` |
+| The setting before any show, or after a failure before / at the setting step | `ToastNotificationSettingTests.The_setting_is_null_before_the_first_show`, `A_show_that_failed_before_the_setting_step_leaves_the_setting_null`, `A_failure_at_the_setting_step_leaves_the_setting_null` |
+| A disabled setting that must not become a failure | `ToastNotificationSettingTests.A_disabled_setting_raises_no_ToastError_and_writes_no_Error_level_line` |
+| An unlisted or boundary `HRESULT` (`0`, `E_FAIL`, `E_INVALIDARG`, `E_UNEXPECTED`, `E_NOT_FOUND`, `-1`, and codes just outside the table) | `ToastFailureTaxonomyTests.An_unlisted_code_maps_to_Unknown` (9 inline cases) |
+| A taxonomy line that must not touch the Error line | `ToastFailureTaxonomyTests.A_failure_names_its_code_verbosely_beside_the_unchanged_error_line` |
+| A demo that would emit an empty `src` | the sample rejects `--toast-image` together with `--toast-skip-register` as a usage error (T05) |
+| A missing expected reading anywhere in the demo | `run-image-demo.ps1` collects every unmet pattern and exits non-zero listing them |
+
+### Files added or changed by S04
+
+- `src/Trustsoft.NotifyIcon/ToastImage.cs` - `ToastImage.Source`, the typed half of the image contract (T02).
+- `src/Trustsoft.NotifyIcon/Interop/ToastImageFile.cs` - the internal PNG temp-file resolver: the GUID name, `DefaultFolder`, the built `file:///` reference, the translated resolution failure and the idempotent best-effort delete (T02).
+- `src/Trustsoft.NotifyIcon/ToastException.cs` - `OperationImageResolution` (T02).
+- `src/Trustsoft.NotifyIcon/Interop/ToastPayload.cs` - the resolved reference reaching `ToXml` through a second constructor, so the existing payload expectations stay byte-identical (T03).
+- `src/Trustsoft.NotifyIcon/ToastNotifier.cs` - `ResolveImage` per show, the image-resolution trace line, the `NotificationSetting` outcome and its Verbose line, and the taxonomy line inside `RaiseError` (T03, T04).
+- `src/Trustsoft.NotifyIcon/Interop/ToastApi.cs` - `GetNotifierSetting`, `ToastShowResult.SettingRead` / `NotificationSetting`, and `ToastShow.DeleteImageFile` in the single unwind path (T03, T04).
+- `src/Trustsoft.NotifyIcon/ToastNotificationSetting.cs` - the public enum of the platform's own ordinals (T04).
+- `src/Trustsoft.NotifyIcon/Interop/ToastFailureTaxonomy.cs` - the internal code-to-name table (T04).
+- `samples/Trustsoft.NotifyIcon.Sample/App.xaml.cs` - `--toast-image`, the per-show setting outcome, the replaced accepted wording, the taxonomy name on every error line and the after-teardown temp-folder count (T05).
+- `tests/Trustsoft.NotifyIcon.Tests/ToastImageFileTests.cs`, `ToastImageResolutionTests.cs`, `ToastNotificationSettingTests.cs`, `ToastFailureTaxonomyTests.cs` - the slice's four new contract classes (T02-T04).
+- `scripts/probe-toast/Program.cs`, `run-image-variants.ps1` - the image variants and the variant runner (T01).
+- `scripts/probe-toast/observe-toast-temp.ps1`, `run-image-demo.ps1` - the second-process observer and the two-process demo runner (T05).
+- `scripts/toast-notification-setting.ps1` - the reversible per-application setting recipe the disabled run uses (T05).
+- `docs/TOAST-S04-IMAGE-VARIANTS.md` - T01's raw probe record (T01).
+- `docs/TOAST-MEASUREMENT.md` - this section.
