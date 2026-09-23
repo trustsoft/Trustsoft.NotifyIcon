@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace Trustsoft.NotifyIcon.Interop;
@@ -950,6 +951,16 @@ internal sealed class ToastShow : IDisposable
     private readonly IToastApi _api;
     private readonly ToastPayload _payload;
 
+    /// <summary>
+    /// The absolute path of the temp file the payload's resolved image reference names, or
+    /// <see langword="null"/> when this show persisted nothing.
+    /// </summary>
+    /// <remarks>
+    /// Cleared as soon as it has been deleted, so the single unwind path removes the file exactly
+    /// once even when <see cref="Fail"/> has already unwound and <see cref="Dispose"/> runs after it.
+    /// </remarks>
+    private string? _imageFilePath;
+
     private IntPtr _statics;
     private IntPtr _factory;
     private IntPtr _xmlDocument;
@@ -981,6 +992,7 @@ internal sealed class ToastShow : IDisposable
     {
         _api = api ?? throw new ArgumentNullException(nameof(api));
         _payload = payload ?? throw new ArgumentNullException(nameof(payload));
+        _imageFilePath = _payload.ImageFilePath;
     }
 
     /// <summary>
@@ -1260,11 +1272,61 @@ internal sealed class ToastShow : IDisposable
         handle = IntPtr.Zero;
     }
 
-    /// <summary>Unsubscribes and releases everything, for both the failure and the disposal paths.</summary>
+    /// <summary>
+    /// Unsubscribes, releases everything and removes the temp image file this show resolved - the
+    /// one unwind path, shared by the failure path and the disposal.
+    /// </summary>
     private void Unwind()
     {
         Unsubscribe();
         ReleaseHandles();
+        DeleteImageFile();
+    }
+
+    /// <summary>
+    /// Deletes the temp image file this show's payload resolved, when it resolved one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Part of the unwind, not a seam call.</b> The file is the library's own artefact - the shell
+    /// only ever receives the <c>file:///</c> string - so removing it needs no <see cref="IToastApi"/>
+    /// member: a new seam member would force matching edits in <c>ToastApi</c>, <c>ShortcutLink</c>
+    /// and the recording fake for no gain.
+    /// </para>
+    /// <para>
+    /// <b>Exactly once, after the unsubscribes and the releases.</b> The field is cleared before the
+    /// delete runs, so a <see cref="Dispose"/> that follows a <see cref="Fail"/> finds nothing left to
+    /// remove and no second delete is attempted. A delete that fails - the shell may still hold the
+    /// file while it renders - is traced and swallowed: the toast is already being torn down, and a
+    /// leftover file is the same end state as a process killed before teardown, which the class
+    /// documents as a limitation rather than a new failure.
+    /// </para>
+    /// </remarks>
+    private void DeleteImageFile()
+    {
+        if (_imageFilePath is not { } path)
+        {
+            return;
+        }
+
+        _imageFilePath = null;
+
+        bool existed = File.Exists(path);
+
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+            // Best effort: see the remarks on this method.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Best effort: see the remarks on this method.
+        }
+
+        NotifyIconTrace.Verbose($"toast show: delete image file='{path}' existed={existed}");
     }
 
     /// <summary>Traces the failure, unwinds the handles acquired so far and returns the failure as data.</summary>

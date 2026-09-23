@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using Trustsoft.NotifyIcon.Interop;
 
 namespace Trustsoft.NotifyIcon;
@@ -219,22 +220,36 @@ public sealed class ToastNotifier : IDisposable
     /// <see cref="ToastContent.Title"/> is empty or whitespace - a toast with no visible text would
     /// be an empty banner - or the content is otherwise unusable.
     /// </exception>
-    /// <exception cref="ToastException">The identity could not be registered.</exception>
+    /// <exception cref="ToastException">
+    /// The identity could not be registered, or the content's <see cref="ToastImage.Source"/> could
+    /// not be persisted as the PNG the shell needs (carrying
+    /// <see cref="ToastException.OperationImageResolution"/>).
+    /// </exception>
     /// <exception cref="ObjectDisposedException">The notifier has been disposed.</exception>
     /// <remarks>
     /// <para>
     /// <b>Order matters and is the contract.</b> The content is validated first (a caller error must
     /// not touch the shell), then a disposed notifier is refused, then - only on the first call - the
-    /// identity is registered, then one show is built and added to the live list <em>before</em> it
-    /// runs, then it is shown. Adding the show before running it means a <see cref="Dispose"/> that
-    /// races the show, or a show that fails, still has something to unwind.
+    /// identity is registered, then the content's image source is resolved (deliberately after
+    /// registration, so a registration failure cannot strand a temp file), then one show is built and
+    /// added to the live list <em>before</em> it runs, then it is shown. Adding the show before
+    /// running it means a <see cref="Dispose"/> that races the show, or a show that fails, still has
+    /// something to unwind.
+    /// </para>
+    /// <para>
+    /// <b>A failed image resolution is a value-level failure and it throws.</b> When the content's
+    /// <see cref="ToastImage.Source"/> cannot be read, encoded or written, the resolver's
+    /// <see cref="ToastException"/> (operation <see cref="ToastException.OperationImageResolution"/>)
+    /// propagates unchanged: no toast is shown and no show-path seam member is invoked, exactly as a
+    /// refused title never reaches the shell. The message keeps the source type and the underlying
+    /// failure, and no file is left behind.
     /// </para>
     /// <para>
     /// <b>A failed show does not throw (D055/D061).</b> Once the identity is registered, a show-path
     /// failure is reported through <see cref="ToastError"/> - with the failing operation and the code
     /// that call reported - and one Error-level line on the trace channel, and the method returns
-    /// normally. The failed show has already unwound its own subscriptions and handles by then, so
-    /// the notifier is unaffected and a later <see cref="Show"/> is a fresh attempt.
+    /// normally. The failed show has already unwound its own subscriptions, handles and temp image
+    /// file by then, so the notifier is unaffected and a later <see cref="Show"/> is a fresh attempt.
     /// </para>
     /// </remarks>
     public void Show(ToastContent content)
@@ -258,7 +273,9 @@ public sealed class ToastNotifier : IDisposable
 
         EnsureRegistered();
 
-        var show = new ToastShow(_api, new ToastPayload(content));
+        ToastImageFile? imageFile = ResolveImage(content);
+
+        var show = new ToastShow(_api, new ToastPayload(content, imageFile?.Reference, imageFile?.Path));
 
         _liveShows.Add(show);
 
@@ -276,11 +293,11 @@ public sealed class ToastNotifier : IDisposable
 
         if (!result.Success)
         {
-            // The failed show has already unwound its own handles; drop it from the live list and
-            // release it, then report the failure through the non-fatal channel: one Error-level
-            // trace line plus the ToastError event (the split D055 fixed and D061 replaced D058's
-            // interim throw with). Nothing is thrown here: a toast that could not be delivered must
-            // not terminate a windowless host.
+            // The failed show has already unwound its own handles and temp image file; drop it from
+            // the live list and release it, then report the failure through the non-fatal channel:
+            // one Error-level trace line plus the ToastError event (the split D055 fixed and D061
+            // replaced D058's interim throw with). Nothing is thrown here: a toast that could not be
+            // delivered must not terminate a windowless host.
             _liveShows.Remove(show);
             show.Dispose();
 
@@ -384,6 +401,85 @@ public sealed class ToastNotifier : IDisposable
 
         NotifyIconTrace.Verbose(
             $"toast notifier: registered aumid='{_registeredAppUserModelId}' shortcut='{_shortcutPath}'");
+    }
+
+    /// <summary>
+    /// Persists the content's typed image source for one show, when it carries one.
+    /// </summary>
+    /// <param name="content">The content about to be shown.</param>
+    /// <returns>
+    /// The owner of the PNG that was written - exposing the absolute <c>file:///</c> reference and
+    /// the file path - or <see langword="null"/> when the content carries no
+    /// <see cref="ToastImage.Source"/>.
+    /// </returns>
+    /// <exception cref="ToastException">
+    /// The source could not be persisted. <see cref="ToastException.Operation"/> is
+    /// <see cref="ToastException.OperationImageResolution"/> and no file is left behind; the
+    /// exception is the resolver's own and is not rewritten here.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <b>Per show, and never written back into the content.</b> A fresh PNG is written for every
+    /// show, so two shows of the same content never share - and never collide over - a file, and the
+    /// content stays a dumb data shape whose <see cref="ToastImage.Reference"/> is untouched. That is
+    /// what keeps <see cref="ToastContent"/>'s documented promise true: constructing or filling one
+    /// touches nothing outside the process.
+    /// </para>
+    /// <para>
+    /// <b>The typed source wins, and the ignored reference is visible.</b> When both members are set
+    /// the source is the image and the pre-formed reference is dropped, with one Verbose trace line
+    /// naming the reference so a capture shows the choice rather than having to infer it.
+    /// </para>
+    /// <para>
+    /// <b>Called only after registration.</b> A registration failure therefore cannot leave a temp
+    /// file behind, and a resolution failure happens before any show-path seam member is invoked.
+    /// </para>
+    /// </remarks>
+    private static ToastImageFile? ResolveImage(ToastContent content)
+    {
+        if (content.Image is not { Source: { } source } image)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrEmpty(image.Reference))
+        {
+            NotifyIconTrace.Verbose(
+                $"toast notifier: image source wins over reference='{image.Reference}' (the reference is ignored)");
+        }
+
+        ToastImageFile imageFile = ToastImageFile.Create(source);
+
+        // One line a capture can quote: the path the library owns, the reference it handed to the
+        // shell, the byte length of the PNG and its pixel extent. The shell reads the file when it
+        // renders the banner and the Action Center entry, so this is the reading that ties the show
+        // to the file on disk.
+        NotifyIconTrace.Verbose(
+            $"toast notifier: image resolved path='{imageFile.Path}' reference='{imageFile.Reference}' bytes={FileLength(imageFile.Path)} pixels={imageFile.PixelWidth}x{imageFile.PixelHeight}");
+
+        return imageFile;
+    }
+
+    /// <summary>
+    /// Reads a file's byte length for the resolution trace line, without letting a concurrent removal
+    /// turn a diagnostic into a failure.
+    /// </summary>
+    /// <param name="path">The file to measure.</param>
+    /// <returns>The length in bytes, or <c>0</c> when the file cannot be measured.</returns>
+    private static long FileLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 
     /// <summary>

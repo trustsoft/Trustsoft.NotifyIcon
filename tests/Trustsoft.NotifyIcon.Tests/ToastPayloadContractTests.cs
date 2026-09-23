@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Trustsoft.NotifyIcon.Interop;
 using Xunit;
 
@@ -382,5 +383,84 @@ public sealed class ToastPayloadContractTests
         var content = new ToastContent { Title = "Title", Launch = "launch" };
 
         Assert.Same(content, new ToastPayload(content).Content);
+    }
+
+    /// <summary>
+    /// The content-only constructor carries no image resolution, so a
+    /// <see cref="ToastImage.Reference"/>-only content renders through the content's own reference -
+    /// which is what keeps the 27 exact-string expectations above valid.
+    /// </summary>
+    [Fact]
+    public void The_content_only_constructor_carries_no_image_resolution()
+    {
+        var payload = new ToastPayload(new ToastContent { Title = "Title" });
+
+        Assert.Null(payload.ResolvedImageReference);
+        Assert.Null(payload.ImageFilePath);
+    }
+
+    /// <summary>
+    /// A resolved reference - the one the notifier persisted from <see cref="ToastImage.Source"/> -
+    /// is what the image element carries, and it wins over the content's own reference; the file path
+    /// it was resolved from is exposed alongside it.
+    /// </summary>
+    [Fact]
+    public void A_resolved_reference_is_written_instead_of_the_contents_own()
+    {
+        var content = new ToastContent
+        {
+            Title = "Title",
+            Image = new ToastImage { Reference = "https://example.com/ignored.png" },
+        };
+
+        var payload = new ToastPayload(content, "file:///C:/tmp/toast-abc.png", @"C:\tmp\toast-abc.png");
+
+        Assert.Equal(
+            "<toast><visual><binding template=\"ToastGeneric\"><text>Title</text><image src=\"file:///C:/tmp/toast-abc.png\" placement=\"appLogoOverride\"/></binding></visual></toast>",
+            payload.ToXml());
+        Assert.Equal("file:///C:/tmp/toast-abc.png", payload.ResolvedImageReference);
+        Assert.Equal(@"C:\tmp\toast-abc.png", payload.ImageFilePath);
+    }
+
+    /// <summary>
+    /// A resolved reference is XML-escaped exactly like every other attribute value and is never
+    /// URL-encoded or otherwise rewritten: the URI spelling is the resolution's own decision, so the
+    /// builder must not have a second opinion about it.
+    /// </summary>
+    [Fact]
+    public void A_resolved_reference_is_xml_escaped_but_never_url_encoded()
+    {
+        var content = new ToastContent { Title = "Title", Image = new ToastImage() };
+
+        string xml = new ToastPayload(content, "file:///C:/a?x=1&y=2", @"C:\a").ToXml();
+
+        Assert.Contains("src=\"file:///C:/a?x=1&amp;y=2\"", xml, StringComparison.Ordinal);
+        Assert.DoesNotContain("%3F", xml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("%26", xml, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// A resolved reference whose path contains a space reaches the shell percent-encoded, exactly
+    /// as <c>new Uri(path).AbsoluteUri</c> produced it - the reading the library's temp-folder
+    /// contract rests on, and the one the naive <c>"file:///" + path</c> spelling would get wrong.
+    /// </summary>
+    [Fact]
+    public void A_resolved_reference_with_a_space_reaches_the_shell_percent_encoded()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "Trustsoft NotifyIcon test", "toast-abc.png");
+        string reference = new Uri(path, UriKind.Absolute).AbsoluteUri;
+
+        var content = new ToastContent { Title = "Title", Image = new ToastImage() };
+
+        string xml = new ToastPayload(content, reference, path).ToXml();
+
+        Assert.Contains("%20", reference, StringComparison.Ordinal);
+        Assert.Contains($"src=\"{reference}\"", xml, StringComparison.Ordinal);
+
+        // The naive concatenation keeps the raw space, which is why the assertion above is not
+        // vacuous: the payload writes what it was handed, so the URI is the only layer that can
+        // escape the path.
+        Assert.Contains(' ', "file:///" + path);
+        Assert.DoesNotContain("src=\"file:///" + path, xml, StringComparison.Ordinal);
     }
 }

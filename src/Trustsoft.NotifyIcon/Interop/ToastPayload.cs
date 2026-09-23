@@ -25,6 +25,16 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// <see cref="EscapeAttribute"/> below - so a payload can only ever be well-formed XML.
 /// </para>
 /// <para>
+/// <b>The image reference can come from two places, and both are finished strings.</b> A content
+/// whose <see cref="ToastImage.Reference"/> is set renders that string; a content whose
+/// <see cref="ToastImage.Source"/> the notifier resolved for this show renders the reference the
+/// resolution produced, which is handed in through the second constructor
+/// (<see cref="ToastPayload(ToastContent, string?, string?)"/>). In both cases the builder only
+/// XML-escapes the value: it never rewrites, normalises or URL-encodes a reference, because the URI
+/// spelling is the resolution's (or the consumer's) own statement of where the image is, and
+/// escaping is the only transformation a well-formed document needs.
+/// </para>
+/// <para>
 /// <b>The rendered shapes, and their pinned order.</b> The <c>&lt;toast&gt;</c> element carries
 /// <c>launch</c> and then <c>scenario</c> (both omitted when absent or default); the
 /// <c>&lt;visual&gt;&lt;binding template="ToastGeneric"&gt;</c> carries one <c>&lt;text&gt;</c> child
@@ -53,9 +63,37 @@ internal sealed class ToastPayload
     /// <summary>Initializes a payload over the public content model.</summary>
     /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
     /// <exception cref="ArgumentNullException">The content is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// This is the constructor the exact-string contract tests and the show-path contract tests use:
+    /// it carries no image resolution, so a <see cref="ToastImage.Reference"/>-only content renders
+    /// byte-identically to what S02 pinned.
+    /// </remarks>
     internal ToastPayload(ToastContent content)
+        : this(content, resolvedImageReference: null, imageFilePath: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a payload over the public content model and the image resolution the notifier
+    /// performed for one show.
+    /// </summary>
+    /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
+    /// <param name="resolvedImageReference">
+    /// The absolute <c>file:///</c> reference of the PNG the notifier persisted for
+    /// <see cref="ToastImage.Source"/>, or <see langword="null"/> when the content carried no source
+    /// and the image element must use <see cref="ToastImage.Reference"/>.
+    /// </param>
+    /// <param name="imageFilePath">
+    /// The absolute path of the PNG <paramref name="resolvedImageReference"/> names, or
+    /// <see langword="null"/> when nothing was persisted. The show owns this file and deletes it in
+    /// its single unwind path.
+    /// </param>
+    /// <exception cref="ArgumentNullException">The content is <see langword="null"/>.</exception>
+    internal ToastPayload(ToastContent content, string? resolvedImageReference, string? imageFilePath)
     {
         Content = content ?? throw new ArgumentNullException(nameof(content));
+        ResolvedImageReference = resolvedImageReference;
+        ImageFilePath = imageFilePath;
     }
 
     /// <summary>
@@ -63,6 +101,27 @@ internal sealed class ToastPayload
     /// the title from here for its trace line; the payload does not copy the fields.
     /// </summary>
     internal ToastContent Content { get; }
+
+    /// <summary>
+    /// Gets the <c>file:///</c> reference the notifier resolved from <see cref="ToastImage.Source"/>,
+    /// or <see langword="null"/> when the content carried no source.
+    /// </summary>
+    /// <value>
+    /// A finished reference - the resolution built it with <c>new Uri(path).AbsoluteUri</c> - so
+    /// <see cref="ToXml"/> escapes it and does nothing else. It is deliberately never written back
+    /// into the content, so the same <see cref="ToastContent"/> can be shown twice.
+    /// </value>
+    internal string? ResolvedImageReference { get; }
+
+    /// <summary>
+    /// Gets the absolute path of the temp file <see cref="ResolvedImageReference"/> names, or
+    /// <see langword="null"/> when this payload persisted nothing.
+    /// </summary>
+    /// <value>
+    /// The file belongs to the show that resolved it, which deletes it in its single unwind path.
+    /// The payload only reports the path; it neither reads nor owns the file.
+    /// </value>
+    internal string? ImageFilePath { get; }
 
     /// <summary>
     /// Renders the payload as the exact XML handed to <c>IXmlDocumentIO.LoadXml</c>.
@@ -111,9 +170,11 @@ internal sealed class ToastPayload
         if (content.Image is { } image)
         {
             // src first, then placement (always), then the optional crop hint - the schema's own
-            // syntax order for the image element.
+            // syntax order for the image element. A resolved reference (from ToastImage.Source,
+            // persisted by the notifier for this show) wins; the content's own reference is the
+            // untouched default a Reference-only content renders with.
             xml.Append("<image src=\"");
-            xml.Append(EscapeAttribute(image.Reference));
+            xml.Append(EscapeAttribute(ResolvedImageReference ?? image.Reference));
             xml.Append("\" placement=\"");
             xml.Append(PlacementName(image.Placement));
             xml.Append('"');

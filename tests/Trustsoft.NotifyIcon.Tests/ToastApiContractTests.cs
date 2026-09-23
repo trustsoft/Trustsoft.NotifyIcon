@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using Trustsoft.NotifyIcon.Interop;
 using Xunit;
@@ -21,6 +22,7 @@ namespace Trustsoft.NotifyIcon.Tests;
 /// deliberately a separate class so this suite stays shell-free.
 /// </para>
 /// </remarks>
+[Collection("Toast image temp folder")]
 public sealed class ToastApiContractTests
 {
     /// <summary>
@@ -567,6 +569,107 @@ public sealed class ToastApiContractTests
         Assert.Throws<ArgumentNullException>(() => new ToastShow(null!, Payload));
         Assert.Throws<ArgumentNullException>(() => new ToastShow(new FakeToastApi(), null!));
     }
+
+    /// <summary>
+    /// A payload that carries a resolved temp file makes the show delete that file on its single
+    /// unwind path - after the three unsubscribes and after the last handle release - and the
+    /// deletion invokes no seam member, so the measured eleven-plus-three sequence and the five
+    /// releases are exactly what they are for a payload without a file.
+    /// </summary>
+    [Fact]
+    public void A_payload_carrying_a_temp_file_deletes_it_on_the_unwind_path_after_the_last_release()
+    {
+        string path = CreateTempImageFile();
+
+        try
+        {
+            var fake = new FakeToastApi();
+            var show = new ToastShow(fake, PayloadWithImageFile(path));
+
+            Assert.True(show.Show(AppUserModelId).Success);
+            Assert.True(File.Exists(path), "the file must still exist while the show is live");
+
+            show.Dispose();
+
+            Assert.False(File.Exists(path), "the unwind must delete the temp file the payload carried");
+
+            string[] expected =
+            [
+                .. ToastShowSequence,
+                .. Enumerable.Repeat(nameof(IToastApi.ReleaseHandle), HandleReturningOperations),
+            ];
+
+            Assert.Equal(expected, fake.Operations.ToArray());
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// A failed show deletes the temp file it carried in the same unwind path a disposal uses, and a
+    /// later disposal of the already-unwound show attempts no second delete: the file is cleared from
+    /// the show's ownership before the delete runs, so a file that reappears at the same path
+    /// afterwards survives.
+    /// </summary>
+    [Fact]
+    public void A_failed_show_deletes_the_temp_file_once_in_the_same_unwind_path()
+    {
+        string path = CreateTempImageFile();
+
+        try
+        {
+            var fake = new FakeToastApi();
+            fake.FailNext(ToastOperation.LoadXml);
+
+            var show = new ToastShow(fake, PayloadWithImageFile(path));
+
+            ToastShowResult result = show.Show(AppUserModelId);
+
+            Assert.False(result.Success);
+            Assert.Equal(nameof(IToastApi.LoadXml), result.Operation);
+            Assert.False(File.Exists(path), "a failed show must delete the temp file it carried");
+
+            // The show's ownership of the file ended with the unwind. A file that reappears at the
+            // same path therefore survives the disposal that follows the failure - which is what
+            // proves the deletion is attempted exactly once rather than once per unwind.
+            File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
+
+            show.Dispose();
+
+            Assert.True(File.Exists(path), "disposing an already-unwound show must not delete a second time");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>
+    /// Creates a throwaway file in the library's fixed temp folder, with the library's own name
+    /// shape, so the unwind path under test deletes a real file it could have written.
+    /// </summary>
+    /// <returns>The absolute path of the created file.</returns>
+    private static string CreateTempImageFile()
+    {
+        Directory.CreateDirectory(ToastImageFile.DefaultFolder);
+
+        string path = Path.Combine(ToastImageFile.DefaultFolder, "toast-" + Guid.NewGuid().ToString("N") + ".png");
+
+        File.WriteAllBytes(path, [0x89, 0x50, 0x4E, 0x47]);
+
+        return path;
+    }
+
+    /// <summary>
+    /// Builds the payload of <see cref="Payload"/> with a resolved temp file attached, the shape the
+    /// notifier hands the show when the content carried a <see cref="ToastImage.Source"/>.
+    /// </summary>
+    /// <param name="path">The file the payload's resolved reference names.</param>
+    /// <returns>The payload.</returns>
+    private static ToastPayload PayloadWithImageFile(string path) =>
+        new(Payload.Content, new Uri(path, UriKind.Absolute).AbsoluteUri, path);
 
     // The payload's own exact-XML contract moved out of this class with the content model: it now
     // lives in ToastPayloadContractTests, one exact-string test per content shape, because this
