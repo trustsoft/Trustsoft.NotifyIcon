@@ -1833,3 +1833,501 @@ runners' own expectations:
 - `scripts/toast-notification-setting.ps1` - the reversible per-application setting recipe the disabled run uses (T05).
 - `docs/TOAST-S04-IMAGE-VARIANTS.md` - T01's raw probe record (T01).
 - `docs/TOAST-MEASUREMENT.md` - this section.
+
+## S05 - the packed package, the documented surface and the consumer proof
+
+Scope: M002/S05/T07. This section is **purely additive**: it appends to this record and rewrites
+nothing above it, so every earlier byte of this file - the S02, S03 and S04 sections and their
+verbatim captures - is unchanged. **Nothing under `src/` changed in this slice.** S05 is the slice
+that measures, from **outside the repository**, the package S02-S04 built: a consumer project whose
+only reference is the packed nupkg (restored from `artifacts/` through its own `nuget.config`, built
+with its own empty `Directory.Build.props`, and deliberately absent from `Trustsoft.NotifyIcon.sln`),
+the artifact inspector reading the exported surface out of that same nupkg, the independent probe
+reading an identity back from a separate process, and the shipped `README.md` - which travels inside
+the package as its `<PackageReadmeFile>` - saying the toast truth instead of the paragraph that still
+claimed nothing in this package promises toasts.
+
+Every claim below is one of exactly three kinds and says which one it is:
+
+1. a **line captured live in this slice** (`live-captured-in-this-task`, quoted verbatim with the
+   file it comes from),
+2. a **string, ordinal or behaviour pinned by a named test** (`pinned-by-<test name>`), or
+3. a **source, artifact or SDK reading** (`read-from-source`), named as such.
+
+Nothing here claims a **visible** shell effect. The consumer proof proves that the packed artifact
+builds, restores, registers, shows and tears down on three frameworks and that the platform accepted
+each payload. It does **not** prove that a click arrived as a classified activation, and it does not
+prove that the banner painted the image. Both are NEEDS-HUMAN rows with a per-framework expectation in
+item 6, exactly as the S03 section's item 8 procedure does.
+
+### 1. The artifact-side rule: what the inspector asserts from the packed XML documentation
+
+`live-captured-in-this-task` (`docs/uat-logs/S05-M002/t06-consumer-proof.txt`). The inspector runs
+against the **same artifact the consumer installs** - in the S05 capture both the inspector and the
+consumer read `artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg`
+(`size=575737 bytes sha256=483638ad0c4d025b1e5b1d2bb63d2e7467aeb83799b38365851c214dd1b8b0a9`), so the
+artifact-side surface rule (T04) and the consumer-side reflection (item 3) are about one file:
+
+```text
+$ bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.1.0.0.nupkg
+  -- exported surface (R017, from the packed XML documentation)
+    PASS  every documented type (T: entry) lies inside the Trustsoft.NotifyIcon namespace, in all three lib folders
+    PASS  the documented types outside Trustsoft.NotifyIcon.Interop. are exactly the twenty public types plus Trustsoft.NotifyIcon.NotifyIconTrace, in all three lib folders
+    PASS  no documented type names a WinRT namespace (Windows., WinRT, ABI.), in all three lib folders
+  VERDICT  all 18 assertions hold
+  reading: inspector exit=0 verdict='VERDICT  all 18 assertions hold'
+```
+
+Three facts are asserted, **per lib folder rather than once over the union** of the three
+documentation files:
+
+1. **namespace locality** - every `T:` entry lies inside `Trustsoft.NotifyIcon`;
+2. **set identity** - the documented types outside `Trustsoft.NotifyIcon.Interop.` are exactly the
+   twenty public types plus the internal `Trustsoft.NotifyIcon.NotifyIconTrace`;
+3. **no WinRT type name** - no documented `T:` entry names a `Windows.`, `WinRT` or `ABI.` namespace.
+
+**The soundness chain (`read-from-source`).** The inspector reads documentation, not metadata, so it
+is a faithful proxy for the exported surface only because two facts pinned elsewhere in the repository
+hold: `PackagePurityTests.Public_surface_is_only_the_documented_types` pins the shipped exported set
+at exactly twenty types, and
+`ToastNotifierTests.Every_public_member_of_the_notifier_surface_is_documented` (widened in T05 from the
+notifier's seven types to all twenty `DocumentedSurfaceTypes`) walks every public member of every
+exported type. Together: every exported type is documented, so the documented `T:` set cannot be
+smaller than the exported set, and fact 2 pins it from the other side so it cannot be larger either.
+An exported type the XML documentation omitted would break the chain, and control A below is the proof
+that the comparison names such a gap instead of tolerating it.
+
+**The negative controls (`live-captured-in-this-task`,
+`docs/uat-logs/S05-M002/t04-inspector-controls.txt`).** Four controls run the **real** inspector
+against a deliberately broken **copy** of the real package in a temporary directory; the real package
+is never modified and is proven byte-for-byte unchanged (`before` and `after` both
+`6ab4fa06518358b4169bf11f4c026079b49ab1174e7fa9f685a310ceffa17854`, 573660 bytes). Each control exits
+non-zero and names the offending entry:
+
+| Control | Mutation to the copy | Measured failure |
+| --- | --- | --- |
+| A | the `T:` entry for `Trustsoft.NotifyIcon.TrayMenuActivation` removed from `lib/net8.0-windows7.0/`'s XML documentation | `exit=1`; `lib/net8.0-windows7.0/Trustsoft.NotifyIcon.xml: missing Trustsoft.NotifyIcon.TrayMenuActivation`; `VERDICT  1 of 18 assertions failed` |
+| B | a `T:Contoso.NotifyIcon.Sneaky` entry added to one lib folder's documentation | `exit=1`; the namespace rule names `Contoso.NotifyIcon.Sneaky`, and the set rule names it as `unexpected`; `VERDICT  2 of 18 assertions failed` |
+| C | a `T:Windows.UI.Notifications.ToastNotification` entry added to one lib folder's documentation | `exit=1`; all three rules fire and name `Windows.UI.Notifications.ToastNotification`; `VERDICT  3 of 18 assertions failed` |
+| D | a `<dependency id="H.NotifyIcon" version="9.9.9" />` added inside the `net8.0-windows7.0` group | `exit=1`; the pre-existing R011 / D038 assertion names the dependency; `VERDICT  1 of 18 assertions failed` |
+
+**Two things the rule deliberately does not claim.** First, it says **nothing about assembly
+references**: the reference set is covered on the consumer side instead (item 3, where the loaded
+assembly's references are printed and asserted to contain no WinForms, no `System.Drawing` and no
+other tray implementation). Second, "no WinRT type" is about **documented type names, not strings in
+the DLL**: the library legitimately drives `Windows.UI.Notifications` through its interop seam, so the
+rule would be false if it were read as "the DLL mentions no WinRT namespace". The rule as written is
+exactly "no documented public type is a WinRT type".
+
+Context for a later reader: T01's run of the same inspector, before T04 added these three assertions,
+read **15** assertions (`VERDICT  all 15 assertions hold` in
+`docs/uat-logs/S05-M002/t01-artifact-chain.txt`); the S05 capture above reads **18**.
+
+### 2. The stale baseline T01 measured, and the fix
+
+`live-captured-in-this-task` (`docs/uat-logs/S05-M002/t01-artifact-chain.txt`, section 8, "the
+consumer's own package-surface assertion, once per framework"). T01 measured the consumer proof
+*before* T03 widened it, and recorded the mismatch on purpose: `samples/consumer-proof/App.xaml.cs`
+still listed the **seven** M001 tray types while the M002 package exports **twenty**. Every framework's
+`--surface-only` run therefore printed the FAIL line and exited with the stale-surface code 3
+(`SurfaceMismatchExitCode`). All three frameworks read the same shape; net8.0-windows verbatim:
+
+```text
+$ samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe --surface-only
+  [consumer] FAIL the package surface is not the documented one: 7 expected, 20 observed; missing=[]; unexpected=[Trustsoft.NotifyIcon.ToastActivatedEventArgs, Trustsoft.NotifyIcon.ToastButton, Trustsoft.NotifyIcon.ToastContent, Trustsoft.NotifyIcon.ToastDismissalReason, Trustsoft.NotifyIcon.ToastDismissedEventArgs, Trustsoft.NotifyIcon.ToastErrorEventArgs, Trustsoft.NotifyIcon.ToastException, Trustsoft.NotifyIcon.ToastImage, Trustsoft.NotifyIcon.ToastImagePlacement, Trustsoft.NotifyIcon.ToastNotificationSetting, Trustsoft.NotifyIcon.ToastNotifier, Trustsoft.NotifyIcon.ToastSeverity, Trustsoft.NotifyIcon.ToastSound]
+  [consumer] public surface of the installed package: FAIL (see the lines above); exit code=0.
+  reading: surface-only net8.0-windows exit=3
+```
+
+T01's own verdict records it as a reading rather than a defect: "all 3 baseline `--surface-only`
+readings are red as predicted: exit 3 and a FAIL line naming the unexpected
+`Trustsoft.NotifyIcon.Toast*` types, which is the stale consumer-side allow-list T03 replaces with the
+twenty documented types."
+
+**The fix (T03) and its proof.** T03 widened the consumer proof's source-side list to the twenty
+documented types and gave it the toast path. After that - and after T04's inspector rule and T05's
+README work, in the very capture this section quotes - the same command exits **0**:
+
+```text
+$ samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe --surface-only
+  [consumer] public surface: 20 exported type(s): Trustsoft.NotifyIcon.BalloonTipIcon, Trustsoft.NotifyIcon.BalloonTipOptions, Trustsoft.NotifyIcon.ToastActivatedEventArgs, Trustsoft.NotifyIcon.ToastButton, Trustsoft.NotifyIcon.ToastContent, Trustsoft.NotifyIcon.ToastDismissalReason, Trustsoft.NotifyIcon.ToastDismissedEventArgs, Trustsoft.NotifyIcon.ToastErrorEventArgs, Trustsoft.NotifyIcon.ToastException, Trustsoft.NotifyIcon.ToastImage, Trustsoft.NotifyIcon.ToastImagePlacement, Trustsoft.NotifyIcon.ToastNotificationSetting, Trustsoft.NotifyIcon.ToastNotifier, Trustsoft.NotifyIcon.ToastSeverity, Trustsoft.NotifyIcon.ToastSound, Trustsoft.NotifyIcon.TrayErrorEventArgs, Trustsoft.NotifyIcon.TrayIcon, Trustsoft.NotifyIcon.TrayIconClickEventArgs, Trustsoft.NotifyIcon.TrayIconException, Trustsoft.NotifyIcon.TrayMenuActivation
+  [consumer] PASS the package surfaces exactly the 20 documented public types - the seven M001 tray types and the thirteen M002 toast types - and no others, checked from this consumer assembly rather than from the library's test project.
+  reading: surface-only net8.0-windows exit=0
+```
+
+The red reading is worth keeping in the record beside the green one: it is the measurement that the
+consumer-side assertion is a real assertion (it fails when the package and the consumer disagree) and
+not a tautology, and it is the reason the runner compares exit codes rather than prose.
+
+### 3. The per-framework consumer capture, verbatim
+
+Source: `docs/uat-logs/S05-M002/t06-consumer-proof.txt` (482 lines), produced by
+`docs/uat-logs/S05-M002/t06-consumer-proof.sh`. That script is the single command behind these
+readings: it builds the probe, deletes any previous nupkg, packs, runs the inspector, restores and
+builds `samples/consumer-proof` once per framework with `--surface-only`, then runs the live toast run
+per framework with the read-backs around it. The capture file indents a quoted stdout block by four
+spaces and its own `reading:` lines by two; **the text below is quoted without that layout
+indentation, and nothing else is changed.**
+
+Two quirk-caveats a later reader should not mistake for claims. (a) The 20-type enumeration line
+(`[consumer] public surface: 20 exported type(s): ...`) contains **no framework-specific text** and is
+byte-identical in all three captures; it is quoted once in item 2 and not repeated here. (b) The
+script's informational setting re-check (which shells out to
+`scripts/toast-notification-setting.ps1 -Action status -AppUserModelId <id>`) runs **only** on the
+branch where the setting did **not** read `Enabled` (`read-from-source`:
+`t06-consumer-proof.sh`, the `if` around its `-Action status` invocation). All three runs read
+`Enabled`, so that branch was not taken and no `[setting]` line appears in this capture - the absence
+is explained, not hidden.
+
+--- net8.0-windows (identity `Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows`)
+
+(i) surface-only, the assembly **this process loaded out of the package**:
+
+```text
+  [consumer] PASS the package surfaces exactly the 20 documented public types - the seven M001 tray types and the thirteen M002 toast types - and no others, checked from this consumer assembly rather than from the library's test project.
+  [consumer] package assembly references: PresentationCore, PresentationFramework, System.Collections, System.Diagnostics.TraceSource, System.Runtime, System.Runtime.InteropServices, System.Threading, System.Xaml, WindowsBase
+  [consumer] PASS the package's assembly references no WinForms, no System.Drawing and no other tray implementation.
+  reading: surface-only net8.0-windows exit=0
+  reading: the PASS line names the twenty documented types
+```
+
+(ii) the clean-slate read-back, taken before anything ran (the identity has no shortcut yet):
+
+```text
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net8.0-windows pre-run read-back exit=0
+  reading: the identity has no shortcut yet - success=False operation='OpenShellLink' code=0x80070002
+```
+
+(iii) the mid-run read-back, taken while the toast was live, in a separate process:
+
+```text
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows.lnk' success=True value='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows'
+  reading: net8.0-windows mid-run read-back attempts=1; the consumer was still running when it was taken=1
+  reading: the identity is registered and carries its own value back: success=True value='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows'
+```
+
+(iv) the run's own lines: content with both button arguments, the setting outcome, the teardown, the
+measured post-teardown window and the totals:
+
+```text
+  [consumer] toast content: identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows' title='Trustsoft.NotifyIcon consumer proof toast' body='This toast came from the packaged library, installed into a windowless WPF application. Click the body or a button.' severity=Default launch='consumer-toast-1' buttons=[consumer-button-1,consumer-button-2]
+  [consumer] toast setting: Enabled (0) - the shell will show this application's toasts.
+  [consumer] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+  [consumer] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line
+  [consumer] totals: clicks=0, preview deliveries=0, menu opens=0, menu dismissals=0, menu item clicks=0, balloon show requests=1, balloon clicked deliveries=0, toast shows=1, toast accepted=1, toast activations=0 (last arguments='(none)'), toast dismissals=0, toast errors=0, toast failures=0, toast refused=0, toast setting=Enabled, toast identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows'.
+  reading: consumer exit=0 (0 required)
+  reading: the totals report refused=0, failures=0 and identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows'
+  reading: the measured post-teardown window is 0/0/0 and its line is at capture line 22
+  reading: the window line comes after the teardown line, so the window is a window and not a re-statement
+```
+
+(v) the post-teardown read-back, in a separate process: nothing remains registered:
+
+```text
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net8.0-windows post-teardown read-back exit=0
+  reading: the identity reads absent again - success=False operation='OpenShellLink' code=0x80070002
+```
+
+(vi) the platform's own record and the temp folder, both read by the script rather than trusted from
+the consumer:
+
+```text
+  [probe] history: GetHistoryWithId('Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows') hr=0x00000000
+  [probe] history: IVectorView.get_Size hr=0x00000000 count=11
+  [probe] history verdict: count=11 for 'Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows'
+  reading: net8.0-windows notification inventory exit=0 count=11
+  reading: 'C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon' holds 0 toast-*.png file(s) after the run (0 is the lifetime rule)
+```
+
+--- net9.0-windows (identity `Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows`)
+
+Same command shapes, same framework-independent lines; the identity-bearing readings verbatim:
+
+```text
+  reading: surface-only net9.0-windows exit=0
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net9.0-windows pre-run read-back exit=0
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows.lnk' success=True value='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows'
+  reading: net9.0-windows mid-run read-back attempts=1; the consumer was still running when it was taken=1
+  [consumer] toast content: identity='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows' title='Trustsoft.NotifyIcon consumer proof toast' body='This toast came from the packaged library, installed into a windowless WPF application. Click the body or a button.' severity=Default launch='consumer-toast-1' buttons=[consumer-button-1,consumer-button-2]
+  [consumer] toast setting: Enabled (0) - the shell will show this application's toasts.
+  [consumer] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+  [consumer] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line
+  [consumer] totals: clicks=0, preview deliveries=0, menu opens=0, menu dismissals=0, menu item clicks=0, balloon show requests=1, balloon clicked deliveries=0, toast shows=1, toast accepted=1, toast activations=0 (last arguments='(none)'), toast dismissals=0, toast errors=0, toast failures=0, toast refused=0, toast setting=Enabled, toast identity='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows'.
+  reading: consumer exit=0 (0 required)
+  reading: the measured post-teardown window is 0/0/0 and its line is at capture line 22
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net9.0-windows post-teardown read-back exit=0
+  [probe] history verdict: count=11 for 'Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows'
+  reading: net9.0-windows notification inventory exit=0 count=11
+  reading: 'C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon' holds 0 toast-*.png file(s) after the run (0 is the lifetime rule)
+```
+
+--- net10.0-windows (identity `Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows`)
+
+```text
+  reading: surface-only net10.0-windows exit=0
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net10.0-windows pre-run read-back exit=0
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows.lnk' success=True value='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows'
+  reading: net10.0-windows mid-run read-back attempts=1; the consumer was still running when it was taken=1
+  [consumer] toast content: identity='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows' title='Trustsoft.NotifyIcon consumer proof toast' body='This toast came from the packaged library, installed into a windowless WPF application. Click the body or a button.' severity=Default launch='consumer-toast-1' buttons=[consumer-button-1,consumer-button-2]
+  [consumer] toast setting: Enabled (0) - the shell will show this application's toasts.
+  [consumer] toast teardown: 1 show(s) unsubscribed and released - no activation subscription outlives the process.
+  [consumer] toast post-teardown window: activations=0 dismissals=0 errors=0 after the teardown line
+  [consumer] totals: clicks=0, preview deliveries=0, menu opens=0, menu dismissals=0, menu item clicks=0, balloon show requests=1, balloon clicked deliveries=0, toast shows=1, toast accepted=1, toast activations=0 (last arguments='(none)'), toast dismissals=0, toast errors=0, toast failures=0, toast refused=0, toast setting=Enabled, toast identity='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows'.
+  reading: consumer exit=0 (0 required)
+  reading: the measured post-teardown window is 0/0/0 and its line is at capture line 22
+  [probe] shortcut read-back: identity='Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows' path='C:\Users\Maxim\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows.lnk' success=False operation='OpenShellLink' code=0x80070002
+  reading: net10.0-windows post-teardown read-back exit=0
+  [probe] history verdict: count=11 for 'Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows'
+  reading: net10.0-windows notification inventory exit=0 count=11
+  reading: 'C:/Users/Maxim/AppData/Local/Temp/Trustsoft.NotifyIcon' holds 0 toast-*.png file(s) after the run (0 is the lifetime rule)
+```
+
+What these readings establish, and what they do not. Establish: on each of the three frameworks the
+package **restored from the local feed alone and built**, the loaded assembly surfaced exactly the
+twenty documented types with the expected reference set, the live run went through the public
+`ToastNotifier` with two action buttons and its own identity, `Show` was **accepted** by the shell
+(`toast accepted=1`, `failures=0`, `refused=0`), the identity was registered on the first show and
+read back from a separate process while the run was live, the notifier was disposed mid-run while the
+process kept pumping, the measured post-teardown window was **0/0/0**, and the identity and its
+shortcut were gone afterwards. Do **not** establish: that the banner was painted, or that a click
+arrived as a classified activation (item 6). The platform's inventory `count=11` is a **snapshot**, not
+a verdict - the S01 section's contract note already recorded this count as `count=1..3` across those
+runs, and the S04 section's item 9 records it moving between 0, 1 and 3 across captures - so it is
+quoted here only as the shell's own record that the payload was accepted.
+
+### 4. The identity convention, and why it is load-bearing
+
+**One identity per target framework** (`live-captured-in-this-task`,
+`docs/uat-logs/S05-M002/t06-consumer-proof.txt`, header and section 3):
+
+```text
+identities: Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows, Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows, Trustsoft.NotifyIcon.ConsumerProof.net10.0-windows (one per framework)
+```
+
+and each run receives only its own, through the public override the README documents:
+
+```text
+$ samples/consumer-proof/bin/Release/net8.0-windows/ConsumerProof.exe --toast --toast-buttons --toast-aumid Trustsoft.NotifyIcon.ConsumerProof.net8.0-windows --toast-after 2 --toast-dispose-after 10 --run-seconds 22
+```
+
+Each identity is **registered by its own run and removed by its own run**, and each run's first
+reading is a read-back proving the slate was clean. This is load-bearing in two measured ways:
+
+1. **A contaminated run is visible rather than silently green.** The clean-slate reading is printed
+   *before* the run (`reading: net8.0-windows pre-run read-back exit=0`), and T06's control B proves
+   the check is real: it plants a **genuine** shortcut carrying a **foreign** AppUserModelID at exactly
+   the path the probe computes for `Trustsoft.NotifyIcon.ConsumerProof.net9.0-windows` and reads it
+   back (`success=True value='Trustsoft.NotifyIcon.S05.ControlB'`), then runs the real runner against
+   that contaminated slate. The run printed the contaminated reading, deleted exactly the file its
+   reading named, re-read the identity as absent, and finished green with **0** missing readings -
+   while the other two frameworks' mid-run read-backs still found their own identities. The same driver
+   proves the opposite failure in control A: with every probe path pointed at a file that does not
+   exist, the runner exits **1**, prints `VERDICT  not established` instead of the green verdict, and
+   names **15** readings it could not produce - so a missing oracle cannot pass as an absent-slate
+   reading.
+2. **No identity carries the notification-setting cache S04 measured.** A per-framework identity means
+   the three runs do not share one app's cached setting state, and the platform cannot answer for one
+   framework with another's reading. It also keeps the M001 probe's own identity
+   (`Trustsoft.NotifyIcon.ToastProbe`) untouched: the capture records that unrelated shortcut's existence
+   before and after every run (`existed before=1 exists now=1`), which is the control that this slice's
+   cleanup did not delete somebody else's registration.
+
+The per-framework split is also what makes "the same reading on three frameworks" a measurement rather
+than an assumption: R012 is three frameworks, three builds, three assertions, and no framework stands
+in for another.
+
+### 5. The reading to interpret each run through: the setting is an outcome
+
+**All three runs read `Enabled`** (`live-captured-in-this-task`). Every framework's capture contains
+`[consumer] toast setting: Enabled (0) - the shell will show this application's toasts.` and the
+runner's own reading `reading: the shell will show this application's toasts, so this run counts as a
+delivery`. So **no run in this capture was in a disabled state**, and no run's delivery reading is
+withheld.
+
+The rule that would have applied is S04's, stated once for this record: the `setting=` value is an
+**outcome, not a delivery measurement**. S04's item 3 measured the platform lagging a registry change
+by roughly **11 minutes** ("the value was removed and fresh processes still read `setting=1` - twice
+inside the run and once more roughly 11 minutes later"), so a run that reported a non-`Enabled` value
+would be recorded as **the documented outcome** (the shell accepted the show and will not render it),
+with its delivery readings explicitly **not established** - exactly the branch the runner implements
+(the S04 section's item 3 disabled capture is the run that exercised the disabled-state branch with a
+real `DisabledForApplication` reading). Because all three S05 runs read
+`Enabled`, the delivery reading rests on: `toast accepted=1`, `failures=0`, `refused=0`, and the
+platform's own inventory for that identity (`count=11`).
+
+**This slice neither wrote nor cleared the setting.** `docs/uat-logs/S05-M002/t06-consumer-proof.sh`
+only *reads* it (`read-from-source`: its single `scripts/toast-notification-setting.ps1` invocation uses
+`-Action status`), and the branch carrying that read was not taken because every run read `Enabled`
+(item 3, caveat b). The machine's per-application setting is therefore as S04 left it, and the S05
+runs cannot have made themselves green by touching it.
+
+Two things about `count=11` that keep it honest. It is the **shell's** record for that identity, read
+by the script through `GetHistoryWithId`, not the library's own claim; and it is a **snapshot**: the
+S01 section's contract note already recorded the count as `count=1..3` across its runs and the S04
+section's item 9 records it moving between 0, 1 and 3 across captures, so it is quoted as
+corroboration of acceptance and never as a verdict.
+
+### 6. What was NOT measured: two NEEDS-HUMAN rows
+
+Both rows below are **human follow-ups with a per-framework expectation**, in the form of the S03
+section's procedure, not results. `live-captured-in-this-task`:
+`docs/uat-logs/S05-M002/t06-consumer-proof.txt` section 5, "the two readings no unattended run can
+produce", whose pointer to `### 8. Human follow-up: the click clauses of the demo` in this file the
+script itself resolves (`reading: the pointer resolves - '### 8. Human follow-up: the click clauses of
+the demo' is present in docs/TOAST-MEASUREMENT.md`).
+
+| NEEDS-HUMAN row | Why no unattended instrument can produce it (the measured reason) |
+| --- | --- |
+| **A click on each action button and on the toast body arriving as a classified `element=` activation.** | S01 measured that an activation arrives as the argument the toast or button carried and carries **no per-element information**, and the shell needs injected input an unattended instrument cannot land (S07's click attempt measured the same limit). The capture states it plainly: "a delivered activation cannot be credited to a specific click even when one arrives." |
+| **Whether the banner actually painted the image.** | Rendering is **not machine-visible**. What a run can read is the shell's acceptance and the platform's setting, and the S05 script records exactly that - no image was used in any of the three live runs (none passed `--toast-image`), so this row is also the honest statement that **S05 measured no image at all**. |
+
+**The procedure for a person** (the S03 section's five steps, item 8, applied to the consumer proof):
+run the consumer on a machine with a visible notification area, once per framework, as
+
+```text
+samples/consumer-proof/bin/Release/<tfm>/ConsumerProof.exe --toast --toast-buttons --toast-after 2 --run-seconds 60
+```
+
+then (1) click **Button 1** and confirm the run prints a classified `element=button-1` activation for
+`consumer-button-1`; (2) click **Button 2** and confirm `element=button-2` for `consumer-button-2`;
+(3) click the toast **body** and confirm a classified body activation for this show's
+`consumer-toast-N` launch argument; (4) dismiss the toast (close button, or let it time out) and confirm
+one dismissal with a reason from the three known values; (5) confirm that after the teardown line
+nothing further is printed - the disposal guarantee as a person sees it.
+
+**The per-framework expectation** is the same for each of net8.0-windows, net9.0-windows and
+net10.0-windows: **three distinct classified arguments plus one dismissal, and silence afterwards**.
+This run's own activation readings, quoted from the capture, are the baseline a person compares
+against - each is `0`, and the capture says of each that "a non-zero value is a delivery this run did
+not cause by a click":
+
+```text
+    net8.0-windows: activations=0 (an unattended run reports what it observed; a non-zero value is a delivery this run did not cause by a click)
+    net9.0-windows: activations=0 (an unattended run reports what it observed; a non-zero value is a delivery this run did not cause by a click)
+    net10.0-windows: activations=0 (an unattended run reports what it observed; a non-zero value is a delivery this run did not cause by a click)
+```
+
+### 7. The README's guarded facts, and the one-at-a-time mutations that fail them
+
+The README is the package's `<PackageReadmeFile>`, so it is the document a consumer reads first and it
+must be true of the artifact they install. T05 replaced the paragraph that still claimed nothing in
+this package promises toasts, added `## Toast notifications` above `## Repository notes`, and pinned
+the facts a reader copies verbatim. The pins are:
+
+| Guarded fact | Pinned by | One-at-a-time mutation that fails it (`live-captured-in-this-task`, `docs/uat-logs/S05-M002/t05-readme-guard-controls.txt`) |
+| --- | --- | --- |
+| **The install line**, built from the library project's own `PackageId` and `Version` so a version bump cannot ship a README telling a consumer to install a version that does not exist | `pinned-by-PackagePurityTests.Readme_documents_the_install_line_usage_and_the_shipped_surface` | control 4: the advertised version changed to `9.9.9` -> vstest exit 1, `must show the install line a consumer copies` |
+| **`## Toast notifications`**, the one consumer section T05 added, in the asserted section order | same guard (`consumerSections`) | control 3: the heading renamed -> exit 1, `must carry a '## Toast notifications' section` |
+| **The twenty public type names**, one of which a consumer cannot otherwise learn from the document they opened first | same guard (the type list was widened from the seven M001 tray types to all twenty in T05, deliberately overlapping `ToastNotifierTests`, which walks every public member of every type) | control 1: `ToastNotificationSetting` removed from the README -> exit 1, `does not name [ToastNotificationSetting]` |
+| **The coexistence sentence, verbatim**: "Toasts and balloons are independent: showing a toast never suppresses, replaces or re-routes a balloon tip, and showing a balloon tip never replaces or re-routes a toast." | same guard (whitespace-collapsed comparison, so hard wrapping is tolerated and rewording is not) **and** `pinned-by-ToastEventTests.The_two_boundary_sentences_appear_verbatim_in_the_generated_documentation` | control 2: the sentence removed -> exit 1, `must carry this boundary sentence verbatim` |
+| **The activation wording rule, verbatim**: "Activated reports that the toast's launch or button argument arrived; it is not a report that the user clicked the body." | the same `boundarySentences` array and the same XML pin | the same control class - the array asserts both sentences; control 2 mutates the coexistence one, and the loop it fails in also carries this one |
+| **The `xmlns:tni="http://schemas.trustsoft.com/notifyicon"` prefix** a consumer declares | same guard | control 5: the prefix removed -> exit 1, `not the 'tni' prefix` |
+| **The image temp-file lifetime rule** and **the failure surface** (registration throws `ToastException` with `Operation` and code; a runtime delivery failure is `ToastError` plus exactly one Error-level line and never fatal; `NotificationSetting` is an outcome, `null` means "not read" never "Enabled") | `read-from-source`: the prose T05 wrote into the README's `## Toast notifications` section; the guard makes the section present and names `ToastNotificationSetting`, but **no per-sentence pin asserts these two paragraphs** | **none - honest gap.** There is no control that rewrites "deleted in the same show's unwind path" or the failure-surface bullets and observes a failure. The two paragraphs were reviewed by reading; they are not mutation-proof, and this record says so rather than implying the five controls cover them. |
+
+The controls themselves are a committed driver (`docs/uat-logs/S05-M002/t05-readme-guard-controls.sh`):
+a **positive control** proves the guard passes on the delivered README (vstest exit 0), then each
+mutation above is applied **one at a time to the real file**, the real guard is run, and the README is
+restored and proven **byte-for-byte** by sha256. The driver's summary reads `SUMMARY  0 control
+failure(s)` with the README hash identical at start and end
+(`b2bffba026b5e5354b5cb9df1bc751a9575e0c73cb9eba056851cb552904afc7`). One detail worth keeping: the
+whitespace-collapsed comparison exists because earlier iterations of the guard caught **real** defects -
+the README hard-wraps the coexistence sentence, and the activation sentence arrived backticked - so
+the comparison tolerates wrapping only, and the two documents (README and generated XML documentation)
+cannot drift apart.
+
+### 8. The suite, run once in this closeout
+
+**One reading, whole assembly, no filter, labelled as this closeout's snapshot.** This task writes
+prose from recorded captures and deliberately re-ran **no** live instrument; the two commands below are
+the ones its Verify string names, run in this closeout from the worktree root:
+
+```text
+$ dotnet build Trustsoft.NotifyIcon.sln -c Release
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+  (exit 0)
+
+$ dotnet test tests/Trustsoft.NotifyIcon.Tests/Trustsoft.NotifyIcon.Tests.csproj -c Release -f net8.0-windows --no-build
+Passed!  - Failed:     0, Passed:   639, Skipped:     0, Total:   639, Duration: 1 m 11 s - Trustsoft.NotifyIcon.Tests.dll (net8.0)
+  (exit 0)
+```
+
+**639 passed / 0 failed, 0 build warnings, 0 build errors.** (The two commands above were run twice
+in this closeout, before and after this section was appended; the second run reported the identical
+counts with `Duration: 1 m 12 s`, so the reading is stable rather than a single sample.) The S04
+section's item 6 recorded its own
+sweep as `Passed: 633` and S03's as `580`; those counts are **that task's snapshot and were
+deliberately left unedited above** - this section does not rewrite them, and the comparison is stated
+here instead. The measured delta over S04's snapshot is therefore **+6** cases in this slice's
+closeout, reported as a delta rather than attributed case by case.
+
+### 9. Failure Modes (Q5)
+
+The external dependencies of **this task** are the recorded captures it quotes, the build and test
+suite it runs, and the byte-level rule that the record stays LF-only. None of them is a network or
+service call; each failure path and its handling:
+
+| Dependency | Failure path | How it is handled / surfaced |
+| --- | --- | --- |
+| `docs/uat-logs/S05-M002/t06-consumer-proof.txt` (the source of item 3's readings) | file absent, or a reading the record needs is not in it | The task rule is explicit: "if a reading the record needs is absent ... record the absence as a limitation rather than filling it in from assumption." The one genuine absence - the informational `[setting]` re-check lines - is explained in item 3 caveat (b) from the runner's source, not invented. |
+| T01/T04/T05/T06 capture files and control logs | same | Same rule; every quoted line in items 1, 2, 4, 6 and 7 names its source file, so a missing source is a broken quote rather than a silent gap. |
+| The packed artifact and the inspector's XML reading | the nupkg is absent, the documented `T:` set is not readable, or `comm` is missing | The inspector treats a missing `comm` as a **hard usage error (exit 2) rather than a soft degradation**, because both sides of the set difference would otherwise be empty and the assertion would silently pass; a broken copy is what controls A-D exercise (item 1). A missing artifact fails the runner, which surfaces rather than degrades. |
+| The probe oracle the consumer runner reads identities through | the oracle binary is absent | T06 control A measures exactly this: the runner exits **1**, prints `VERDICT  not established`, and names **15** readings it could not produce - a missing oracle can never pass as an absent-slate reading (item 4). |
+| The build and the test suite | a compile error, a warning, or a failing case | A red reading is recorded as red: this closeout measured 0 warnings, 0 errors, 639 passed / 0 failed (item 8). A failure would make the record disagree with the suite, which is the condition the task's "Done when" names. |
+| The file's line endings | a CRLF byte entering this record | The task's Verify string carries `! rg -q -U "\r" docs/TOAST-MEASUREMENT.md`, so a single CR byte fails the task; this closeout measured **0** CR bytes (append only, LF). |
+| The earlier sections of this file | an accidental rewrite of S02-S04 | Append-only editing: the pre-append file was `149586` bytes with sha256 `8ca04dc32a1c18b226ef503daabb0fd208d1cd0193a5dcf718b3f74056dd030c` and 0 CR bytes, and this section was appended after it. |
+
+### 10. Load Profile (Q6)
+
+There is no service-level load dimension in this task: it is a prose append plus one build and one
+whole-assembly test run, with no runtime loop of its own. The load the **slice** puts on the machine
+is measured and serial by construction:
+
+- The suite is **639 cases in 1 m 11 s** (item 8) and the build is 0 warnings / 0 errors; the three
+  live consumer runs are each **22 s**, run strictly one framework at a time, so 10x this task's work
+  saturates **sequential wall time** first - nothing here is pooled, cached or queued.
+- Every instrument is bounded rather than throttled: the consumer by `--run-seconds`, the probe by
+  `--wait-seconds`, the runner by its consumer-exit bound, and the test sweep by the assembly itself.
+  Beyond that the platform's own coalescing is the limiting factor, not this library: identical
+  payloads coalesce into one Action Center entry, which the S04 section records as a history `count`
+  that moved between captures - a snapshot, never a verdict (item 5).
+- The record itself adds no runtime: its cost is bytes of documentation, and at 10x the only thing
+  that grows is the file this section lives in.
+
+### 11. Negative Tests (Q7)
+
+The negative surface of **this task** is the set of ways a document like this can lie - a missing
+section, an unlabelled claim, an invented reading, a rewritten earlier section - plus the negative
+controls the section documents. Each is asserted by something concrete:
+
+| Negative case | Where it is asserted |
+| --- | --- |
+| The S05 section is missing or renamed | the Verify clause `rg -q "^## S05" docs/TOAST-MEASUREMENT.md` fails on absence |
+| A required quoted identity is absent from the record | the Verify clause `rg -q "ConsumerProof.net8.0" docs/TOAST-MEASUREMENT.md` |
+| The human follow-up rows are dropped | the Verify clause `rg -q "NEEDS-HUMAN" docs/TOAST-MEASUREMENT.md` |
+| A CR byte enters the record | the Verify clause `! rg -q -U "\r" docs/TOAST-MEASUREMENT.md`, measured 0 CR bytes |
+| A reading is missing from the capture and would be filled in from assumption | the task's own rule (item 9, row 1): the absence is recorded as a limitation; the `[setting]` lines are the worked example in item 3 caveat (b) |
+| An earlier section is rewritten by the append | the append-only check: pre-append byte count `149586` and sha256 `8ca04d...` (item 9, last row) |
+| The consumer-side surface assertion becomes a tautology | T01's red baseline: 7 expected / 20 observed, exit 3, naming thirteen unexpected `Toast*` types (item 2) |
+| The artifact-side surface rules would pass on a broken package | T04 controls A-D: each broken copy exits non-zero and names the offending entry (item 1) |
+| A README guard would pass on a mutated README | T05 controls 1-5: each one-at-a-time mutation exits non-zero with its named fact, and the README is restored byte-for-byte (item 7) |
+| The consumer runner would pass with a missing oracle or a contaminated slate | T06 control A (missing oracle: exit 1, `VERDICT  not established`, 15 named missing readings) and control B (planted foreign shortcut: named, deleted, re-read absent, then green with 0 missing) (item 4) |
+
+### Files added or changed by S05
+
+- `samples/consumer-proof/` - `App.xaml`, `App.xaml.cs`, `ConsumerProof.csproj`, `Directory.Build.props`, `nuget.config`: the windowless consumer whose only reference is `<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0" />`, restored from `artifacts/`, absent from the solution; T03 widened its surface list to the twenty documented types and gave it the toast path, the two action buttons, the typed events and the measured post-teardown window (item 3).
+- `scripts/verify-package.sh` - the artifact-side exported-surface assertions over the packed XML documentation, per lib folder (T04; item 1).
+- `README.md` - the shipped readme: the false "nothing in this package promises toasts" paragraph replaced, `## Toast notifications` added above `## Repository notes`, the identity lifecycle, the coexistence sentence, the activation wording rule, the image temp-file lifetime, the failure surface and the twenty-type enumeration (T05; item 7).
+- `tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs` - `Readme_documents_the_install_line_usage_and_the_shipped_surface` widened to the twenty types, `## Toast notifications` and the two verbatim boundary sentences (T05; item 7).
+- `tests/Trustsoft.NotifyIcon.Tests/ToastNotifierTests.cs` - `Every_public_member_of_the_notifier_surface_is_documented` widened from the notifier's seven types to all twenty `DocumentedSurfaceTypes` (T05; item 1's soundness chain).
+- `docs/uat-logs/S05-M002/t01-artifact-chain.sh` - the probe-build -> pack -> inspector -> feed-only consumer chain, including the red stale-surface baseline (T01; item 2).
+- `docs/uat-logs/S05-M002/t04-inspector-controls.sh` - the four negative controls for the exported-surface assertions (T04; item 1).
+- `docs/uat-logs/S05-M002/t05-readme-guard-controls.sh` - the positive control plus the five one-at-a-time README mutations (T05; item 7).
+- `docs/uat-logs/S05-M002/t06-consumer-proof.sh` and `t06-consumer-proof-controls.sh` - the three-framework consumer run and its two controls (missing oracle, contaminated slate) (T06; items 3-4).
+- `docs/TOAST-MEASUREMENT.md` - this section.
