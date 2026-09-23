@@ -40,15 +40,16 @@
 # if a reading were missing for a reason that needs a code change, the right move is to stop and report
 # it rather than widen the instrument inside this task.
 #
-# Two negative controls were run against this script, so its failure paths are measured rather than
-# claimed (both are cheap to reproduce from the description and neither is part of the required run):
+# Two negative controls are run against this script by
+# docs/uat-logs/S05-M002/t06-consumer-proof-controls.sh (one command, one exit code for both; neither
+# control is part of the required run), so its failure paths are measured rather than claimed:
 #   A. the oracle removed - a copy with PROBE pointed at a non-existent file exits 1 and names every
 #      reading the missing instrument could not produce (15 of them), including the clean-slate,
 #      mid-run and post-teardown read-backs as three separate missing readings. An empty reading is
 #      never read as the absent-shortcut reading, which is the same rule T02 applied to the probe's
 #      own read-back mode: an unavailable oracle cannot pass.
 #   B. a contaminated slate - the pre-run read-back of one identity answered `success=True
-#      value='Trustsoft.NotifyIcon.ToastProbe.Image'` because a leftover .lnk was planted at the path
+#      value='Trustsoft.NotifyIcon.S05.ControlB'` because a leftover .lnk was planted at the path
 #      the probe computes from the identity. The run prints that reading as the contaminated state,
 #      deletes exactly the one file it named, re-reads the identity as absent, and finishes green with
 #      0 missing readings - the machine is left as found and the run is re-runnable after a crash.
