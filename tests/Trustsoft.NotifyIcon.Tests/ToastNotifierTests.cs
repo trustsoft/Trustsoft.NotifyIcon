@@ -62,8 +62,28 @@ public sealed class ToastNotifierTests
         nameof(IToastApi.Show),
     ];
 
-    /// <summary>The public types this task adds, used by the documentation guard.</summary>
-    private static readonly Type[] NotifierTypes = [typeof(ToastNotifier), typeof(ToastException)];
+    /// <summary>The public types this task and M002/S03/T01 add, used by the documentation guard.</summary>
+    private static readonly Type[] NotifierTypes =
+    [
+        typeof(ToastNotifier),
+        typeof(ToastException),
+        typeof(ToastActivatedEventArgs),
+        typeof(ToastDismissedEventArgs),
+        typeof(ToastDismissalReason),
+        typeof(ToastErrorEventArgs),
+    ];
+
+    /// <summary>
+    /// The three events <see cref="ToastNotifier"/> must expose, each with its typed handler - the
+    /// exact set M002/S03/T01 adds, asserted as a whole so adding, removing or retyping an event is a
+    /// deliberate edit.
+    /// </summary>
+    private static readonly (string Name, Type HandlerType)[] NotifierEvents =
+    [
+        (nameof(ToastNotifier.Activated), typeof(EventHandler<ToastActivatedEventArgs>)),
+        (nameof(ToastNotifier.Dismissed), typeof(EventHandler<ToastDismissedEventArgs>)),
+        (nameof(ToastNotifier.ToastError), typeof(EventHandler<ToastErrorEventArgs>)),
+    ];
 
     /// <summary>
     /// The first <see cref="ToastNotifier.Show"/> registers the identity with the measured sequence
@@ -414,20 +434,23 @@ public sealed class ToastNotifierTests
     {
         Assert.Equal(ToastShow.OperationInvalidArgument, ToastException.OperationInvalidArgument);
         Assert.Equal(ToastShow.OperationAlreadyShown, ToastException.OperationAlreadyShown);
+        Assert.Equal(ToastShow.OperationNotificationFailed, ToastException.OperationNotificationFailed);
         Assert.Equal(ToastIdentity.OperationReadBackMismatch, ToastException.OperationReadBackMismatch);
 
         Assert.Equal("InvalidArgument", ToastException.OperationInvalidArgument);
         Assert.Equal("AlreadyShown", ToastException.OperationAlreadyShown);
+        Assert.Equal("NotificationFailed", ToastException.OperationNotificationFailed);
         Assert.Equal("ReadBackMismatch", ToastException.OperationReadBackMismatch);
     }
 
     /// <summary>
     /// The shape D052/D057 fix: a standalone sealed class implementing <see cref="IDisposable"/>,
     /// not a <c>FrameworkElement</c>, with a settable <see cref="ToastNotifier.AppUserModelId"/> and
-    /// no events yet - the event set is S03's.
+    /// exactly the three typed activation events M002/S03/T01 adds - the pin that makes a fourth
+    /// event, a retyped handler or a silently dropped event a deliberate edit.
     /// </summary>
     [Fact]
-    public void Notifier_is_a_standalone_disposable_with_an_overridable_identity_and_no_events()
+    public void Notifier_is_a_standalone_disposable_with_an_overridable_identity_and_the_three_activation_events()
     {
         Type type = typeof(ToastNotifier);
 
@@ -443,9 +466,26 @@ public sealed class ToastNotifierTests
         Assert.True(property.CanWrite);
         Assert.Equal(typeof(string), property.PropertyType);
 
-        // S02 deliberately ships no events: the Activated/Dismissed set and the non-fatal ToastError
-        // channel are S03's, and this pin makes adding one a deliberate edit.
-        Assert.Empty(type.GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly));
+        // S03 replaces S02's "no events yet" pin with the positive one: exactly these three, each
+        // with the args type its name promises, so a consumer's handler signature is a contract.
+        EventInfo[] events = type.GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+
+        Assert.Equal(NotifierEvents.Length, events.Length);
+
+        foreach ((string name, Type handlerType) in NotifierEvents)
+        {
+            EventInfo? declared = type.GetEvent(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+
+            Assert.NotNull(declared);
+            Assert.Equal(handlerType, declared!.EventHandlerType);
+
+            // EventInfo exposes no IsStatic of its own; a field-like event's staticness is that of
+            // the add accessor it installs.
+            Assert.False(declared.AddMethod!.IsStatic, $"{name} must be an instance event.");
+        }
+
+        // No fourth event and no public constants on the notifier: the surface is the three events,
+        // the identity property, Show and Dispose.
         Assert.Empty(type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly));
     }
 
@@ -455,7 +495,10 @@ public sealed class ToastNotifierTests
     /// </summary>
     /// <remarks>
     /// CS1591 is suppressed by name, so nothing else would notice an undocumented member; this is the
-    /// enforcement point for the two types T05 adds, mirroring the content-model documentation guard.
+    /// enforcement point for the two types T05 adds and the four types M002/S03/T01 adds, mirroring
+    /// the content-model documentation guard. Events are walked too (<c>E:</c> entries): an event is a
+    /// public member like any other, and a missing event entry is exactly the kind of gap a reader of
+    /// the generated documentation would hit.
     /// </remarks>
     [Fact]
     public void Every_public_member_of_the_notifier_surface_is_documented()
@@ -496,6 +539,14 @@ public sealed class ToastNotifierTests
                 if (!documented.Contains($"F:{type.FullName}.{field.Name}"))
                 {
                     missing.Add($"F:{type.FullName}.{field.Name}");
+                }
+            }
+
+            foreach (EventInfo declaredEvent in type.GetEvents(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                if (!documented.Contains($"E:{type.FullName}.{declaredEvent.Name}"))
+                {
+                    missing.Add($"E:{type.FullName}.{declaredEvent.Name}");
                 }
             }
         }

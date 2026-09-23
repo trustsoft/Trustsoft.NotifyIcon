@@ -1,5 +1,12 @@
 // Makes the internal shell seam (IShellApi, shell constants, NOTIFYICONDATAW) reachable
 // from the test assembly without widening the shipped public API (D009).
+//
+// The toast seam is the same trade: IToastApi, ToastApi, ToastShow, ToastPayload and
+// NotifyIconTrace are internal, so the toast contract tests drive them directly. S03 adds one more
+// internals-only reason: ToastNotifier's raise paths (OnShowActivated/OnShowDismissed/OnShowFailed/
+// RaiseError) are internal rather than private so the disposal guarantee - a raise that reaches a
+// disposed notifier must fire nothing - can be proven directly, without a live shell and without
+// reflection.
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Trustsoft.NotifyIcon.Tests")]
 
 // The windowless sample, for the M002/S01 live end-to-end run.

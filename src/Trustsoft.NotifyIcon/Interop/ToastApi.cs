@@ -904,6 +904,19 @@ internal sealed class ToastShow : IDisposable
     /// <summary>The operation name for a second <see cref="Show"/> on the same instance.</summary>
     internal const string OperationAlreadyShown = "AlreadyShown";
 
+    /// <summary>
+    /// The operation name for the shell's asynchronous delivery failure: the
+    /// <c>ToastNotification.Failed</c> callback fired for a toast this application had already
+    /// shown, reporting that Windows could not deliver it.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="OperationInvalidArgument"/> and <see cref="OperationAlreadyShown"/> this
+    /// name is not raised by a call of ours - the shell raises it out of band, on the thread that
+    /// created the notification while that thread pumps - so its <c>code</c> is the <c>HRESULT</c>
+    /// the shell reported, not one any call of ours returned.
+    /// </remarks>
+    internal const string OperationNotificationFailed = "NotificationFailed";
+
     /// <summary><c>E_INVALIDARG</c>, reported for a missing identity.</summary>
     internal const int ErrorInvalidArgument = unchecked((int)0x80070057);
 

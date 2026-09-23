@@ -70,6 +70,19 @@ public sealed class ToastException : Exception
     public const string OperationAlreadyShown = ToastShow.OperationAlreadyShown;
 
     /// <summary>
+    /// The <see cref="Operation"/> value for the shell's asynchronous delivery failure: Windows
+    /// raised the toast notification's <c>Failed</c> callback for a toast this application had
+    /// already shown, so the toast was accepted by the shell and then not delivered.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ErrorCode"/> is the <c>HRESULT</c> the shell reported - this failure is raised on
+    /// the callback path, not returned by a call this library makes, so it is never <c>0</c> by
+    /// accident of a value-level comparison. It mirrors <c>ToastShow.OperationNotificationFailed</c>
+    /// so the notifier's event and this exception cannot spell the same failure differently.
+    /// </remarks>
+    public const string OperationNotificationFailed = ToastShow.OperationNotificationFailed;
+
+    /// <summary>
     /// The <see cref="Operation"/> value for the identity-level silent failure: the shortcut was
     /// written, the read-back completed, and the value it read did not match the value that was
     /// written (or was absent).

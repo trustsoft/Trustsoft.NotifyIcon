@@ -43,9 +43,79 @@ namespace Trustsoft.NotifyIcon;
 /// from one thread (typically the UI thread of the application that owns the toasts). No internal
 /// locking is performed; a notifier is not a shared cross-thread service.
 /// </para>
+/// <para>
+/// <b>The events are raised on the thread the callback arrived on.</b> The measured WinRT
+/// subscriptions deliver on the thread that created the notification while that thread pumps
+/// messages, which for the normal case is the same thread that called <see cref="Show"/>. No
+/// <see cref="System.Windows.Threading.Dispatcher"/> marshalling is introduced - unlike
+/// <see cref="TrayIcon"/>, whose shell callbacks arrive on a window-procedure thread - so a handler
+/// runs where the shell delivered it.
+/// </para>
+/// <para>
+/// Activated reports that the toast's launch or button argument arrived; it is not a report that the user clicked the body.
+/// </para>
+/// <para>
+/// That wording rule is deliberate rather than pedantic: the activation payload carries the launch
+/// or button argument and nothing about which element produced it, an activation can arrive with no
+/// instrumented click at all, and a specific activation cannot be credited to a specific click
+/// (measured in M002/S01 and recorded in <c>docs/TOAST-MEASUREMENT.md</c>). Nobody, including this
+/// library, may turn a delivered argument into a click-attribution claim.
+/// </para>
+/// <para>
+/// Toasts and balloons are independent: showing a toast never suppresses, replaces or re-routes a balloon tip, and showing a balloon tip never replaces or re-routes a toast.
+/// </para>
+/// <para>
+/// <b>A throwing handler never escapes.</b> The events are raised from a shell-owned callback path,
+/// so each raise catches a consumer handler's exception, writes one Error-level line on the library's
+/// trace channel naming the event, and continues: a bug in one handler must not cross back into the
+/// toast stack and must not stop the events raised after it.
+/// </para>
 /// </remarks>
 public sealed class ToastNotifier : IDisposable
 {
+    /// <summary>
+    /// Raised when Windows delivers a launch or button argument for a toast this notifier showed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ToastActivatedEventArgs.Arguments"/> is the argument the shell delivered, verbatim;
+    /// a <see langword="null"/> value means the toast carried no argument, which is a legitimate
+    /// delivery rather than a failure.
+    /// </para>
+    /// <para>
+    /// Several toasts can be live at once and the platform delivers no per-show event object, so the
+    /// argument string is the only identifier: make launch and button arguments unique to tell
+    /// activations apart. A handler exception is caught and traced, never propagated.
+    /// </para>
+    /// </remarks>
+    public event EventHandler<ToastActivatedEventArgs>? Activated;
+
+    /// <summary>
+    /// Raised when Windows reports that a toast this notifier showed was dismissed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ToastDismissedEventArgs.Reason"/> is never outside the public vocabulary: an
+    /// unreadable or unrecognised reason is reported as
+    /// <see cref="ToastDismissalReason.Unknown"/>, never guessed at. A handler exception is caught
+    /// and traced, never propagated.
+    /// </remarks>
+    public event EventHandler<ToastDismissedEventArgs>? Dismissed;
+
+    /// <summary>
+    /// Raised when a toast failure happened that the library survived - the shell's asynchronous
+    /// delivery failure, or any later runtime failure the notifier reports instead of throwing.
+    /// </summary>
+    /// <remarks>
+    /// This is the non-fatal channel D055 fixes: it is raised instead of throwing, because a toast
+    /// that could not be delivered must not terminate a windowless host. The same failure also
+    /// produces one Error-level line on the library's trace channel (the source is named
+    /// <c>Trustsoft.NotifyIcon</c>), so a process that never subscribes still has a record.
+    /// <see cref="ToastErrorEventArgs.Exception"/> is <see langword="null"/> for the shell's
+    /// asynchronous failure, which reports a bare code. A handler exception is caught and traced,
+    /// never propagated.
+    /// </remarks>
+    public event EventHandler<ToastErrorEventArgs>? ToastError;
+
     private readonly IToastApi _api;
     private readonly ToastIdentity _identity;
 
@@ -179,6 +249,13 @@ public sealed class ToastNotifier : IDisposable
 
         _liveShows.Add(show);
 
+        // The show's three measured WinRT subscriptions feed this notifier's events (S03). The
+        // callbacks are assigned before the show runs, so an activation that races the display finds
+        // a handler already in place rather than being dropped.
+        show.Activated = OnShowActivated;
+        show.Dismissed = OnShowDismissed;
+        show.Failed = OnShowFailed;
+
         NotifyIconTrace.Verbose(
             $"toast notifier: show title='{content.Title}' severity={content.Severity} launch='{content.Launch ?? string.Empty}' aumid='{_registeredAppUserModelId}'");
 
@@ -291,5 +368,105 @@ public sealed class ToastNotifier : IDisposable
 
         NotifyIconTrace.Verbose(
             $"toast notifier: registered aumid='{_registeredAppUserModelId}' shortcut='{_shortcutPath}'");
+    }
+
+    /// <summary>
+    /// Raises <see cref="Activated"/> for one delivered activation argument.
+    /// </summary>
+    /// <param name="arguments">The launch or button argument Windows delivered, or <see langword="null"/> when the toast carried none.</param>
+    /// <remarks>
+    /// Internal rather than private so the disposal guarantee can be exercised directly: a caller
+    /// outside the show path can prove that a raise reaching a disposed notifier does nothing,
+    /// without a live shell and without reflection.
+    /// </remarks>
+    internal void OnShowActivated(string? arguments) =>
+        RaiseSafely(
+            nameof(Activated),
+            () => Activated?.Invoke(this, new ToastActivatedEventArgs(arguments)));
+
+    /// <summary>
+    /// Raises <see cref="Dismissed"/> for one raw dismissal reason the shell reported.
+    /// </summary>
+    /// <param name="reason">The raw reason, mapped to the public vocabulary before it is published.</param>
+    /// <remarks>Internal for the same reason as <see cref="OnShowActivated"/>.</remarks>
+    internal void OnShowDismissed(int reason) =>
+        RaiseSafely(
+            nameof(Dismissed),
+            () => Dismissed?.Invoke(this, new ToastDismissedEventArgs(MapDismissalReason(reason))));
+
+    /// <summary>
+    /// Raises <see cref="ToastError"/> for the shell's asynchronous delivery failure: Windows could
+    /// not deliver a toast that had already been accepted for display.
+    /// </summary>
+    /// <param name="errorCode">The <c>HRESULT</c> the shell reported on the notification's <c>Failed</c> callback.</param>
+    /// <remarks>Internal for the same reason as <see cref="OnShowActivated"/>.</remarks>
+    internal void OnShowFailed(int errorCode) =>
+        RaiseError(ToastException.OperationNotificationFailed, errorCode, exception: null);
+
+    /// <summary>
+    /// Reports one toast failure the library survived: exactly one Error-level trace line, then
+    /// <see cref="ToastError"/>.
+    /// </summary>
+    /// <param name="operation">The failing operation; one of the <c>Operation*</c> constants or a seam member name.</param>
+    /// <param name="errorCode">The code the failure reported, or <c>0</c> when none describes it.</param>
+    /// <param name="exception">The exception behind the failure, or <see langword="null"/> when there was none.</param>
+    /// <remarks>
+    /// Internal for the same reason as <see cref="OnShowActivated"/>. Both failure sources of the
+    /// toast subsystem - the shell's asynchronous callback and the show path's own failure - report
+    /// through this one method, so the event and the trace line can never disagree about what
+    /// happened.
+    /// </remarks>
+    internal void RaiseError(string operation, int errorCode, Exception? exception)
+    {
+        NotifyIconTrace.ToastError(operation, errorCode, exception);
+
+        RaiseSafely(
+            nameof(ToastError),
+            () => ToastError?.Invoke(this, new ToastErrorEventArgs(operation, errorCode, exception)));
+    }
+
+    /// <summary>
+    /// Maps a raw dismissal reason onto the public vocabulary, totally: every value the shell can
+    /// report becomes a named member, and everything else becomes
+    /// <see cref="ToastDismissalReason.Unknown"/>.
+    /// </summary>
+    /// <param name="reason">The raw value the shell reported.</param>
+    /// <returns>The named reason, or <see cref="ToastDismissalReason.Unknown"/> for any value outside the known set.</returns>
+    /// <remarks>
+    /// The mapping is deliberately total and deliberately never falls back to
+    /// <see cref="ToastDismissalReason.UserCanceled"/>: claiming the user dismissed a toast they did
+    /// not touch is worse than reporting that the reason is unknown.
+    /// </remarks>
+    private static ToastDismissalReason MapDismissalReason(int reason) => reason switch
+    {
+        (int)ToastDismissalReason.UserCanceled => ToastDismissalReason.UserCanceled,
+        (int)ToastDismissalReason.ApplicationHidden => ToastDismissalReason.ApplicationHidden,
+        (int)ToastDismissalReason.TimedOut => ToastDismissalReason.TimedOut,
+        _ => ToastDismissalReason.Unknown,
+    };
+
+    /// <summary>
+    /// Invokes the handlers of one event, keeping a throwing consumer handler from crossing back
+    /// into the shell's callback path.
+    /// </summary>
+    /// <param name="operation">The event's name, used as the operation of the trace line.</param>
+    /// <param name="raise">The event invocation to perform.</param>
+    /// <remarks>
+    /// A consumer handler's exception is the consumer's bug, but the callback arrived from a
+    /// shell-owned thread, so an escaping exception would cross back into the toast stack. It is
+    /// reported on the trace channel at Error level - so a default-configured listener sees it -
+    /// and never rethrown. It is deliberately not published as <see cref="ToastError"/>: the toast
+    /// was delivered, it is the handler that failed.
+    /// </remarks>
+    private static void RaiseSafely(string operation, Action raise)
+    {
+        try
+        {
+            raise();
+        }
+        catch (Exception exception)
+        {
+            NotifyIconTrace.ToastError(operation, 0, exception);
+        }
     }
 }

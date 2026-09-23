@@ -196,8 +196,9 @@ public class PackagePurityTests
     /// <summary>
     /// The exported type set is exactly the documented public types: the element, its two error
     /// types, the two click types the event surface needs, the two balloon types the balloon
-    /// surface needs, the six toast content-model types M002/S02/T01 added, and the two toast
-    /// show/failure types M002/S02/T05 adds to complete the toast surface.
+    /// surface needs, the six toast content-model types M002/S02/T01 added, the two toast
+    /// show/failure types M002/S02/T05 added to complete the toast surface, and the four toast
+    /// activation types M002/S03/T01 adds to carry the notifier's events.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -218,7 +219,10 @@ public class PackagePurityTests
     /// (<see cref="ToastButton"/>, <see cref="ToastImage"/>) - which is exactly the kind of widening
     /// this test exists to make deliberate. M002/S02/T05 completes the toast surface with the
     /// public entry point <see cref="ToastNotifier"/> and its failure type
-    /// <see cref="ToastException"/> (D052/D055/D057), which is the last named widening of S02.
+    /// <see cref="ToastException"/> (D052/D055/D057). M002/S03/T01 adds the four types the notifier's
+    /// events need - <see cref="ToastActivatedEventArgs"/>, <see cref="ToastDismissedEventArgs"/>,
+    /// the <see cref="ToastDismissalReason"/> vocabulary and <see cref="ToastErrorEventArgs"/> - so
+    /// the activation surface is typed rather than stringly, and the surface is nineteen types.
     /// </para>
     /// </remarks>
     [Fact]
@@ -243,6 +247,10 @@ public class PackagePurityTests
             typeof(ToastImagePlacement),
             typeof(ToastNotifier),
             typeof(ToastException),
+            typeof(ToastActivatedEventArgs),
+            typeof(ToastDismissedEventArgs),
+            typeof(ToastDismissalReason),
+            typeof(ToastErrorEventArgs),
         ];
 
         // Compiler-generated types are filtered explicitly rather than tolerated wholesale: a
@@ -275,7 +283,8 @@ public class PackagePurityTests
     /// menu contributes no type of its own - the exported set has since grown to the seven M001
     /// documented types with S04's balloon enums (D031), and then to thirteen with M002/S02/T01's
     /// nine-type-less toast content model, and to fifteen with M002/S02/T05's notifier and
-    /// exception, and none of them is for the menu.
+    /// exception, and to nineteen with M002/S03/T01's four activation types, and none of them is for
+    /// the menu.
     /// </para>
     /// <para>
     /// The property is asserted to be owned by <see cref="TrayIcon"/> with a <see langword="null"/>
@@ -306,8 +315,8 @@ public class PackagePurityTests
         // The property is a member of TrayIcon, and no type was added to carry it: the observed set
         // still has to be exactly the documented types - seven after S04 (D031) added the two
         // balloon enums, thirteen after M002/S02/T01 added the six toast content-model types,
-        // fifteen after M002/S02/T05 added ToastNotifier and ToastException, and none of them for
-        // the menu.
+        // fifteen after M002/S02/T05 added ToastNotifier and ToastException, nineteen after
+        // M002/S03/T01 added the four activation types, and none of them for the menu.
         Type[] exported = [.. typeof(TrayIcon).Assembly.GetExportedTypes().Where(type => !IsCompilerGenerated(type))];
 
         Assert.Equal(
@@ -328,6 +337,10 @@ public class PackagePurityTests
                 typeof(ToastImagePlacement),
                 typeof(ToastNotifier),
                 typeof(ToastException),
+                typeof(ToastActivatedEventArgs),
+                typeof(ToastDismissedEventArgs),
+                typeof(ToastDismissalReason),
+                typeof(ToastErrorEventArgs),
             }.OrderBy(type => type.FullName, StringComparer.Ordinal),
             exported.OrderBy(type => type.FullName, StringComparer.Ordinal));
     }
