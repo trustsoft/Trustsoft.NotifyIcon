@@ -869,7 +869,13 @@ public partial class App : Application
         _toastShowCount++;
 
         string launch = ToastLaunchPrefix + _toastShowCount.ToString(CultureInfo.InvariantCulture);
-        var payload = new ToastPayload(ToastTitle, ToastBody, launch);
+        var content = new ToastContent
+        {
+            Title = ToastTitle,
+            Body = ToastBody,
+            Launch = launch,
+        };
+        var payload = new ToastPayload(content);
         var show = new ToastShow(_toastApi!, payload)
         {
             Activated = OnToastActivated,

@@ -851,7 +851,7 @@ internal sealed class ToastShow : IDisposable
             return ToastShowResult.Failed(OperationInvalidArgument, ErrorInvalidArgument, _notificationSetting, appUserModelId);
         }
 
-        NotifyIconTrace.Verbose($"toast show: begin aumid='{appUserModelId}' title='{_payload.Title}' launch='{_payload.Launch ?? string.Empty}'");
+        NotifyIconTrace.Verbose($"toast show: begin aumid='{appUserModelId}' title='{_payload.Content.Title}' launch='{_payload.Content.Launch ?? string.Empty}'");
 
         int hr = _api.GetToastNotificationManagerStatics(out _statics);
         if (hr < 0)

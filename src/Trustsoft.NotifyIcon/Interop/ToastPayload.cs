@@ -3,9 +3,9 @@ using System.Text;
 namespace Trustsoft.NotifyIcon.Interop;
 
 /// <summary>
-/// The minimal toast payload: the XML the show path loads into a
-/// <c>Windows.Data.Xml.Dom.XmlDocument</c> and hands to the shell, generated from a title, an
-/// optional body and an optional launch argument.
+/// The toast payload: the XML the show path loads into a
+/// <c>Windows.Data.Xml.Dom.XmlDocument</c> and hands to the shell, rendered from the public
+/// <see cref="ToastContent"/> the consumer built.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,23 +17,29 @@ namespace Trustsoft.NotifyIcon.Interop;
 /// the element order and the attribute spelling are part of the contract, not cosmetic.
 /// </para>
 /// <para>
-/// <b>One element per line of text.</b> The shell renders each <c>&lt;text&gt;</c> child of a
-/// <c>ToastGeneric</c> binding as one line: the first is the title, the second the body. A payload
-/// with no body therefore emits one <c>&lt;text&gt;</c> child, never an empty second one - an empty
-/// element would render as a blank line rather than as an absent one.
+/// <b>A hand-written writer, deliberately.</b> The measurement recorded that
+/// <c>IXmlDocumentIO.LoadXml</c> accepts exactly what this class emits, so the writer is extended
+/// per content shape rather than replaced: <c>XDocument</c> would add indentation and self-close
+/// elements differently, and any second rendering path would have to be kept byte-identical by
+/// hand. There is exactly one escaping path in charge - <see cref="EscapeText"/> and
+/// <see cref="EscapeAttribute"/> below - so a payload can only ever be well-formed XML.
 /// </para>
 /// <para>
-/// <b>A string is XML-escaped, never trusted.</b> The title, the body and the launch argument all
-/// come from the caller, and a raw <c>&amp;</c> or <c>&lt;</c> in any of them would make the
-/// document malformed, which <c>IXmlDocumentIO.LoadXml</c> reports as a parse failure far away
-/// from the value that caused it. Text and attribute values are escaped here so a payload can
-/// only ever be well-formed XML.
+/// <b>The rendered shapes, and their pinned order.</b> The <c>&lt;toast&gt;</c> element carries
+/// <c>launch</c> and then <c>scenario</c> (both omitted when absent or default); the
+/// <c>&lt;visual&gt;&lt;binding template="ToastGeneric"&gt;</c> carries one <c>&lt;text&gt;</c> child
+/// per text line followed by an optional <c>&lt;image&gt;</c>; then, after <c>&lt;/visual&gt;</c>, an
+/// optional <c>&lt;audio silent="true"/&gt;</c> and an optional <c>&lt;actions&gt;</c> list. The
+/// attribute order is this library's pinned choice, not a schema requirement, and the contract
+/// tests assert the exact strings so a reordering is a deliberate edit rather than an accident.
 /// </para>
 /// <para>
-/// <b>Not the content model.</b> S02 owns the public content model (severity, images, actions,
-/// tag, group, expiry, sound) and its exact-XML contract. This type is the minimal payload T04's
-/// show path needs, kept deliberately small so the measured call sequence is what the contract
-/// tests assert against.
+/// <b>Three fields produce no XML at all.</b> <see cref="ToastContent.Tag"/>,
+/// <see cref="ToastContent.Group"/> and <see cref="ToastContent.Expiry"/> are properties of the
+/// notification object the shell is handed, not attributes of the toast document - the schema has
+/// no place to put them. They are deliberately absent here: a string-only design that silently
+/// dropped them would pass every XML test, which is why the contract asserts their absence
+/// explicitly and the show path applies them separately.
 /// </para>
 /// </remarks>
 internal sealed class ToastPayload
@@ -44,70 +50,135 @@ internal sealed class ToastPayload
     /// </summary>
     internal const string ToastGenericTemplate = "ToastGeneric";
 
-    /// <summary>
-    /// Initializes a payload.
-    /// </summary>
-    /// <param name="title">The toast's first text line; a <see langword="null"/> value is treated as empty.</param>
-    /// <param name="body">The toast's optional second text line; omitted from the XML when null or empty.</param>
-    /// <param name="launch">
-    /// The optional <c>launch</c> argument: the string the shell reports back on a body click. Omitted
-    /// from the XML when null or empty, which is the case where Windows reports no arguments at all.
-    /// </param>
-    internal ToastPayload(string title, string? body = null, string? launch = null)
+    /// <summary>Initializes a payload over the public content model.</summary>
+    /// <param name="content">The content to render; the payload keeps the instance it was given.</param>
+    /// <exception cref="ArgumentNullException">The content is <see langword="null"/>.</exception>
+    internal ToastPayload(ToastContent content)
     {
-        Title = title ?? string.Empty;
-        Body = body;
-        Launch = launch;
+        Content = content ?? throw new ArgumentNullException(nameof(content));
     }
 
-    /// <summary>Gets the first text line of the toast.</summary>
-    internal string Title { get; }
-
-    /// <summary>Gets the second text line, or <see langword="null"/> when the toast has no body.</summary>
-    internal string? Body { get; }
-
-    /// <summary>Gets the launch argument the shell reports on activation, or <see langword="null"/>.</summary>
-    internal string? Launch { get; }
+    /// <summary>
+    /// Gets the content this payload was built from. The show path reads the launch argument and
+    /// the title from here for its trace line; the payload does not copy the fields.
+    /// </summary>
+    internal ToastContent Content { get; }
 
     /// <summary>
     /// Renders the payload as the exact XML handed to <c>IXmlDocumentIO.LoadXml</c>.
     /// </summary>
     /// <returns>The document, with every caller-supplied value escaped.</returns>
     /// <remarks>
-    /// The shape is the measured one:
-    /// <c>&lt;toast launch="..."&gt;&lt;visual&gt;&lt;binding template="ToastGeneric"&gt;&lt;text&gt;title&lt;/text&gt;[&lt;text&gt;body&lt;/text&gt;]&lt;/binding&gt;&lt;/visual&gt;&lt;/toast&gt;</c>.
-    /// The <c>launch</c> attribute is emitted only when a launch argument was supplied.
+    /// The shape is the one the measurement recorded, extended per content shape:
+    /// <c>&lt;toast [launch="..."] [scenario="..."]&gt;&lt;visual&gt;&lt;binding template="ToastGeneric"&gt;&lt;text&gt;title&lt;/text&gt;[&lt;text&gt;body&lt;/text&gt;][&lt;image .../&gt;]&lt;/binding&gt;&lt;/visual&gt;[&lt;audio silent="true"/&gt;][&lt;actions&gt;...&lt;/actions&gt;]&lt;/toast&gt;</c>.
+    /// An absent or empty value omits its element or attribute rather than emitting one empty; a
+    /// <see langword="null"/> title renders as an empty first line, never as a missing element.
     /// </remarks>
     internal string ToXml()
     {
+        ToastContent content = Content;
         var xml = new StringBuilder(256);
 
         xml.Append("<toast");
 
-        if (!string.IsNullOrEmpty(Launch))
+        if (!string.IsNullOrEmpty(content.Launch))
         {
             xml.Append(" launch=\"");
-            xml.Append(EscapeAttribute(Launch));
+            xml.Append(EscapeAttribute(content.Launch));
+            xml.Append('"');
+        }
+
+        if (ScenarioName(content.Severity) is { } scenario)
+        {
+            xml.Append(" scenario=\"");
+            xml.Append(scenario);
             xml.Append('"');
         }
 
         xml.Append("><visual><binding template=\"");
         xml.Append(ToastGenericTemplate);
         xml.Append("\"><text>");
-        xml.Append(EscapeText(Title));
+        xml.Append(EscapeText(content.Title));
         xml.Append("</text>");
 
-        if (!string.IsNullOrEmpty(Body))
+        if (!string.IsNullOrEmpty(content.Body))
         {
             xml.Append("<text>");
-            xml.Append(EscapeText(Body));
+            xml.Append(EscapeText(content.Body));
             xml.Append("</text>");
         }
 
-        xml.Append("</binding></visual></toast>");
+        if (content.Image is { } image)
+        {
+            // src first, then placement (always), then the optional crop hint - the schema's own
+            // syntax order for the image element.
+            xml.Append("<image src=\"");
+            xml.Append(EscapeAttribute(image.Reference));
+            xml.Append("\" placement=\"");
+            xml.Append(PlacementName(image.Placement));
+            xml.Append('"');
+
+            if (image.CircleCrop)
+            {
+                xml.Append(" hint-crop=\"circle\"");
+            }
+
+            xml.Append("/>");
+        }
+
+        xml.Append("</binding></visual>");
+
+        if (content.Sound == ToastSound.Silent)
+        {
+            xml.Append("<audio silent=\"true\"/>");
+        }
+
+        if (content.Buttons.Count > 0)
+        {
+            xml.Append("<actions>");
+
+            foreach (ToastButton button in content.Buttons)
+            {
+                // No activationType attribute: foreground activation is the schema default and D054
+                // scopes v1 to activation in the running application.
+                xml.Append("<action content=\"");
+                xml.Append(EscapeAttribute(button.Text));
+                xml.Append("\" arguments=\"");
+                xml.Append(EscapeAttribute(button.Arguments));
+                xml.Append("\"/>");
+            }
+
+            xml.Append("</actions>");
+        }
+
+        xml.Append("</toast>");
 
         return xml.ToString();
     }
+
+    /// <summary>
+    /// Maps a severity onto its lowercase <c>scenario</c> attribute value, or
+    /// <see langword="null"/> for the default (which writes no attribute at all: an absent scenario
+    /// is how a toast says "default", and the schema has no <c>default</c> value).
+    /// </summary>
+    /// <param name="severity">The content's severity.</param>
+    /// <returns>The attribute value, or <see langword="null"/>.</returns>
+    private static string? ScenarioName(ToastSeverity severity) => severity switch
+    {
+        ToastSeverity.Reminder => "reminder",
+        ToastSeverity.Alarm => "alarm",
+        ToastSeverity.Urgent => "urgent",
+        _ => null,
+    };
+
+    /// <summary>Maps an image placement onto its <c>placement</c> attribute value.</summary>
+    /// <param name="placement">The image's placement.</param>
+    /// <returns>The schema's own spelling for the placement.</returns>
+    private static string PlacementName(ToastImagePlacement placement) => placement switch
+    {
+        ToastImagePlacement.Hero => "hero",
+        _ => "appLogoOverride",
+    };
 
     /// <summary>
     /// Escapes a value for use inside an XML text node.
@@ -132,11 +203,7 @@ internal sealed class ToastPayload
     /// quote character itself.
     /// </summary>
     /// <param name="value">The raw value.</param>
-    /// <returns>The escaped value.</returns>
-    private static string EscapeAttribute(string value)
-    {
-        ArgumentNullException.ThrowIfNull(value);
-
-        return EscapeText(value).Replace("\"", "&quot;", StringComparison.Ordinal);
-    }
+    /// <returns>The escaped value, or an empty string for <see langword="null"/>.</returns>
+    private static string EscapeAttribute(string? value) =>
+        EscapeText(value).Replace("\"", "&quot;", StringComparison.Ordinal);
 }

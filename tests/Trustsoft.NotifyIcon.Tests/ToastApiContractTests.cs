@@ -54,7 +54,12 @@ public sealed class ToastApiContractTests
 
     private const string AppUserModelId = "Vendor.Toast.App";
 
-    private static ToastPayload Payload => new("T04 title", "T04 body", "t04-launch");
+    private static ToastPayload Payload => new(new ToastContent
+    {
+        Title = "T04 title",
+        Body = "T04 body",
+        Launch = "t04-launch",
+    });
 
     /// <summary>
     /// A successful show produces exactly the measured sequence, binds the notifier to the
@@ -421,66 +426,9 @@ public sealed class ToastApiContractTests
         Assert.Throws<ArgumentNullException>(() => new ToastShow(new FakeToastApi(), null!));
     }
 
-    /// <summary>
-    /// The payload renders exactly the XML the measurement recorded, which is the string the
-    /// contract test above sees handed to <c>LoadXml</c>.
-    /// </summary>
-    [Fact]
-    public void ToastPayload_renders_the_measured_generic_xml()
-    {
-        var payload = new ToastPayload("Probe title", "Probe body", "probe-activation");
-
-        Assert.Equal(
-            "<toast launch=\"probe-activation\"><visual><binding template=\"ToastGeneric\"><text>Probe title</text><text>Probe body</text></binding></visual></toast>",
-            payload.ToXml());
-    }
-
-    /// <summary>
-    /// An absent body and an absent launch argument are omitted rather than emitted empty: one
-    /// <c>&lt;text&gt;</c> child and no <c>launch</c> attribute.
-    /// </summary>
-    [Fact]
-    public void ToastPayload_omits_an_absent_body_and_launch_argument()
-    {
-        var payload = new ToastPayload("Only a title");
-
-        Assert.Equal(
-            "<toast><visual><binding template=\"ToastGeneric\"><text>Only a title</text></binding></visual></toast>",
-            payload.ToXml());
-    }
-
-    /// <summary>A null title is treated as an empty first line, never as a null reference.</summary>
-    [Fact]
-    public void ToastPayload_treats_a_null_title_as_an_empty_line()
-    {
-        var payload = new ToastPayload(null!);
-
-        Assert.Equal(string.Empty, payload.Title);
-        Assert.Equal(
-            "<toast><visual><binding template=\"ToastGeneric\"><text></text></binding></visual></toast>",
-            payload.ToXml());
-    }
-
-    /// <summary>
-    /// Caller text is escaped in both text nodes and the attribute, so a payload can never produce
-    /// malformed XML (which <c>LoadXml</c> would report far away from the offending value).
-    /// </summary>
-    [Fact]
-    public void ToastPayload_escapes_text_and_attribute_values()
-    {
-        var payload = new ToastPayload("A & B", "<body>", "launch \"quoted\" & <tag>");
-
-        string xml = payload.ToXml();
-
-        Assert.Contains("<text>A &amp; B</text>", xml, StringComparison.Ordinal);
-        Assert.Contains("<text>&lt;body&gt;</text>", xml, StringComparison.Ordinal);
-        Assert.Contains("launch=\"launch &quot;quoted&quot; &amp; &lt;tag&gt;\"", xml, StringComparison.Ordinal);
-
-        // The raw values never appear unescaped.
-        Assert.DoesNotContain("A & B", xml, StringComparison.Ordinal);
-        Assert.DoesNotContain("<body>", xml, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"quoted\"", xml, StringComparison.Ordinal);
-    }
+    // The payload's own exact-XML contract moved out of this class with the content model: it now
+    // lives in ToastPayloadContractTests, one exact-string test per content shape, because this
+    // suite's subject is the show sequence over the seam rather than the document the builder emits.
 
     private static int IndexOf(FakeToastApi fake, string operation) =>
         fake.Operations.ToList().IndexOf(operation);
@@ -546,10 +494,12 @@ public sealed class ToastApiLiveProbeTests
             Console.WriteLine($"[live] t04: register aumid='{ProbeAppUserModelId}' success={register.Success} operation='{register.Operation}' code=0x{register.Code:X8}");
             Assert.True(register.Success, $"registration failed: {register.Operation} 0x{register.Code:X8}");
 
-            var payload = new ToastPayload(
-                "Trustsoft.NotifyIcon T04 live probe",
-                "The library's own ToastApi + ToastShow handed this to the shell.",
-                "t04-live-activation");
+            var payload = new ToastPayload(new ToastContent
+            {
+                Title = "Trustsoft.NotifyIcon T04 live probe",
+                Body = "The library's own ToastApi + ToastShow handed this to the shell.",
+                Launch = "t04-live-activation",
+            });
 
             var show = new ToastShow(new ToastApi(), payload);
 
