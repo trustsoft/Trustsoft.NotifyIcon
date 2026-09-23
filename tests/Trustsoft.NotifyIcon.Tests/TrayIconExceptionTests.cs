@@ -152,7 +152,8 @@ public sealed class TrayIconExceptionTests
     /// <c>ToastImage</c>, <c>ToastImagePlacement</c>), M002/S02/T05 adds the toast entry point
     /// and failure type (<c>ToastNotifier</c>, <c>ToastException</c>), and M002/S03/T01 adds the four
     /// activation types (<c>ToastActivatedEventArgs</c>, <c>ToastDismissedEventArgs</c>,
-    /// <c>ToastDismissalReason</c>, <c>ToastErrorEventArgs</c>) the notifier's three events carry -
+    /// <c>ToastDismissalReason</c>, <c>ToastErrorEventArgs</c>) the notifier's three events carry,
+    /// and M002/S04/T04 adds <c>ToastNotificationSetting</c> -
     /// this list is an enumeration, not a pattern, so a new public type has to be named here before
     /// it can ship. It is the third of the three allow-lists the S03 widening touches and the easiest
     /// one to miss, which is why the comment names the slice that grew it.
@@ -187,6 +188,7 @@ public sealed class TrayIconExceptionTests
             "ToastDismissedEventArgs",
             "ToastDismissalReason",
             "ToastErrorEventArgs",
+            "ToastNotificationSetting",
         };
 
         string[] unexpected = exported

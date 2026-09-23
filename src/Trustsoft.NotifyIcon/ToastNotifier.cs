@@ -211,6 +211,37 @@ public sealed class ToastNotifier : IDisposable
     }
 
     /// <summary>
+    /// Gets the notification setting the last <see cref="Show"/> read for the identity, or
+    /// <see langword="null"/> when no show has read one yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>An outcome, not a failure.</b> The platform's <c>GetSetting</c> value says what Windows
+    /// will do with the identity's notifications - <see cref="ToastNotificationSetting.Enabled"/> in
+    /// the ordinary case and one of the disabled values when the user, an administrator or the
+    /// application's own manifest turned them off. A disabled value is reported here and
+    /// <em>never</em> raised on <see cref="ToastError"/>, and it never makes <see cref="Show"/>
+    /// throw: a routine OS state is not a defect, and a host that treated it as one would report a
+    /// failure for every toast on a machine whose user simply chose not to be notified.
+    /// </para>
+    /// <para>
+    /// <b>Null means "not read", not "enabled".</b> The property is <see langword="null"/> until a
+    /// show has reached the setting step, and it stays <see langword="null"/> when a show failed
+    /// before that step (a registration failure, or a failure while acquiring the factories or the
+    /// document). The raw value <c>0</c> means <see cref="ToastNotificationSetting.Enabled"/>; the
+    /// two must never be conflated, which is why this property is nullable rather than an enum whose
+    /// zero would silently double as "nothing was read".
+    /// </para>
+    /// <para>
+    /// <b>The last show wins.</b> A later show refreshes it; a show that failed after the setting
+    /// step still records the setting it read, because the reading happened. The value is what the
+    /// platform reported at that moment: measured, it can lag a registry change by one process, so it
+    /// is not a live view of the notification settings.
+    /// </para>
+    /// </remarks>
+    public ToastNotificationSetting? NotificationSetting { get; private set; }
+
+    /// <summary>
     /// Shows one toast: it registers the identity on the first call, then builds and runs one show
     /// for the content.
     /// </summary>
@@ -251,6 +282,17 @@ public sealed class ToastNotifier : IDisposable
     /// normally. The failed show has already unwound its own subscriptions, handles and temp image
     /// file by then, so the notifier is unaffected and a later <see cref="Show"/> is a fresh attempt.
     /// </para>
+    /// <para>
+    /// <b>The notification setting is reported, not judged.</b> The platform's setting is read as part
+    /// of the measured sequence, and once read it is published as an outcome on
+    /// <see cref="NotificationSetting"/> with one Verbose trace line naming it. Disabled values are
+    /// deliberately not failures: the shell returns <c>S_OK</c> from <c>Show</c> for a
+    /// notifications-disabled identity and raises the delivery failure out of band on the
+    /// notification's <c>Failed</c> callback, which reaches <see cref="ToastError"/> as
+    /// <see cref="ToastException.OperationNotificationFailed"/> with the raw
+    /// <c>WPN_E_NOTIFICATION_DISABLED</c> code - so the library reports the state and lets the
+    /// shell's own callback be the failure.
+    /// </para>
     /// </remarks>
     public void Show(ToastContent content)
     {
@@ -290,6 +332,19 @@ public sealed class ToastNotifier : IDisposable
             $"toast notifier: show title='{content.Title}' severity={content.Severity} launch='{content.Launch ?? string.Empty}' aumid='{_registeredAppUserModelId}'");
 
         ToastShowResult result = show.Show(_registeredAppUserModelId);
+
+        if (result.SettingRead)
+        {
+            // The platform's setting as an outcome. Statement order matters: the value is recorded
+            // and traced before the failure below is reported, so a show that failed after the
+            // setting step still leaves the reading - and a show that never reached the step leaves
+            // the property null rather than claiming the setting is Enabled.
+            var setting = (ToastNotificationSetting)result.NotificationSetting;
+
+            NotificationSetting = setting;
+
+            NotifyIconTrace.Verbose($"toast notifier: notification setting={setting} ({(int)setting})");
+        }
 
         if (!result.Success)
         {
@@ -550,18 +605,28 @@ public sealed class ToastNotifier : IDisposable
     }
 
     /// <summary>
-    /// Reports one toast failure the library survived: exactly one Error-level trace line, then
-    /// <see cref="ToastError"/>.
+    /// Reports one toast failure the library survived: one Verbose line naming the failure's taxonomy
+    /// class, then exactly one Error-level trace line, then <see cref="ToastError"/>.
     /// </summary>
     /// <param name="operation">The failing operation; one of the <c>Operation*</c> constants or a seam member name.</param>
     /// <param name="errorCode">The code the failure reported, or <c>0</c> when none describes it.</param>
     /// <param name="exception">The exception behind the failure, or <see langword="null"/> when there was none.</param>
     /// <remarks>
+    /// <para>
     /// Internal for the same reason as <see cref="OnShowActivated"/>. Both failure sources of the
     /// toast subsystem - the shell's asynchronous callback and the show path's own failure - report
     /// through this one method, so the event and the trace line can never disagree about what
     /// happened. A disposed notifier refuses to report: it writes no line and raises no event, which
     /// is the same refusal every other raise path applies after disposal.
+    /// </para>
+    /// <para>
+    /// <b>The taxonomy line is Verbose, and the Error line is untouched.</b> One Verbose line names
+    /// the code in the platform's own vocabulary
+    /// (<see cref="ToastFailureTaxonomy.NameOf(int)"/>) so a support capture that raised the trace
+    /// level reads the failure as a name rather than as a bare <c>HRESULT</c>. The Error-level line's
+    /// event id, severity, shape and wording stay exactly as S03 pinned them - the name is additive
+    /// detail on a different level, never appended to the line a listener filters on.
+    /// </para>
     /// </remarks>
     internal void RaiseError(string operation, int errorCode, Exception? exception)
     {
@@ -569,6 +634,9 @@ public sealed class ToastNotifier : IDisposable
         {
             return;
         }
+
+        NotifyIconTrace.Verbose(
+            $"toast failure taxonomy: code=0x{errorCode:X8} name='{ToastFailureTaxonomy.NameOf(errorCode)}'");
 
         NotifyIconTrace.ToastError(operation, errorCode, exception);
 

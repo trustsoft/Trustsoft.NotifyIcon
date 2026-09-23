@@ -833,12 +833,19 @@ internal sealed class ToastApi : IToastApi
 /// </remarks>
 internal readonly struct ToastShowResult
 {
-    private ToastShowResult(bool success, string operation, int code, int notificationSetting, string? appUserModelId)
+    private ToastShowResult(
+        bool success,
+        string operation,
+        int code,
+        int notificationSetting,
+        bool settingRead,
+        string? appUserModelId)
     {
         Success = success;
         Operation = operation;
         Code = code;
         NotificationSetting = notificationSetting;
+        SettingRead = settingRead;
         AppUserModelId = appUserModelId;
     }
 
@@ -859,6 +866,21 @@ internal readonly struct ToastShowResult
     /// </summary>
     internal int NotificationSetting { get; }
 
+    /// <summary>
+    /// Gets whether <see cref="NotificationSetting"/> carries a value the notifier actually
+    /// reported - <see langword="true"/> on every success and on every failure that happened after
+    /// the setting step had read one.
+    /// </summary>
+    /// <remarks>
+    /// <b>A failure before the setting step does not mean "enabled".</b>
+    /// <see cref="NotificationSetting"/> is <c>0</c> both for the setting <c>Enabled</c> and for a
+    /// show that failed before the setting was read, so the raw value alone cannot be interpreted:
+    /// this flag is what keeps "notifications are enabled" from being reported for a show that never
+    /// got as far as the read (and for a failure at the setting step itself, where the value the call
+    /// produced is not trustworthy either).
+    /// </remarks>
+    internal bool SettingRead { get; }
+
     /// <summary>Gets the identity the notifier was created for.</summary>
     internal string? AppUserModelId { get; }
 
@@ -866,17 +888,19 @@ internal readonly struct ToastShowResult
     /// <param name="notificationSetting">The setting the notifier reported.</param>
     /// <param name="appUserModelId">The identity the toast was shown for.</param>
     /// <returns>The result.</returns>
+    /// <remarks>A success always read the setting: the step precedes the payload load and the show.</remarks>
     internal static ToastShowResult Succeeded(int notificationSetting, string appUserModelId) =>
-        new(true, string.Empty, 0, notificationSetting, appUserModelId);
+        new(true, string.Empty, 0, notificationSetting, settingRead: true, appUserModelId);
 
     /// <summary>Builds a failed result.</summary>
     /// <param name="operation">The failing operation's name.</param>
     /// <param name="code">The <c>HRESULT</c> of the failure.</param>
     /// <param name="notificationSetting">The setting read so far, or <c>0</c>.</param>
+    /// <param name="settingRead">Whether the setting step had already read a value.</param>
     /// <param name="appUserModelId">The identity, when it was known.</param>
     /// <returns>The result.</returns>
-    internal static ToastShowResult Failed(string operation, int code, int notificationSetting, string? appUserModelId) =>
-        new(false, operation, code, notificationSetting, appUserModelId);
+    internal static ToastShowResult Failed(string operation, int code, int notificationSetting, bool settingRead, string? appUserModelId) =>
+        new(false, operation, code, notificationSetting, settingRead, appUserModelId);
 }
 
 /// <summary>
@@ -982,6 +1006,19 @@ internal sealed class ToastShow : IDisposable
     private bool _failedSubscribed;
 
     private int _notificationSetting;
+
+    /// <summary>
+    /// Whether <see cref="_notificationSetting"/> holds a value the setting step actually read, so a
+    /// failure reported after that step carries the setting and one reported before it does not.
+    /// </summary>
+    /// <remarks>
+    /// Set when the setting is accepted from <c>GetSetting</c> - including the benign first-use
+    /// <c>E_NOT_FOUND</c>, which reads as the platform's <c>Enabled</c>. A hard failure at the
+    /// setting step leaves it <see langword="false"/>: the out parameter of a failed call is not a
+    /// reading, and reporting it would claim the setting is known when it is not.
+    /// </remarks>
+    private bool _settingRead;
+
     private bool _disposed;
 
     /// <summary>Initializes one show operation over a seam and a payload.</summary>
@@ -1041,12 +1078,12 @@ internal sealed class ToastShow : IDisposable
     {
         if (_disposed || _notification != IntPtr.Zero)
         {
-            return ToastShowResult.Failed(OperationAlreadyShown, ErrorAlreadyShown, _notificationSetting, appUserModelId);
+            return ToastShowResult.Failed(OperationAlreadyShown, ErrorAlreadyShown, _notificationSetting, _settingRead, appUserModelId);
         }
 
         if (string.IsNullOrEmpty(appUserModelId))
         {
-            return ToastShowResult.Failed(OperationInvalidArgument, ErrorInvalidArgument, _notificationSetting, appUserModelId);
+            return ToastShowResult.Failed(OperationInvalidArgument, ErrorInvalidArgument, _notificationSetting, _settingRead, appUserModelId);
         }
 
         NotifyIconTrace.Verbose($"toast show: begin aumid='{appUserModelId}' title='{_payload.Content.Title}' launch='{_payload.Content.Launch ?? string.Empty}'");
@@ -1086,6 +1123,7 @@ internal sealed class ToastShow : IDisposable
         }
 
         _notificationSetting = setting;
+        _settingRead = true;
         NotifyIconTrace.Verbose($"toast show: GetNotifierSetting hr=0x{hr:X8} setting={setting}{(hr == ErrorSettingNotFound ? " (E_NOT_FOUND on first use is benign)" : string.Empty)}");
 
         string xml = _payload.ToXml();
@@ -1337,7 +1375,7 @@ internal sealed class ToastShow : IDisposable
     {
         NotifyIconTrace.Verbose($"toast show: {operation} failed hr=0x{code:X8}; unwinding the handles acquired so far");
         Unwind();
-        return ToastShowResult.Failed(operation, code, _notificationSetting, null);
+        return ToastShowResult.Failed(operation, code, _notificationSetting, _settingRead, null);
     }
 
     private void OnActivated(string? arguments) => Activated?.Invoke(arguments);

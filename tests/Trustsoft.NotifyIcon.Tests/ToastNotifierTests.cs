@@ -64,6 +64,11 @@ public sealed class ToastNotifierTests
     ];
 
     /// <summary>The public types this task and M002/S03/T01 add, used by the documentation guard.</summary>
+    /// <remarks>
+    /// M002/S04/T04 adds <see cref="ToastNotificationSetting"/>, the outcome vocabulary
+    /// <see cref="ToastNotifier.NotificationSetting"/> reports, so it belongs in this list too: every
+    /// new public member of the toast surface must carry generated XML documentation (D010).
+    /// </remarks>
     private static readonly Type[] NotifierTypes =
     [
         typeof(ToastNotifier),
@@ -72,6 +77,7 @@ public sealed class ToastNotifierTests
         typeof(ToastDismissedEventArgs),
         typeof(ToastDismissalReason),
         typeof(ToastErrorEventArgs),
+        typeof(ToastNotificationSetting),
     ];
 
     /// <summary>
@@ -501,7 +507,7 @@ public sealed class ToastNotifierTests
         }
 
         // No fourth event and no public constants on the notifier: the surface is the three events,
-        // the identity property, Show and Dispose.
+        // the identity and setting properties, Show and Dispose.
         Assert.Empty(type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly));
     }
 
@@ -511,10 +517,10 @@ public sealed class ToastNotifierTests
     /// </summary>
     /// <remarks>
     /// CS1591 is suppressed by name, so nothing else would notice an undocumented member; this is the
-    /// enforcement point for the two types T05 adds and the four types M002/S03/T01 adds, mirroring
-    /// the content-model documentation guard. Events are walked too (<c>E:</c> entries): an event is a
-    /// public member like any other, and a missing event entry is exactly the kind of gap a reader of
-    /// the generated documentation would hit.
+    /// enforcement point for the two types T05 adds, the four types M002/S03/T01 adds and the
+    /// outcome vocabulary M002/S04/T04 adds, mirroring the content-model documentation guard. Events
+    /// are walked too (<c>E:</c> entries): an event is a public member like any other, and a missing
+    /// event entry is exactly the kind of gap a reader of the generated documentation would hit.
     /// </remarks>
     [Fact]
     public void Every_public_member_of_the_notifier_surface_is_documented()

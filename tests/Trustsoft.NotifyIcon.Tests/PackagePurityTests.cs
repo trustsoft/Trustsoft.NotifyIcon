@@ -222,7 +222,9 @@ public class PackagePurityTests
     /// <see cref="ToastException"/> (D052/D055/D057). M002/S03/T01 adds the four types the notifier's
     /// events need - <see cref="ToastActivatedEventArgs"/>, <see cref="ToastDismissedEventArgs"/>,
     /// the <see cref="ToastDismissalReason"/> vocabulary and <see cref="ToastErrorEventArgs"/> - so
-    /// the activation surface is typed rather than stringly, and the surface is nineteen types.
+    /// the activation surface is typed rather than stringly, and M002/S04/T04 adds
+    /// <see cref="ToastNotificationSetting"/>, the notification-setting outcome
+    /// <see cref="ToastNotifier.NotificationSetting"/> reports - so the surface is twenty types.
     /// </para>
     /// </remarks>
     [Fact]
@@ -251,6 +253,7 @@ public class PackagePurityTests
             typeof(ToastDismissedEventArgs),
             typeof(ToastDismissalReason),
             typeof(ToastErrorEventArgs),
+            typeof(ToastNotificationSetting),
         ];
 
         // Compiler-generated types are filtered explicitly rather than tolerated wholesale: a
@@ -283,7 +286,8 @@ public class PackagePurityTests
     /// menu contributes no type of its own - the exported set has since grown to the seven M001
     /// documented types with S04's balloon enums (D031), and then to thirteen with M002/S02/T01's
     /// nine-type-less toast content model, and to fifteen with M002/S02/T05's notifier and
-    /// exception, and to nineteen with M002/S03/T01's four activation types, and none of them is for
+    /// exception, and to nineteen with M002/S03/T01's four activation types, and to twenty with
+    /// M002/S04/T04's setting outcome, and none of them is for
     /// the menu.
     /// </para>
     /// <para>
@@ -316,7 +320,8 @@ public class PackagePurityTests
         // still has to be exactly the documented types - seven after S04 (D031) added the two
         // balloon enums, thirteen after M002/S02/T01 added the six toast content-model types,
         // fifteen after M002/S02/T05 added ToastNotifier and ToastException, nineteen after
-        // M002/S03/T01 added the four activation types, and none of them for the menu.
+        // M002/S03/T01 added the four activation types, twenty after M002/S04/T04 added the
+        // notification-setting outcome, and none of them for the menu.
         Type[] exported = [.. typeof(TrayIcon).Assembly.GetExportedTypes().Where(type => !IsCompilerGenerated(type))];
 
         Assert.Equal(
@@ -341,6 +346,7 @@ public class PackagePurityTests
                 typeof(ToastDismissedEventArgs),
                 typeof(ToastDismissalReason),
                 typeof(ToastErrorEventArgs),
+                typeof(ToastNotificationSetting),
             }.OrderBy(type => type.FullName, StringComparer.Ordinal),
             exported.OrderBy(type => type.FullName, StringComparer.Ordinal));
     }
