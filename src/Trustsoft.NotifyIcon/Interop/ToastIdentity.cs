@@ -84,9 +84,14 @@ internal sealed class ToastIdentity
             ? DefaultShortcutPath(appUserModelId)
             : shortcutPath;
 
+        // Traced on every attempt, so a later "no toast" can be attributed to the identity or to
+        // the payload rather than guessed at (the slice's observability contract).
+        NotifyIconTrace.Verbose($"toast identity: register attempt aumid='{appUserModelId}' shortcut='{path}'");
+
         ToastIdentityResult write = Write(appUserModelId, path);
         if (!write.Success)
         {
+            NotifyIconTrace.Verbose($"toast identity: register failed at {write.Operation} hr=0x{write.Code:X8}");
             return write;
         }
 
@@ -95,11 +100,13 @@ internal sealed class ToastIdentity
         ToastIdentityResult readBack = ReadBack(path);
         if (!readBack.Success)
         {
+            NotifyIconTrace.Verbose($"toast identity: register read-back failed at {readBack.Operation} hr=0x{readBack.Code:X8}");
             return readBack;
         }
 
         if (!string.Equals(readBack.AppUserModelId, appUserModelId, StringComparison.Ordinal))
         {
+            NotifyIconTrace.Verbose($"toast identity: register read-back mismatch expected='{appUserModelId}' actual='{readBack.AppUserModelId ?? "(null)"}'");
             return ToastIdentityResult.Failed(
                 OperationReadBackMismatch,
                 0,
@@ -107,6 +114,7 @@ internal sealed class ToastIdentity
                 readBack.AppUserModelId);
         }
 
+        NotifyIconTrace.Verbose($"toast identity: register succeeded aumid='{appUserModelId}'");
         return ToastIdentityResult.Succeeded(appUserModelId, path);
     }
 
@@ -162,10 +170,13 @@ internal sealed class ToastIdentity
     {
         if (_api.DeleteShortcut(shortcutPath))
         {
+            NotifyIconTrace.Verbose($"toast identity: remove succeeded shortcut='{shortcutPath}'");
             return ToastIdentityResult.Succeeded(null, shortcutPath);
         }
 
-        return ToastIdentityResult.Failed(nameof(IToastApi.DeleteShortcut), _api.GetLastError(), shortcutPath);
+        int lastError = _api.GetLastError();
+        NotifyIconTrace.Verbose($"toast identity: remove failed at {nameof(IToastApi.DeleteShortcut)} win32={lastError}");
+        return ToastIdentityResult.Failed(nameof(IToastApi.DeleteShortcut), lastError, shortcutPath);
     }
 
     /// <summary>

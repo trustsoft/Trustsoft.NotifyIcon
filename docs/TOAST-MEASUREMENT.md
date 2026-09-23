@@ -200,3 +200,96 @@ Raw capture (`ToastIdentityLiveProbeTests`, run on `MINIBOOKX`, Windows NT 10.0.
   the identity carrier is gone - the "shortcut absent" case, distinct from the "shortcut present but
   carries no property" case that the mismatch check in the T03 contract tests (`ToastIdentityTests`)
   covers deterministically.
+
+## T04 re-measurement: the library's own show path (ToastApi + ToastShow)
+
+T04 moved the measured Contract-2 sequence into the library's own interop layer
+(`src/Trustsoft.NotifyIcon/Interop/ToastApi.cs`: raw-vtable `RoGetActivationFactory` /
+`RoActivateInstance` / `Windows.UI.Notifications` dispatch, hand-written HSTRING marshalling and a
+COM-callable `TypedEventHandler`), with the sequence itself orchestrated by `ToastShow` over the
+`IToastApi` seam and the payload rendered by `ToastPayload`. Both halves of the seam are now the
+library's own code: `ShortcutLink` owns Contract 1, `ToastApi` owns Contract 2 and delegates
+Contract 1 to `ShortcutLink`.
+
+**Why a live run was still required.** A mocked `S_OK` proves the call sequence, not that Windows
+accepted the toast; only a real run exercises the vtables, the HSTRING marshalling and the WinRT
+event delegates against the actual runtime. The live proof is
+`ToastApiLiveProbeTests.The_show_path_hands_a_real_toast_to_the_shell_for_a_registered_identity`
+(run explicitly; it is a separate class from the deterministic `ToastApiContractTests` so the
+contract filter stays shell-free), and the delivery is then observed from a **separate process**
+with the probe's inventory mode.
+
+Raw capture (`MINIBOOKX`, Windows NT 10.0.26200.0, .NET SDK 10.0.303, net8.0-windows):
+
+```
+[live] t04: register aumid='Trustsoft.NotifyIcon.T04.LiveProbe' success=True operation='' code=0x00000000
+[live] t04 trace: toast identity: register attempt aumid='Trustsoft.NotifyIcon.T04.LiveProbe' shortcut='…\Programs\Trustsoft.NotifyIcon.T04.LiveProbe.lnk'
+[live] t04 trace: toast identity: register succeeded aumid='Trustsoft.NotifyIcon.T04.LiveProbe'
+[live] t04 trace: toast show: begin aumid='Trustsoft.NotifyIcon.T04.LiveProbe' title='Trustsoft.NotifyIcon T04 live probe' launch='t04-live-activation'
+[live] t04 trace: toast: RoInitialize(RO_INIT_SINGLETHREADED) hr=0x00000001            (S_FALSE: already initialized)
+[live] t04 trace: toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotificationManager -> IToastNotificationManagerStatics) hr=0x00000000
+[live] t04 trace: toast: RoGetActivationFactory(Windows.UI.Notifications.ToastNotification -> IToastNotificationFactory) hr=0x00000000
+[live] t04 trace: toast: RoActivateInstance(Windows.Data.Xml.Dom.XmlDocument) hr=0x00000000
+[live] t04 trace: toast: CreateToastNotifierWithId('Trustsoft.NotifyIcon.T04.LiveProbe') hr=0x00000000
+[live] t04 trace: toast show: GetNotifierSetting hr=0x80070490 setting=0 (E_NOT_FOUND on first use is benign)
+[live] t04 trace: toast show: LoadXml hr=0x00000000 xml=<toast launch="t04-live-activation"><visual><binding template="ToastGeneric"><text>Trustsoft.NotifyIcon T04 live probe</text><text>The library's own ToastApi + ToastShow handed this to the shell.</text></binding></visual></toast>
+[live] t04 trace: toast show: subscribed activated=0xC3DF70570088CBD5 dismissed=0xAA91A327844029FD failed=0xD63F6312BB164642
+[live] t04 trace: toast show: Show hr=0x00000000 (accepted by the shell; delivery is judged out of process)
+[live] t04 trace: toast show: dispose
+[live] t04 trace: toast show: UnsubscribeActivated(0xC3DF70570088CBD5) hr=0x00000000
+[live] t04 trace: toast show: UnsubscribeDismissed(0xAA91A327844029FD) hr=0x00000000
+[live] t04 trace: toast show: UnsubscribeFailed(0xD63F6312BB164642) hr=0x00000000
+[live] t04: show success=True operation='' code=0x00000000 setting=0 aumid='Trustsoft.NotifyIcon.T04.LiveProbe'
+[live] t04: after dispose shown=True (unsubscribed and released; no click was injected, so activated=False)
+[live] t04: remove success=True operation='' code=0x00000000
+```
+
+Out-of-process observation, a **separate process invocation** of the probe inventory against the
+same identity, run after the live test (and then cleared, so the machine is left as it was found):
+
+```
+history: RoGetActivationFactory(ToastNotificationManager -> IToastNotificationManagerStatics2) hr=0x00000000
+history: get_History hr=0x00000000
+history: QueryInterface(History -> IToastNotificationHistory2) hr=0x00000000
+history: GetHistoryWithId('Trustsoft.NotifyIcon.T04.LiveProbe') hr=0x00000000
+history: IVectorView.get_Size hr=0x00000000 count=1
+history verdict: count=1 for 'Trustsoft.NotifyIcon.T04.LiveProbe'
+--- after --clear-history ---
+history verdict: count=0 for 'Trustsoft.NotifyIcon.T04.LiveProbe'
+```
+
+**What the live run confirmed.**
+
+1. The library's own activation-factory acquisition works: both factories and the XML document are
+   obtained with `S_OK`, and the notifier is created with the explicit identity
+   (`CreateToastNotifierWithId`), which is the only overload an unpackaged process can rely on.
+2. `IXmlDocumentIO.LoadXml` accepts the payload `ToastPayload` renders, and the exact string the
+   shell received is in the trace above (the `launch` attribute is the argument a body click would
+   deliver).
+3. All three events subscribe with real, non-zero tokens, and all three unsubscribe with `S_OK`
+   before any handle is released - the teardown leaves no subscription behind.
+4. `Show` returned `S_OK` and the toast is present in the shell's Action Center (`count=1`) as
+   observed from a different process. `S_OK` here means *accepted*, not *seen* (see the negative
+   control above, where an unregistered identity also reached the Action Center).
+5. The measured first-use quirk reproduced live: `IToastNotifier.GetSetting` returned
+   `0x80070490` (`E_NOT_FOUND`) for the freshly registered identity and the show continued, which is
+   the benign case the seam documents. The library reports it in the trace and does not treat it as
+   a failure.
+6. `RoInitialize(RO_INIT_SINGLETHREADED)` returned `S_FALSE` on this STA test thread (already
+   initialized); the code does not gate on it for the reason Contract 2's gotcha 4 records.
+
+**What was NOT captured, still.** No activation callback fired, because no automated instrument can
+click the toast banner on this machine (T01's finding stands). The activation *payload* therefore
+remains unobserved by automation; it is the human demonstration of T05. What T04 proves about the
+callback is the subscription mechanism itself: the three handlers subscribe and unsubscribe with
+live tokens, and the in-process callback path is proven deterministically by the fake raising the
+events (`Subscribed_handlers_receive_activation_dismissal_and_failure`).
+
+**The other half of the evidence.** `ToastApiContractTests` (29 tests, `net8.0-windows`) pins what a
+live shell cannot be asked to do: the exact measured acquisition and teardown sequence, the payload
+string handed to `LoadXml`, the notifier bound to the caller's identity, the subscribe-before-show
+and unsubscribe-before-release ordering, the failure-as-data unwinding at every step (each of the
+11 steps is scripted to fail, and each unwind releases exactly the handles acquired and removes
+exactly the subscriptions registered), the idempotent disposal, and the payload's escaping and
+omission rules.
+
