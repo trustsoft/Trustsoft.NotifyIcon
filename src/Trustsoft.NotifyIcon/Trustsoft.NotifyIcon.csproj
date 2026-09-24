@@ -19,21 +19,17 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <!--
-      The tray-only pre-release of the v1 surface. SemVer with breaking changes only in major
-      versions is D010; the version policy and what would move the number are D037; the decision to
-      ship M001's tray surface ahead of M002's toasts as a documented pre-release, keeping 1.0.0
-      reserved for the release that carries both, is D072. This number, 1.0.0-preview.2, exists
-      because adding the source remote made a sentence in this package's own README false - it said
-      the repository had no remote - and a shipped document has to tell the truth about the
-      repository a consumer got the package from; preview.1 keeps its number and its pushed tag
-      instead of being reissued with different content under the same number (D074). A prerelease suffix is a release act a
-      consumer can see - NuGet will not resolve it for a plain install, and a public feed never
-      frees the number - so it is a deliberate edit here, in the README install line (guarded by
-      Readme_documents_the_install_line_usage_and_the_shipped_surface) and in
-      PackagePurityTests.ExpectedPackageVersion, and nowhere else. `Version` also drives
+      The released v1 surface: the tray icon and the toasts in one package. SemVer with breaking
+      changes only in major versions is D010; the version policy and what moves the number are D037;
+      that this number is the one reserved for the package carrying both subsystems, and what the
+      release act changed, is D075. The earlier 1.0.0-preview.1 and 1.0.0-preview.2 numbers were the
+      tray-only package (D072, D074) and keep their own tags and artifacts. The number is declared
+      here and read from here by the README install line (guarded by
+      Readme_documents_the_install_line_usage_and_the_shipped_surface) and by
+      PackagePurityTests.ExpectedPackageVersion; `Version` also drives
       AssemblyVersion/FileVersion/AssemblyInformationalVersion, so there is no second place to bump.
     -->
-    <Version>1.0.0-preview.2</Version>
+    <Version>1.0.0</Version>
     <Authors>Trustsoft</Authors>
     <Description>A notification-area (system tray) icon for WPF applications that need no window and no System.Windows.Forms. Registers the icon through the library's own Shell_NotifyIcon P/Invoke declarations, so the shipped assembly carries no package reference beyond the platform: no WinForms, no System.Drawing.Common and no tray-helper package. Targets net8.0-windows, net9.0-windows and net10.0-windows.</Description>
     <PackageTags>wpf;tray;tray-icon;notification-area;notifyicon;system-tray;taskbar;no-winforms;p-invoke</PackageTags>

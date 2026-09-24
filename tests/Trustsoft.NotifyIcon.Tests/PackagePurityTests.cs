@@ -64,19 +64,18 @@ public class PackagePurityTests
     private const string ReleaseBuildCommand = "dotnet build Trustsoft.NotifyIcon.sln -c Release";
 
     /// <summary>
-    /// The package version M001 ships, pinned here so that changing it is a deliberate edit.
+    /// The package version this repository ships, pinned here so that changing it is a deliberate edit.
     /// </summary>
     /// <remarks>
     /// The policy is D037 (SemVer, breaking changes major-only, the number declared once in the
-    /// csproj); the pre-release this repository currently ships is D072, and the number below is the
-    /// one D074 corrected it to; both keep the final
-    /// <c>1.0.0</c> reserved for the release that carries the tray icon and the toasts in the same
-    /// package. The assertion is a set-equality style pin for the same reason
+    /// csproj); the release of the tray-plus-toasts surface under this number is D075, and the
+    /// tray-only pre-releases that preceded it (D072, D074) keep their own tags and artifacts. The
+    /// assertion is a set-equality style pin for the same reason
     /// <see cref="ExpectedTargetFrameworks"/> is one: a version bump is a release act, not a side
     /// effect of an unrelated edit, and a test that merely checked "some version exists" would let a
-    /// rollback to <c>1.0.0</c> - or an accidental suffix - ship without anyone deciding it.
+    /// rollback to the previous number - or an accidental suffix - ship without anyone deciding it.
     /// </remarks>
-    private const string ExpectedPackageVersion = "1.0.0-preview.2";
+    private const string ExpectedPackageVersion = "1.0.0";
 
     /// <summary>
     /// The directory the nupkg is written to, relative to the repository root.

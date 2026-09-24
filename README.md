@@ -13,20 +13,18 @@ dependency beyond WPF**. It targets `net8.0-windows`, `net9.0-windows` and `net1
 ## Install
 
 ```xml
-<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0-preview.2" />
+<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0" />
 ```
 
-`1.0.0-preview.2` is the **tray-only pre-release**: it carries everything in this document, and the
-toast subsystem is not in it yet. The number is a SemVer pre-release of the v1 surface (D010, D037),
-so a plain `dotnet add package Trustsoft.NotifyIcon` will not select it — ask for it by version, or
-pass `--prerelease`. The final `1.0.0` is reserved for the release that carries the tray icon and the
-toasts in the same package (D072).
+`1.0.0` is the v1 surface: **the tray icon and the toast subsystem in one package**, with no runtime
+dependency beyond the BCL and WPF (D010, D037, D075). A plain `dotnet add package Trustsoft.NotifyIcon`
+resolves it, because it is not a pre-release. Additions after this release move the minor (`1.1.0`)
+and a breaking change moves the major (`2.0.0`).
 
-`1.0.0-preview.2` supersedes `1.0.0-preview.1`, and the only defect it corrects is in this document:
-the earlier pre-release shipped while this repository had no remote and said so, and the repository
-now has one, which made that sentence false for the package you are holding. No code, no test and no
-guard changed; the earlier number keeps its own tag and its own artifact rather than being reissued
-with different content under the same number (D074).
+The `1.0.0-preview.1` and `1.0.0-preview.2` numbers were the tray-only package handed out before the
+toasts landed (D072, D074). They keep their own tags and their own artifacts rather than being
+reissued with different content under a used number, and nothing about them is withdrawn - a consumer
+who took a pre-release keeps exactly what they installed.
 
 It is **not published to any package feed** — the source lives in a git remote and is pushed there,
 which is not the same act as publishing a package, and no NuGet feed has ever received one. The
