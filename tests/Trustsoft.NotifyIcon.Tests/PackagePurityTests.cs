@@ -67,13 +67,15 @@ public class PackagePurityTests
     /// The package version M001 ships, pinned here so that changing it is a deliberate edit.
     /// </summary>
     /// <remarks>
-    /// The number itself is a recorded decision (D037): 1.0.0, stable rather than a prerelease,
-    /// because M001 delivers the v1 surface and D010 makes breaking changes major-only. The
-    /// assertion is a set-equality style pin for the same reason <see cref="ExpectedTargetFrameworks"/>
-    /// is one: a version bump is a release act, not a side effect of an unrelated edit, and a test
-    /// that merely checked "some version exists" would let <c>1.0.0-preview.1</c> ship by accident.
+    /// The policy is D037 (SemVer, breaking changes major-only, the number declared once in the
+    /// csproj); the pre-release this repository currently ships is D072, which keeps the final
+    /// <c>1.0.0</c> reserved for the release that carries the tray icon and the toasts in the same
+    /// package. The assertion is a set-equality style pin for the same reason
+    /// <see cref="ExpectedTargetFrameworks"/> is one: a version bump is a release act, not a side
+    /// effect of an unrelated edit, and a test that merely checked "some version exists" would let a
+    /// rollback to <c>1.0.0</c> - or an accidental suffix - ship without anyone deciding it.
     /// </remarks>
-    private const string ExpectedPackageVersion = "1.0.0";
+    private const string ExpectedPackageVersion = "1.0.0-preview.1";
 
     /// <summary>
     /// The directory the nupkg is written to, relative to the repository root.
@@ -619,7 +621,11 @@ public class PackagePurityTests
     [Fact]
     public void Loaded_library_carries_the_declared_package_version()
     {
-        Version expected = Version.Parse(ExpectedPackageVersion);
+        // A prerelease suffix is part of the package identity but not part of the assembly
+        // version's numeric fields: the SDK keeps those at the numeric core and carries the suffix
+        // in the informational version, which is why the informational comparison below is a
+        // StartsWith. Parsing only the numeric core is what lets this test hold for a pre-release.
+        Version expected = Version.Parse(ExpectedPackageVersion.Split('-', 2)[0]);
         Version? observed = typeof(TrayIcon).Assembly.GetName().Version;
 
         Assert.True(

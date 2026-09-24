@@ -13,14 +13,19 @@ dependency beyond WPF**. It targets `net8.0-windows`, `net9.0-windows` and `net1
 ## Install
 
 ```xml
-<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0" />
+<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0-preview.1" />
 ```
 
-Version `1.0.0` is the stable v1 surface: SemVer, with breaking changes only in a major version
-(D010, D037). It is **not published to nuget.org** — nothing in this repository has been pushed to a
-public feed. The package is produced by `dotnet pack` into this repository's `artifacts/` folder, and
-installing it into a fresh windowless WPF project from that folder feed is what the packaging
-evidence measures (`docs/UAT-S07.md`).
+`1.0.0-preview.1` is the **tray-only pre-release**: it carries everything in this document, and the
+toast subsystem is not in it yet. The number is a SemVer pre-release of the v1 surface (D010, D037),
+so a plain `dotnet add package Trustsoft.NotifyIcon` will not select it — ask for it by version, or
+pass `--prerelease`. The final `1.0.0` is reserved for the release that carries the tray icon and the
+toasts in the same package (D072).
+
+It is **not published to nuget.org** — nothing in this repository has been pushed to a public feed.
+The package is produced by `dotnet pack` into this repository's `artifacts/` folder, and installing it
+into a fresh windowless WPF project from that folder feed is what the packaging evidence measures
+(`docs/UAT-S07.md`).
 
 The package carries, beside each framework's assembly, three things a consumer should not have to
 fetch separately: the **XML documentation** file (`Trustsoft.NotifyIcon.xml`), this **README** and

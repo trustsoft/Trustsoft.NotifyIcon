@@ -19,12 +19,17 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <!--
-      The v1 version of the M001 surface. SemVer with breaking changes only in major versions is
-      D010; the specific number, why it is not a prerelease, and what would move it are recorded
-      as D037. `Version` also drives AssemblyVersion/FileVersion/AssemblyInformationalVersion, so
-      there is no second place to bump.
+      The tray-only pre-release of the v1 surface. SemVer with breaking changes only in major
+      versions is D010; the version policy and what would move the number are D037; the decision to
+      ship M001's tray surface ahead of M002's toasts as a documented pre-release, keeping 1.0.0
+      reserved for the release that carries both, is D072. A prerelease suffix is a release act a
+      consumer can see - NuGet will not resolve it for a plain install, and a public feed never
+      frees the number - so it is a deliberate edit here, in the README install line (guarded by
+      Readme_documents_the_install_line_usage_and_the_shipped_surface) and in
+      PackagePurityTests.ExpectedPackageVersion, and nowhere else. `Version` also drives
+      AssemblyVersion/FileVersion/AssemblyInformationalVersion, so there is no second place to bump.
     -->
-    <Version>1.0.0</Version>
+    <Version>1.0.0-preview.1</Version>
     <Authors>Trustsoft</Authors>
     <Description>A notification-area (system tray) icon for WPF applications that need no window and no System.Windows.Forms. Registers the icon through the library's own Shell_NotifyIcon P/Invoke declarations, so the shipped assembly carries no package reference beyond the platform: no WinForms, no System.Drawing.Common and no tray-helper package. Targets net8.0-windows, net9.0-windows and net10.0-windows.</Description>
     <PackageTags>wpf;tray;tray-icon;notification-area;notifyicon;system-tray;taskbar;no-winforms;p-invoke</PackageTags>
