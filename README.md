@@ -13,17 +13,24 @@ dependency beyond WPF**. It targets `net8.0-windows`, `net9.0-windows` and `net1
 ## Install
 
 ```xml
-<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0-preview.1" />
+<PackageReference Include="Trustsoft.NotifyIcon" Version="1.0.0-preview.2" />
 ```
 
-`1.0.0-preview.1` is the **tray-only pre-release**: it carries everything in this document, and the
+`1.0.0-preview.2` is the **tray-only pre-release**: it carries everything in this document, and the
 toast subsystem is not in it yet. The number is a SemVer pre-release of the v1 surface (D010, D037),
 so a plain `dotnet add package Trustsoft.NotifyIcon` will not select it — ask for it by version, or
 pass `--prerelease`. The final `1.0.0` is reserved for the release that carries the tray icon and the
 toasts in the same package (D072).
 
-It is **not published to nuget.org** — nothing in this repository has been pushed to a public feed.
-The package is produced by `dotnet pack` into this repository's `artifacts/` folder, and installing it
+`1.0.0-preview.2` supersedes `1.0.0-preview.1`, and the only defect it corrects is in this document:
+the earlier pre-release shipped while this repository had no remote and said so, and the repository
+now has one, which made that sentence false for the package you are holding. No code, no test and no
+guard changed; the earlier number keeps its own tag and its own artifact rather than being reissued
+with different content under the same number (D074).
+
+It is **not published to any package feed** — the source lives in a git remote and is pushed there,
+which is not the same act as publishing a package, and no NuGet feed has ever received one. The
+package is produced by `dotnet pack` into this repository's `artifacts/` folder, and installing it
 into a fresh windowless WPF project from that folder feed is what the packaging evidence measures
 (`docs/UAT-S07.md`).
 
@@ -248,9 +255,9 @@ Two traps that cost time when they are hit, both recorded with their measurement
   each configuration), while their OS-side behaviour rests on the documented shell contract until
   the deferred live pass.
 - **No second shell protocol.** The library registers with `NOTIFYICON_VERSION_4` and no other.
-- **No `RepositoryUrl` or `PackageProjectUrl` in the metadata.** This repository has no remote and no
-  project page, and a fabricated link cannot be corrected after publication; the omission is
-  deliberate and asserted by `PackagePurityTests`.
+- **No `RepositoryUrl` or `PackageProjectUrl` in the metadata.** The source remote is a git host
+  rather than a package feed, and no public project page exists; a link in package metadata cannot be
+  corrected after publication, so the omission is deliberate and asserted by `PackagePurityTests`.
 
 ### One measured cost, so it does not surprise you
 

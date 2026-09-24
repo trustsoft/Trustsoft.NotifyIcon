@@ -22,14 +22,18 @@
       The tray-only pre-release of the v1 surface. SemVer with breaking changes only in major
       versions is D010; the version policy and what would move the number are D037; the decision to
       ship M001's tray surface ahead of M002's toasts as a documented pre-release, keeping 1.0.0
-      reserved for the release that carries both, is D072. A prerelease suffix is a release act a
+      reserved for the release that carries both, is D072. This number, 1.0.0-preview.2, exists
+      because adding the source remote made a sentence in this package's own README false - it said
+      the repository had no remote - and a shipped document has to tell the truth about the
+      repository a consumer got the package from; preview.1 keeps its number and its pushed tag
+      instead of being reissued with different content under the same number (D074). A prerelease suffix is a release act a
       consumer can see - NuGet will not resolve it for a plain install, and a public feed never
       frees the number - so it is a deliberate edit here, in the README install line (guarded by
       Readme_documents_the_install_line_usage_and_the_shipped_surface) and in
       PackagePurityTests.ExpectedPackageVersion, and nowhere else. `Version` also drives
       AssemblyVersion/FileVersion/AssemblyInformationalVersion, so there is no second place to bump.
     -->
-    <Version>1.0.0-preview.1</Version>
+    <Version>1.0.0-preview.2</Version>
     <Authors>Trustsoft</Authors>
     <Description>A notification-area (system tray) icon for WPF applications that need no window and no System.Windows.Forms. Registers the icon through the library's own Shell_NotifyIcon P/Invoke declarations, so the shipped assembly carries no package reference beyond the platform: no WinForms, no System.Drawing.Common and no tray-helper package. Targets net8.0-windows, net9.0-windows and net10.0-windows.</Description>
     <PackageTags>wpf;tray;tray-icon;notification-area;notifyicon;system-tray;taskbar;no-winforms;p-invoke</PackageTags>
@@ -53,7 +57,9 @@
       (PackagePurityTests) and in scripts/verify-package.sh.
     -->
     <!--
-      Deliberately absent: RepositoryUrl and PackageProjectUrl. This repository has no remote and
+      Deliberately absent: RepositoryUrl and PackageProjectUrl. The source remote is a git host,
+      not a package feed, and no public project page exists; a URL in package metadata cannot be
+      corrected after publication, so the omission stays deliberate and asserted.
       therefore no real URL to point at, and a fabricated link in package metadata is worse than an
       absent one - it sends a consumer to a page that does not exist and it cannot be corrected
       after publication. Both are omitted on purpose; PackagePurityTests asserts their absence so

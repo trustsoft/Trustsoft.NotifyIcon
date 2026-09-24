@@ -68,14 +68,15 @@ public class PackagePurityTests
     /// </summary>
     /// <remarks>
     /// The policy is D037 (SemVer, breaking changes major-only, the number declared once in the
-    /// csproj); the pre-release this repository currently ships is D072, which keeps the final
+    /// csproj); the pre-release this repository currently ships is D072, and the number below is the
+    /// one D074 corrected it to; both keep the final
     /// <c>1.0.0</c> reserved for the release that carries the tray icon and the toasts in the same
     /// package. The assertion is a set-equality style pin for the same reason
     /// <see cref="ExpectedTargetFrameworks"/> is one: a version bump is a release act, not a side
     /// effect of an unrelated edit, and a test that merely checked "some version exists" would let a
     /// rollback to <c>1.0.0</c> - or an accidental suffix - ship without anyone deciding it.
     /// </remarks>
-    private const string ExpectedPackageVersion = "1.0.0-preview.1";
+    private const string ExpectedPackageVersion = "1.0.0-preview.2";
 
     /// <summary>
     /// The directory the nupkg is written to, relative to the repository root.
@@ -399,10 +400,10 @@ public class PackagePurityTests
     /// </para>
     /// <para>
     /// Two of the assertions here are <em>absence</em> checks: <c>RepositoryUrl</c> and
-    /// <c>PackageProjectUrl</c> must not be declared, because this repository has no remote and a
-    /// fabricated URL in package metadata is worse than an absent one - it cannot be corrected after
-    /// publication. Pinning the absence means adding one is a deliberate edit against a URL that
-    /// actually resolves.
+    /// <c>PackageProjectUrl</c> must not be declared, because the source remote is a git host rather
+    /// than a package feed and a URL in package metadata is worse than an absent one - it cannot be
+    /// corrected after publication. Pinning the absence means adding one is a deliberate edit against
+    /// a URL that actually resolves to this project.
     /// </para>
     /// </remarks>
     [Fact]
@@ -490,7 +491,7 @@ public class PackagePurityTests
 
         Assert.False(
             properties.ContainsKey("RepositoryUrl"),
-            "This repository has no remote, so RepositoryUrl must stay out of the package metadata. "
+            "This project publishes no package to a feed and has no public project page, so RepositoryUrl must stay out of the package metadata. "
             + "Add it deliberately once there is a URL that resolves; do not fill it in to silence a warning.");
 
         Assert.False(

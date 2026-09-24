@@ -19,7 +19,7 @@
 # the evidence rather than a summary of it. The nuspec is never dumped wholesale.
 #
 # Usage (from the repository root):
-#   bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.1.0.0-preview.1.nupkg
+#   bash scripts/verify-package.sh artifacts/Trustsoft.NotifyIcon.1.0.0-preview.2.nupkg
 #
 # Exit codes: 0 = every invariant holds; 1 = at least one invariant is broken; 2 = usage error.
 set -u
