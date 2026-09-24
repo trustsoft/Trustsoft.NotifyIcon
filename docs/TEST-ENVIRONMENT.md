@@ -1,10 +1,13 @@
 # Test environment: the desktop-foreground-sensitive menu/popup tests
 
-Status: **RETIRED as an environment dependency — S08/T04, 2026-09-22, revision `996c9b0`.** The five
-failures this file used to accept are now repaired inside the library, are reproduced on purpose by
-in-repo tests, and no longer depend on the session. The skip-with-reason guard this file named as a
-follow-up is **explicitly rejected: a skip is masking.** No test in these classes is skipped, and none
-carries a conditional guard.
+Status: **PARTIALLY retired - corrected 2026-09-24 at revision `d243deb`, the 1.0.0 release.** The
+S08/T04 repair (D044) holds: the popup's owner identity, the outside-click dismissal and the
+disposal-driven close notification are deterministic even when the foreground claim is refused, and
+that is what the previous version of this file measured. What is **not** retired is whether the
+injected click opens the menu **at all** - that still depends on which window holds the foreground and
+on what else runs around it, and it was measured again below with the readings that contradicted the
+"no longer depend on the session" wording. No test in these classes is skipped, and none carries a
+conditional guard; the guard stays rejected for the reason the last section gives.
 
 ## What this file used to accept
 
@@ -108,6 +111,38 @@ in `docs/UAT-S08.md`).
 - **The normal (non-hostile) session** was not available to S08/T04: this unit only ever had the agent
   shell, so the normal-session leg rests on the hermetic "claim granted" tests plus the pre-S08
   interactive-session total recorded above, and it is written as such in `docs/UAT-S08.md`.
+- **Whether an injected click opens the menu at all.** The S08 repair made the popup's *owner* and its
+  dismissal deterministic, but the menu still has to be opened by WPF's popup machinery, which decides
+  the owner from the foreground window at the instant the popup is created. In a session whose
+  foreground is held by another application - and depending on how much else runs in the same suite -
+  the same test can fail in one run and pass in the next on an identical tree (measured: 6 failures of
+  639, then 639/639 on the repeat; earlier the same day, 2 and 3 failures at 416 tests). A release or a
+  report records the reading it got and reproduces a green run; it does not claim this family is
+  retired, and it does not skip it.
+
+## Re-measured at 1.0.0 (2026-09-24, revision `d243deb`, 639 tests)
+
+Re-measured while cutting the 1.0.0 release - the first tree that carries both the tray icon and the
+toasts, so the suite grew from 416 tests to 639. The readings below are the reason the status above
+says *partially*.
+
+| When | Session | Command | Result | Evidence |
+| --- | --- | --- | --- | --- |
+| 1.0.0 release verification, revision `d243deb` | agent shell (sandbox), foreign window holds the foreground | `dotnet build Trustsoft.NotifyIcon.sln -c Release` then `dotnet test tests/Trustsoft.NotifyIcon.Tests -c Release -f net8.0-windows --no-build --no-restore`, twice, with the three menu classes in between | **`Passed! - Failed: 0, Passed: 639, Skipped: 0, Total: 639`**, exit 0, 1 m 13 s - **both** runs; the three classes in isolation **23/23** | gsd_exec `e98d1f3e-91ae-4c3d-9427-f2ba701ba211` |
+| same day, same content, release worktree | operator session (interactive desktop) | the same suite | **`Failed: 6, Passed: 633, Total: 639`**, exit 1 - `TrayIconMenuActivationTests` (3), `TrayIconMenuCloseNotificationTests` (2), `TrayIconMenuDataContextTests` (1); those three classes in isolation **23/23**; an identical repeat **`Passed! 639/639`** | operator-session logs `/c/tmp/r10-suite1.txt`, `/c/tmp/r10-suite2.txt` |
+| earlier the same day, pre-release tree (`52ef37d`, 416 tests) | operator session | the same suite | two red runs, 2 and 3 failures in the same family, with the diagnostics naming the foreign foreground (`CASCADIA_HOSTING_WINDOW_CLASS`, `Chrome_Yandex_WidgetWin_1`, and once `Progman` - the desktop); the named classes 20/20 in isolation; an identical repeat `416/416` | operator-session logs `/c/tmp/p2-suite1.txt`, `/c/tmp/p2-suite2.txt` |
+
+Two facts the earlier version of this file did not state, and which explain the variance:
+
+1. **The tests open real menus on the real desktop.** `TrayIconMenuActivationTests.CreateMenu("Alpha")`
+   and `TrayIconMenuDataContextTests` (`new MenuItem { Header = "Alpha" }`) build genuine WPF
+   `ContextMenu`s and open them, so a suite run puts real menus on screen for whoever is at the machine
+   - a menu titled "Alpha" appearing during a test run is this family, not the application under test -
+   and it is why the family is sensitive to the foreground owner.
+2. **`--no-build` can test a stale assembly.** Right after merging `milestone/M002` into `main`, a
+   `dotnet test ... --no-build` run in the project root executed the pre-merge test assembly: it
+   reported `Total: 416` where the merged tree has 639. Build before `--no-build`, or check the total
+   against the tree before trusting a reading.
 
 ## The rejected guard
 
