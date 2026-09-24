@@ -45,12 +45,74 @@ FORBIDDEN_PATTERNS=(Sample Tests testhost probe-live consumer-proof)
 # package dependency, and the SDK writes it into the nuspec.
 WPF_FRAMEWORK=Microsoft.WindowsDesktop.App.WPF
 
+# ---------------------------------------------------------------------------------------------
+# R017 / the milestone's fifth criterion: the exported surface, read from the packed artifact.
+#
+# The shipped package carries the generated XML documentation beside each assembly
+# (lib/<tfm>/Trustsoft.NotifyIcon.xml). Its `T:` members name the library's own types - internal
+# ones included - so the surface can be asserted from the artifact without loading it and without
+# the SDK. The three facts below are a SET comparison against this explicit list, not a count.
+#
+# This is the fifth copy of the list. The others are the two allow-lists in
+# tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs, the one in TrayIconExceptionTests, and
+# samples/consumer-proof/App.xaml.cs. Each line names the slice that added the type, because the
+# list is the artifact-side record of a deliberate API decision (D002/D010): a new public type has
+# to be named here before it can ship.
+#
+# Two traps, measured in the S05 research, that this section deliberately avoids:
+#   * scanning the packed DLL for `Windows.UI.Notifications` is guaranteed to FAIL on a correct
+#     package: the library legitimately carries that string in its activation-factory call. The rule
+#     below is therefore about documented TYPE NAMES, never about strings in the assembly, and the
+#     DLL is never read.
+#   * a nupkg sha256 is not stable evidence: two packs of an unchanged tree differ in twelve DOS
+#     timestamps (MEM145). Nothing here hashes or byte-compares a package.
+SURFACE_PUBLIC=(
+  Trustsoft.NotifyIcon.TrayIcon                 # M001 - the entry point element
+  Trustsoft.NotifyIcon.TrayIconException        # M001 - the failure type of the tray operations
+  Trustsoft.NotifyIcon.TrayErrorEventArgs       # M001 - the error event's args
+  Trustsoft.NotifyIcon.TrayIconClickEventArgs   # M001/S02 - the args a click handler receives
+  Trustsoft.NotifyIcon.TrayMenuActivation       # M001/S02 - which click activates the context menu
+  Trustsoft.NotifyIcon.BalloonTipIcon           # M001/S04 - the balloon severity vocabulary (D031)
+  Trustsoft.NotifyIcon.BalloonTipOptions        # M001/S04 - the balloon option vocabulary (D031)
+  Trustsoft.NotifyIcon.ToastContent             # M002/S02/T01 - the toast content model (D056)
+  Trustsoft.NotifyIcon.ToastSeverity            # M002/S02/T01 - D053's scenario mapping
+  Trustsoft.NotifyIcon.ToastSound               # M002/S02/T01 - the sound vocabulary
+  Trustsoft.NotifyIcon.ToastButton              # M002/S02/T01 - nested content shape
+  Trustsoft.NotifyIcon.ToastImage               # M002/S02/T01 - nested content shape
+  Trustsoft.NotifyIcon.ToastImagePlacement      # M002/S02/T01 - the image placement vocabulary
+  Trustsoft.NotifyIcon.ToastNotifier            # M002/S02/T05 - the public entry point (D055)
+  Trustsoft.NotifyIcon.ToastException           # M002/S02/T05 - the failure type (D052/D057)
+  Trustsoft.NotifyIcon.ToastActivatedEventArgs  # M002/S03/T01 - typed activation payload
+  Trustsoft.NotifyIcon.ToastDismissedEventArgs  # M002/S03/T01 - typed dismissal payload
+  Trustsoft.NotifyIcon.ToastDismissalReason     # M002/S03/T01 - the dismissal vocabulary
+  Trustsoft.NotifyIcon.ToastErrorEventArgs      # M002/S03/T01 - typed failure payload
+  Trustsoft.NotifyIcon.ToastNotificationSetting # M002/S04/T04 - the notification-setting outcome
+)
+
+# The one INTERNAL type the generated documentation names outside Trustsoft.NotifyIcon.Interop.:
+# NotifyIconTrace is internal, so it may be documented while never being exported. It is allowed
+# here explicitly rather than by a wildcard, so a second internal type under the library namespace
+# is a deliberate edit.
+SURFACE_INTERNAL_TYPE=Trustsoft.NotifyIcon.NotifyIconTrace
+
 checks=0
 failures=0
 
 ok()   { checks=$((checks + 1)); printf '  PASS  %s\n' "$1"; }
 bad()  { checks=$((checks + 1)); failures=$((failures + 1)); printf '  FAIL  %s\n' "$1"; }
 note() { printf '        %s\n' "$1"; }
+
+# Prints the `T:` members of an XML documentation file on stdin, one fully-qualified name per line.
+# Members (`M:`), properties (`P:`), fields (`F:`) and events (`E:`) are members OF those types and
+# are not part of the surface set, so only `T:` entries are read.
+documented_type_names() {
+  grep -oE '<member name="T:[^"]*"' | sed 's/^<member name="T://; s/"$//'
+}
+
+# The expected surface set as a C-collated list, for the set comparison below.
+surface_expected_names() {
+  printf '%s\n' "${SURFACE_PUBLIC[@]}" "$SURFACE_INTERNAL_TYPE" | LC_ALL=C sort
+}
 
 if [ "$#" -eq 0 ]; then
   printf 'usage: bash scripts/verify-package.sh <package.nupkg> [more.nupkg ...]\n' >&2
@@ -59,6 +121,14 @@ fi
 
 if ! command -v unzip >/dev/null 2>&1; then
   printf 'FAIL  unzip is required to inspect a nupkg and is not on PATH\n' >&2
+  exit 2
+fi
+
+# The exported-surface comparison is a set difference, so it needs `comm`. A missing `comm` would
+# make both sides of that comparison empty - i.e. a silent PASS - so it is a hard usage error rather
+# than a degradation.
+if ! command -v comm >/dev/null 2>&1; then
+  printf 'FAIL  comm is required for the exported-surface set comparison and is not on PATH\n' >&2
   exit 2
 fi
 
@@ -244,6 +314,95 @@ verify_one() {
   else
     bad "the package contains ${#unexpected[@]} entry/entries outside the allowed set; offenders:"
     printf '%s\n' "${unexpected[@]}" | sed 's/^/          /'
+  fi
+
+  echo "-- exported surface (R017, from the packed XML documentation)"
+  # Soundness chain: this artifact-side rule is a faithful proxy for "the exported surface" only
+  # while (a) the exported set is pinned at the twenty documented types source-side
+  # (PackagePurityTests.Public_surface_is_only_the_documented_types, and the same set asserted in
+  # TrayIcon_exposes_the_context_menu_property_without_adding_a_public_type) AND (b) every public
+  # member of the surface carries generated XML documentation - which is what ToastNotifierTests'
+  # documentation guard asserts, and which M002/S05/T05 widens to all twenty types. A future task
+  # that widens THIS rule must widen that documentation guard too, or the artifact-side reading
+  # goes blind to a newly added, undocumented public type.
+  #
+  # The authoritative exported-set check remains the consumer proof's reflection over the packed
+  # assembly (`--surface-only`, run per target framework in samples/consumer-proof); this section is
+  # its SDK-free companion, not a replacement.
+  #
+  # What this rule deliberately does NOT claim: it says nothing about what the assembly REFERENCES,
+  # and "no WinRT type is exported" is a statement about documented type names, not about strings
+  # present in the DLL.
+  local surface_folder surface_doc surface_documented surface_entry
+  local surface_foreign surface_missing surface_unexpected surface_winrt
+  local surface_observed surface_m surface_u surface_w
+  surface_foreign=''
+  surface_missing=''
+  surface_unexpected=''
+  surface_winrt=''
+  for tfm in "${TFMS[@]}"; do
+    surface_folder="lib/$tfm/$DOC"
+    surface_doc="$(unzip -p "$pkg" "$surface_folder" 2>/dev/null || true)"
+    if [ -z "$surface_doc" ]; then
+      surface_foreign+="$surface_folder: <the XML documentation entry is absent or unreadable>"$'\n'
+      continue
+    fi
+    surface_documented="$(printf '%s\n' "$surface_doc" | documented_type_names | LC_ALL=C sort)"
+    if [ -z "$surface_documented" ]; then
+      surface_foreign+="$surface_folder: <it carries no T: entry at all>"$'\n'
+      continue
+    fi
+
+    # (i) every documented type lies inside the library namespace.
+    while IFS= read -r surface_entry; do
+      [ -n "$surface_entry" ] || continue
+      case "$surface_entry" in
+        Trustsoft.NotifyIcon.*) ;;
+        *) surface_foreign+="$surface_folder: $surface_entry"$'\n' ;;
+      esac
+    done <<<"$surface_documented"
+
+    # (ii) the types outside Trustsoft.NotifyIcon.Interop. are exactly the documented set - a set
+    # comparison, so a count that happens to match does not satisfy it.
+    surface_observed="$(printf '%s\n' "$surface_documented" | grep -v '^Trustsoft\.NotifyIcon\.Interop\.' | grep . || true)"
+    surface_m="$(LC_ALL=C comm -23 <(surface_expected_names) <(printf '%s\n' "$surface_observed" | LC_ALL=C sort) || true)"
+    surface_u="$(LC_ALL=C comm -13 <(surface_expected_names) <(printf '%s\n' "$surface_observed" | LC_ALL=C sort) || true)"
+    while IFS= read -r surface_entry; do
+      [ -n "$surface_entry" ] || continue
+      surface_missing+="$surface_folder: missing $surface_entry"$'\n'
+    done <<<"$surface_m"
+    while IFS= read -r surface_entry; do
+      [ -n "$surface_entry" ] || continue
+      surface_unexpected+="$surface_folder: unexpected $surface_entry"$'\n'
+    done <<<"$surface_u"
+
+    # (iii) no documented type names a WinRT namespace.
+    surface_w="$(printf '%s\n' "$surface_documented" | grep -E 'Windows\.|WinRT|ABI\.' || true)"
+    while IFS= read -r surface_entry; do
+      [ -n "$surface_entry" ] || continue
+      surface_winrt+="$surface_folder: $surface_entry"$'\n'
+    done <<<"$surface_w"
+  done
+
+  if [ -z "$surface_foreign" ]; then
+    ok "every documented type (T: entry) lies inside the Trustsoft.NotifyIcon namespace, in all three lib folders"
+  else
+    bad "every documented type lies inside the Trustsoft.NotifyIcon namespace; offender(s) ('<folder>: <T: entry>'):"
+    printf '%s' "$surface_foreign" | sed 's/^/          /'
+  fi
+
+  if [ -z "$surface_missing" ] && [ -z "$surface_unexpected" ]; then
+    ok "the documented types outside Trustsoft.NotifyIcon.Interop. are exactly the twenty public types plus $SURFACE_INTERNAL_TYPE, in all three lib folders"
+  else
+    bad "the documented types outside Trustsoft.NotifyIcon.Interop. are exactly the twenty public types plus $SURFACE_INTERNAL_TYPE; offender(s) ('<folder>: missing|unexpected <T: entry>'):"
+    printf '%s' "$surface_missing$surface_unexpected" | sed 's/^/          /'
+  fi
+
+  if [ -z "$surface_winrt" ]; then
+    ok "no documented type names a WinRT namespace (Windows., WinRT, ABI.), in all three lib folders"
+  else
+    bad "no documented type names a WinRT namespace (Windows., WinRT, ABI.); offender(s) ('<folder>: <T: entry>'):"
+    printf '%s' "$surface_winrt" | sed 's/^/          /'
   fi
 
   echo

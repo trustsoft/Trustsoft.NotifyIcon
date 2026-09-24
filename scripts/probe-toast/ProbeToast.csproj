@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>probe-toast</AssemblyName>
+    <RootNamespace>Trustsoft.NotifyIcon.ProbeToast</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      Deliberately absent from Trustsoft.NotifyIcon.sln: this is a throwaway measurement instrument
+      for M002/S01 (the same posture as scripts/probe-live for M001), not a shipped artifact, and
+      keeping it out of the solution keeps it out of the packaging slice's proof. It also takes no
+      project reference to the library under test, so its interop declarations are independent of
+      the code the later tasks will write against the measured contract.
+
+      No package references and no Windows SDK projection reference either: the whole point of this
+      instrument is to hand-write the WinRT activation-factory path (RoGetActivationFactory /
+      RoActivateInstance over Windows.UI.Notifications) that the library will later reimplement, so
+      a friendly projection (Microsoft.Windows.SDK.NET / CsWinRT) would defeat the measurement.
+    -->
+  </PropertyGroup>
+
+</Project>

@@ -4,8 +4,9 @@ using System.Globalization;
 namespace Trustsoft.NotifyIcon;
 
 /// <summary>
-/// The library's trace channel: one named <see cref="TraceSource"/> plus the two writers that use
-/// it - the error writer of the runtime failure policy and the Verbose click-stream writer.
+/// The library's trace channel: one named <see cref="TraceSource"/> plus the writers that use
+/// it - the two failure writers of the runtime failure policy (the notification-area one and the
+/// toast one) and the Verbose click-stream writer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,12 +24,13 @@ namespace Trustsoft.NotifyIcon;
 /// to see more when diagnosing.
 /// </para>
 /// <para>
-/// The two writers sit at different levels on purpose and must never swap places (MEM026):
-/// <see cref="Error"/> is reserved for failures and is the only writer at
-/// <see cref="TraceEventType.Error"/>, while <see cref="Verbose"/> carries the click stream - the
-/// raw callback payloads this library understands and the ones it does not - and is filtered out by
-/// the default level entirely. A normal run therefore emits nothing on this channel, and an
-/// unmapped event code is never reported as a failure: it is normal traffic, not a defect.
+/// The failure writers and the traffic writer sit at different levels on purpose and must never
+/// swap places (MEM026): <see cref="Error"/> and <see cref="ToastError"/> are reserved for
+/// failures and are the only writers at <see cref="TraceEventType.Error"/>, while
+/// <see cref="Verbose"/> carries the click stream - the raw callback payloads this library
+/// understands and the ones it does not - and is filtered out by the default level entirely. A
+/// normal run therefore emits nothing on this channel, and an unmapped event code is never
+/// reported as a failure: it is normal traffic, not a defect.
 /// </para>
 /// <para>
 /// Nothing here is public: the library exposes no logging API of its own, so the shipped surface
@@ -54,6 +56,14 @@ internal static class NotifyIconTrace
     /// <see cref="ErrorEventId"/>, and distinct from it so a listener can tell traffic from failure.
     /// </summary>
     internal const int VerboseEventId = 2;
+
+    /// <summary>
+    /// The trace event id of the toast failure lines. Stable for the same reason as
+    /// <see cref="ErrorEventId"/>: a listener can filter on it rather than on the message text,
+    /// and it is distinct from <see cref="ErrorEventId"/> because the two lines describe two
+    /// different subsystems (a notification-area failure and a toast failure).
+    /// </summary>
+    internal const int ToastErrorEventId = 3;
 
     /// <summary>
     /// The single source behind <see cref="Source"/>. Created once so that every failure line of
@@ -113,6 +123,58 @@ internal static class NotifyIconTrace
     }
 
     /// <summary>
+    /// Writes one error line for a toast failure that has been surfaced to the caller (a raised
+    /// <see cref="ToastErrorEventArgs"/> on the <c>ToastError</c> event, or a consumer handler that
+    /// threw while an event was being raised).
+    /// </summary>
+    /// <param name="operation">The failing operation; one of the <c>Operation*</c> constants or a seam member name.</param>
+    /// <param name="errorCode">
+    /// The <c>HRESULT</c> or Win32 error code the failing call reported, or <c>0</c> when no code
+    /// describes the failure.
+    /// </param>
+    /// <param name="exception">The exception the failure produced, or <see langword="null"/> when there was none.</param>
+    /// <remarks>
+    /// <para>
+    /// The line has a stable, grep-able shape so that a support log can be searched for it:
+    /// <c>Toast {operation} failed (code {n}, 0x{n:X8}).</c> followed by the exception type and
+    /// message, or the placeholder when there is no exception. It is written at
+    /// <see cref="TraceEventType.Error"/> and is therefore visible at the source's default
+    /// <see cref="SourceLevels.Warning"/> level - unlike the Verbose step lines, which a consumer
+    /// sees only after deliberately raising the level. A toast failure would otherwise be invisible
+    /// to a consumer who subscribes the documented source.
+    /// </para>
+    /// <para>
+    /// The code is rendered in both decimal and hexadecimal form because a toast failure is almost
+    /// always an <c>HRESULT</c>, and an <c>HRESULT</c> is read in hexadecimal.
+    /// </para>
+    /// <para>
+    /// Like <see cref="Error"/> it never throws: it is the last step of a failure path, so a
+    /// listener that fails must not promote "the toast could not be delivered" into an unhandled
+    /// exception. The caller's own reporting - the raised event - is unaffected either way.
+    /// </para>
+    /// </remarks>
+    internal static void ToastError(string operation, int errorCode, Exception? exception)
+    {
+        string line = string.Format(
+            CultureInfo.InvariantCulture,
+            "Toast {0} failed (code {1}, 0x{1:X8}). {2}",
+            SingleLine(operation, fallback: "Unknown"),
+            errorCode,
+            DescribeException(exception));
+
+        try
+        {
+            TraceSourceInstance.TraceEvent(TraceEventType.Error, ToastErrorEventId, line);
+        }
+        catch (Exception)
+        {
+            // Deliberately swallowed, exactly as in Error: reporting a failure must not create a
+            // new one. See the remarks above - the failure itself still reaches the caller through
+            // the raised ToastError event.
+        }
+    }
+
+    /// <summary>
     /// Writes one Verbose line of diagnostic detail about the notification-area traffic the host
     /// window received.
     /// </summary>
@@ -148,9 +210,9 @@ internal static class NotifyIconTrace
     /// <summary>
     /// Renders an exception as a single line: the full type name and the message.
     /// </summary>
-    /// <param name="exception">The exception to describe, if any.</param>
+    /// <param name="exception">The exception to describe, or <see langword="null"/> when there is none.</param>
     /// <returns>A one-line description, or a placeholder when no exception was supplied.</returns>
-    private static string DescribeException(Exception exception)
+    private static string DescribeException(Exception? exception)
     {
         if (exception is null)
         {

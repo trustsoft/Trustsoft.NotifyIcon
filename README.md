@@ -76,11 +76,20 @@ icon.Visible = true;   // this is what registers the icon with the shell
 icon.ShowBalloonTip("Ready", "My application is running.", BalloonTipIcon.Info);
 ```
 
-The whole public surface is seven types: `TrayIcon`, `TrayIconClickEventArgs`, `TrayErrorEventArgs`,
-`TrayIconException`, `TrayMenuActivation` and the two balloon enums `BalloonTipIcon` and
-`BalloonTipOptions`. That list is asserted twice — from inside the library
-(`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`) and from a project that only ever
-installed the nupkg (`samples/consumer-proof/`), so a widened surface fails on both sides.
+The whole public surface is **twenty types**. Seven of them are the tray subsystem: `TrayIcon`,
+`TrayIconException`, `TrayErrorEventArgs`, `TrayIconClickEventArgs`, `TrayMenuActivation` and the two
+balloon enums `BalloonTipIcon` and `BalloonTipOptions`. The other thirteen are the toast subsystem
+documented under [Toast notifications](#toast-notifications): the entry point `ToastNotifier`, its
+failure type `ToastException`, the content model `ToastContent` with `ToastButton`, `ToastImage` and
+the three vocabularies `ToastSeverity`, `ToastSound` and `ToastImagePlacement`, the three
+event/argument types `ToastActivatedEventArgs`, `ToastDismissedEventArgs` and `ToastErrorEventArgs`
+together with the `ToastDismissalReason` vocabulary, and the outcome vocabulary
+`ToastNotificationSetting`. That list is asserted **four times over** — from inside the library
+(`tests/Trustsoft.NotifyIcon.Tests/PackagePurityTests.cs`), from a project that only ever installed
+the nupkg (`samples/consumer-proof/`), from the package inspector's artifact rule that reads the
+exported surface out of the packed XML documentation, and by the documentation guards that require
+every public member of all twenty types to be documented in the shipped XML file — so a widened,
+undocumented or renamed surface fails on all of them.
 
 ## Declarative usage
 
@@ -212,6 +221,71 @@ What the type name does not tell you, in one place:
   `MenuActivation` may be set from any thread; the shell work is moved to the dispatcher that owns
   the host window.
 
+## Toast notifications
+
+The package ships a real Windows toast subsystem beside the tray icon: the same assembly, the same
+zero-dependency posture, no WinRT contracts package and no separate registration tool. Install it as
+the [Install](#install) section shows — the toast subsystem needs nothing beyond the package itself —
+then show a toast, which is a `ToastContent` object shown through a `ToastNotifier`:
+
+```csharp
+using Trustsoft.NotifyIcon;
+
+// On the UI thread. The identity is registered on the first Show; the id may be overridden
+// until that first show, and a null id derives it from the entry assembly's simple name.
+using var toasts = new ToastNotifier { AppUserModelId = "MyVendor.MyApp" };
+
+toasts.Activated += (_, e) => Console.WriteLine($"activated: {e.Arguments}");
+toasts.Dismissed += (_, e) => Console.WriteLine($"dismissed: {e.Reason}");
+toasts.ToastError += (_, e) => Console.Error.WriteLine($"{e.Operation}: 0x{e.ErrorCode:X8}");
+
+var content = new ToastContent { Title = "Backup finished", Body = "12 files archived." };
+content.Buttons.Add(new ToastButton { Text = "Open folder", Arguments = "open" });
+content.Buttons.Add(new ToastButton { Text = "Dismiss", Arguments = "dismiss" });
+
+toasts.Show(content);
+```
+
+Three things the sample does not show, each of which a consumer has to know:
+
+- **The identity lifecycle.** The first `Show` registers the AppUserModelID by writing a Start-menu
+  shortcut that carries it — the shell delivers a toast only to a registered identity — reads the
+  value back through a fresh link, and only then shows. `AppUserModelId` is settable **until that
+  first show**, and a `null` id derives the default from the entry assembly's simple name; a later
+  set throws `InvalidOperationException` rather than silently misrouting. `Dispose` removes every
+  live show and then the shortcut it created, so the next launch starts from an unregistered
+  identity; a removal failure is traced and ignored rather than thrown from a process on its way out.
+- **What an activation means.** Toasts and balloons are independent: showing a toast never
+  suppresses, replaces or re-routes a balloon tip, and showing a balloon tip never replaces or
+  re-routes a toast. Activated reports that the toast's launch or button argument arrived; it is
+  not a report that the user clicked the body. The activation is delivered to the running
+  application only — a toast clicked after the application has exited is out of scope for v1 (D054)
+  — and its `Arguments` is the pressed button's `ToastButton.Arguments`, or the `ToastContent.Launch`
+  string for a body click.
+- **The image temp-file lifetime.** A `ToastImage.Source` is persisted per show as a PNG at
+  `Path.GetTempPath()/Trustsoft.NotifyIcon/toast-<guid:N>.png`, handed to the shell as an absolute
+  `file:///` reference, and deleted in the same show's unwind path. A process killed before teardown
+  can therefore leave one orphan file, and an Action Center entry whose file is already gone renders
+  without its image. A pre-formed `ToastImage.Reference` is never a library-owned file and is never
+  deleted.
+
+### The toast failure surface
+
+- **A registration failure throws `ToastException`.** If the identity cannot be established, the
+  first `Show` throws rather than dropping the toast silently, because an unpackaged process has no
+  other way to learn that nothing will be delivered. The exception carries `Operation` (a stable
+  string, or the name of the failing call) and `ErrorCode`; catch it at startup.
+- **A runtime delivery failure is not fatal.** Once the identity is registered, a show Windows could
+  not deliver is reported through `ToastError` plus exactly one Error-level line on the
+  `Trustsoft.NotifyIcon` `TraceSource` — visible at its default `Warning` level — and `Show` returns
+  normally. The `ErrorCode` is the raw `HRESULT` (for example `WPN_E_NOTIFICATION_DISABLED`).
+- **`ToastNotifier.NotificationSetting` is an outcome, not a failure.** It reports the platform's
+  notification setting read for the identity during the last show: `null` means "not read" (no show
+  has reached the setting step, or the show failed earlier) and never "Enabled"; a non-`Enabled`
+  value is a routine OS state that is never raised on `ToastError` and never turns a `Show` into a
+  failure. Report the setting to explain yourself, and let the shell's own `Failed` callback be the
+  failure.
+
 ## Declarative traps the slices measured
 
 Two traps that cost time when they are hit, both recorded with their measurements in
@@ -232,20 +306,25 @@ Two traps that cost time when they are hit, both recorded with their measurement
 
 - **No `System.Windows.Forms`, no `System.Drawing.Common`, no `H.NotifyIcon`, no WinRT contracts
   package** (R011). The shell conversation is the library's own P/Invoke.
-- **Legacy `Shell_NotifyIcon` balloons only in v1.** Real Windows toasts with buttons and actions
-  are M002, a separate notification subsystem with its own registration contract (D005); nothing in
-  this package promises them.
+- **Balloons and toasts are two separate subsystems, both shipped in v1.** The package carries the
+  toast subsystem (see [Toast notifications](#toast-notifications)) in the same assembly and the same
+  zero-dependency posture as the tray icon. Balloons use the legacy `Shell_NotifyIcon` mechanism and
+  toasts use the WinRT notification stack with its own registration contract (D005); neither switches
+  to the other, and showing one never suppresses, replaces or re-routes the other.
 - **No balloon dependency properties** (D031) and no `NotifyIcon`-style markup convenience layer.
 - **No DPI-driven icon resizing yet.** Menu placement reads the monitor's effective DPI, but the
   `HICON` is still rasterized at a fixed 16 px, so a display above 100 % scale gets a correctly
   placed menu with a scaled-up icon. This is a named follow-up in the milestone roadmap
   (`docs/UAT-S03.md`), not a silently dropped clause.
-- **No consumer-visible trace log in v1.** The library's diagnostics go through
-  `System.Diagnostics.TraceSource`, but a default-configured application that only references the
-  package receives no library trace lines on net8 (measured: zero lines received,
-  `docs/UAT-S02.md`); in-repo tests hear the trace because they attach listeners in-process. The
-  consumer-reachable failure signal is the `TrayError` routed event, which carries the operation
-  constant and the Win32 error code.
+- **No consumer-visible *verbose* trace log in v1.** The library's diagnostics go through
+  `System.Diagnostics.TraceSource` on the `Trustsoft.NotifyIcon` source, which defaults to
+  `Warning`; a default-configured application that only references the package receives no *step*
+  trace lines on net8 (measured: zero lines received, `docs/UAT-S02.md`), and in-repo tests hear them
+  only because they attach listeners in-process. Failures are visible at the default level: a toast
+  delivery failure writes exactly one Error-level line, and the consumer-reachable failure signals
+  are the `TrayError` routed event and the `ToastError` event, each carrying the operation constant
+  and the error code. Raise the source to `Verbose` to see the per-step traffic (the notification
+  setting, image precedence, dispose accounting).
 - **Display-scale and balloon-OS-behaviour evidence in v1 is fixture-first, by recorded decision.**
   Menu placement is proven by 82 headless fixtures (100/125/150/175/200 %, negative-origin and
   mixed-DPI monitor pairs) plus one live session at 150 % (`docs/UAT-S03.md`); live observation at

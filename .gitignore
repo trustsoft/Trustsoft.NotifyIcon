@@ -221,3 +221,11 @@ vendor/
 coverage/
 .cache/
 tmp/
+# S05-M002 raw run logs.
+# docs/uat-logs/S05-M002/*.txt are the captured run logs of the t01..t06 scripts in that directory.
+# Every one of those scripts rewrites its log on each run (timestamps, sizes and the packed
+# artifact sha256 differ per run), and the host verification gate re-runs the script as its check
+# while hashing every untracked-but-unignored file in the tree - a log left visible to git is
+# therefore recorded as "Verification target source changed while host checks were running". The
+# committed evidence is the .sh script; the .txt is a regenerable run output.
+docs/uat-logs/S05-M002/*.txt

@@ -144,11 +144,19 @@ public sealed class TrayIconExceptionTests
     /// </summary>
     /// <remarks>
     /// The later purity task tightens this to an exact set including <c>TrayIcon</c>; at this point
-    /// the lifecycle type does not exist yet, so the relationship asserted is "subset". S02/T02 adds
-    /// <c>TrayIconClickEventArgs</c> and <c>TrayMenuActivation</c> to the allow-list deliberately,
-    /// and S04/T02 adds <c>BalloonTipIcon</c> and <c>BalloonTipOptions</c> the same way (D031) -
+    /// the lifecycle type does not exist yet, so the relationship asserted is "subset". M001/S02/T02
+    /// adds <c>TrayIconClickEventArgs</c> and <c>TrayMenuActivation</c> to the allow-list
+    /// deliberately, M001/S04/T02 adds <c>BalloonTipIcon</c> and <c>BalloonTipOptions</c> the same
+    /// way (D031), M002/S02/T01 adds the six toast content-model types
+    /// (<c>ToastContent</c>, <c>ToastSeverity</c>, <c>ToastSound</c>, <c>ToastButton</c>,
+    /// <c>ToastImage</c>, <c>ToastImagePlacement</c>), M002/S02/T05 adds the toast entry point
+    /// and failure type (<c>ToastNotifier</c>, <c>ToastException</c>), and M002/S03/T01 adds the four
+    /// activation types (<c>ToastActivatedEventArgs</c>, <c>ToastDismissedEventArgs</c>,
+    /// <c>ToastDismissalReason</c>, <c>ToastErrorEventArgs</c>) the notifier's three events carry,
+    /// and M002/S04/T04 adds <c>ToastNotificationSetting</c> -
     /// this list is an enumeration, not a pattern, so a new public type has to be named here before
-    /// it can ship.
+    /// it can ship. It is the third of the three allow-lists the S03 widening touches and the easiest
+    /// one to miss, which is why the comment names the slice that grew it.
     /// </remarks>
     [Fact]
     public void Exported_types_are_in_the_library_namespace_and_within_the_documented_surface()
@@ -168,6 +176,19 @@ public sealed class TrayIconExceptionTests
             "TrayMenuActivation",
             "BalloonTipIcon",
             "BalloonTipOptions",
+            "ToastContent",
+            "ToastSeverity",
+            "ToastSound",
+            "ToastButton",
+            "ToastImage",
+            "ToastImagePlacement",
+            "ToastNotifier",
+            "ToastException",
+            "ToastActivatedEventArgs",
+            "ToastDismissedEventArgs",
+            "ToastDismissalReason",
+            "ToastErrorEventArgs",
+            "ToastNotificationSetting",
         };
 
         string[] unexpected = exported

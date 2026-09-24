@@ -198,20 +198,37 @@ public class PackagePurityTests
 
     /// <summary>
     /// The exported type set is exactly the documented public types: the element, its two error
-    /// types, the two click types the event surface needs and the two balloon types the balloon
-    /// surface needs.
+    /// types, the two click types the event surface needs, the two balloon types the balloon
+    /// surface needs, the six toast content-model types M002/S02/T01 added, the two toast
+    /// show/failure types M002/S02/T05 added to complete the toast surface, and the four toast
+    /// activation types M002/S03/T01 adds to carry the notifier's events.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The interop types (<c>IShellApi</c>, <c>NOTIFYICONDATAW</c>, the Win32 helpers) are internal
     /// by design (D002/D010) and this is the assertion that keeps them that way: widening one of
     /// them to <c>public</c> compiles, passes every behavioural test and silently enlarges the API
     /// this project will have to support for the rest of its life. The observed list is part of the
     /// message, so a future addition forces a deliberate edit here rather than an accidental pass.
-    /// S02 added <see cref="TrayIconClickEventArgs"/> and <see cref="TrayMenuActivation"/> - the
+    /// </para>
+    /// <para>
+    /// M001/S02 added <see cref="TrayIconClickEventArgs"/> and <see cref="TrayMenuActivation"/> - the
     /// args a click handler receives and the value that says whether a right click opens the menu -
-    /// and S04 added <see cref="BalloonTipIcon"/> and <see cref="BalloonTipOptions"/> (D031) - the
-    /// severity and option vocabulary of <c>ShowBalloonTip</c> - which is exactly the kind of
-    /// widening this test exists to make deliberate.
+    /// and M001/S04 added <see cref="BalloonTipIcon"/> and <see cref="BalloonTipOptions"/> (D031) -
+    /// the severity and option vocabulary of <c>ShowBalloonTip</c>. M002/S02/T01 adds the six toast
+    /// content-model types - <see cref="ToastContent"/> (D056's field list), the three vocabularies
+    /// (<see cref="ToastSeverity"/> for D053's scenario mapping, <see cref="ToastSound"/>,
+    /// <see cref="ToastImagePlacement"/>) and the two nested content shapes
+    /// (<see cref="ToastButton"/>, <see cref="ToastImage"/>) - which is exactly the kind of widening
+    /// this test exists to make deliberate. M002/S02/T05 completes the toast surface with the
+    /// public entry point <see cref="ToastNotifier"/> and its failure type
+    /// <see cref="ToastException"/> (D052/D055/D057). M002/S03/T01 adds the four types the notifier's
+    /// events need - <see cref="ToastActivatedEventArgs"/>, <see cref="ToastDismissedEventArgs"/>,
+    /// the <see cref="ToastDismissalReason"/> vocabulary and <see cref="ToastErrorEventArgs"/> - so
+    /// the activation surface is typed rather than stringly, and M002/S04/T04 adds
+    /// <see cref="ToastNotificationSetting"/>, the notification-setting outcome
+    /// <see cref="ToastNotifier.NotificationSetting"/> reports - so the surface is twenty types.
+    /// </para>
     /// </remarks>
     [Fact]
     public void Public_surface_is_only_the_documented_types()
@@ -227,6 +244,19 @@ public class PackagePurityTests
             typeof(TrayMenuActivation),
             typeof(BalloonTipIcon),
             typeof(BalloonTipOptions),
+            typeof(ToastContent),
+            typeof(ToastSeverity),
+            typeof(ToastSound),
+            typeof(ToastButton),
+            typeof(ToastImage),
+            typeof(ToastImagePlacement),
+            typeof(ToastNotifier),
+            typeof(ToastException),
+            typeof(ToastActivatedEventArgs),
+            typeof(ToastDismissedEventArgs),
+            typeof(ToastDismissalReason),
+            typeof(ToastErrorEventArgs),
+            typeof(ToastNotificationSetting),
         ];
 
         // Compiler-generated types are filtered explicitly rather than tolerated wholesale: a
@@ -256,8 +286,12 @@ public class PackagePurityTests
     /// element a menu is to introduce a menu type of one's own, and that type would become public API
     /// this project has to support for the rest of its life (D002/D010/D015). WPF's own
     /// <see cref="System.Windows.Controls.ContextMenu"/> is used directly instead, so the context
-    /// menu contributes no type of its own - the exported set has since grown to the seven
-    /// documented types with S04's balloon enums (D031), and none of them is for the menu.
+    /// menu contributes no type of its own - the exported set has since grown to the seven M001
+    /// documented types with S04's balloon enums (D031), and then to thirteen with M002/S02/T01's
+    /// nine-type-less toast content model, and to fifteen with M002/S02/T05's notifier and
+    /// exception, and to nineteen with M002/S03/T01's four activation types, and to twenty with
+    /// M002/S04/T04's setting outcome, and none of them is for
+    /// the menu.
     /// </para>
     /// <para>
     /// The property is asserted to be owned by <see cref="TrayIcon"/> with a <see langword="null"/>
@@ -286,8 +320,11 @@ public class PackagePurityTests
         Assert.Equal(property, descriptor.DependencyProperty);
 
         // The property is a member of TrayIcon, and no type was added to carry it: the observed set
-        // still has to be exactly the documented types - seven since S04 (D031) added the two
-        // balloon enums, none of them for the menu.
+        // still has to be exactly the documented types - seven after S04 (D031) added the two
+        // balloon enums, thirteen after M002/S02/T01 added the six toast content-model types,
+        // fifteen after M002/S02/T05 added ToastNotifier and ToastException, nineteen after
+        // M002/S03/T01 added the four activation types, twenty after M002/S04/T04 added the
+        // notification-setting outcome, and none of them for the menu.
         Type[] exported = [.. typeof(TrayIcon).Assembly.GetExportedTypes().Where(type => !IsCompilerGenerated(type))];
 
         Assert.Equal(
@@ -300,6 +337,19 @@ public class PackagePurityTests
                 typeof(TrayMenuActivation),
                 typeof(BalloonTipIcon),
                 typeof(BalloonTipOptions),
+                typeof(ToastContent),
+                typeof(ToastSeverity),
+                typeof(ToastSound),
+                typeof(ToastButton),
+                typeof(ToastImage),
+                typeof(ToastImagePlacement),
+                typeof(ToastNotifier),
+                typeof(ToastException),
+                typeof(ToastActivatedEventArgs),
+                typeof(ToastDismissedEventArgs),
+                typeof(ToastDismissalReason),
+                typeof(ToastErrorEventArgs),
+                typeof(ToastNotificationSetting),
             }.OrderBy(type => type.FullName, StringComparer.Ordinal),
             exported.OrderBy(type => type.FullName, StringComparer.Ordinal));
     }
@@ -512,8 +562,14 @@ public class PackagePurityTests
     /// consumer would have read as "the package you just installed does not exist". A language
     /// check is neither possible nor wanted here; what is asserted is the small set of strings a
     /// reader copies verbatim and which rot silently: the <c>PackageReference</c> id and version,
-    /// the consumer namespace URI and prefix, the consumer sections in order, and the seven public
+    /// the consumer namespace URI and prefix, the consumer sections in order, and all twenty public
     /// type names.
+    /// </para>
+    /// <para>
+    /// The type list is widened from the seven tray types to the twenty M002 ships here, because the
+    /// README travels inside the package as its <c>PackageReadmeFile</c>: a toast type the readme
+    /// never names is a package fact a consumer cannot learn from the document they opened first,
+    /// and the T04 inspector rule reads the exported surface out of this same artifact.
     /// </para>
     /// <para>
     /// The version is read from the library project rather than repeated, so a version bump that
@@ -569,6 +625,11 @@ public class PackagePurityTests
             "## Declarative usage",
             "## Windowless shutdown",
             "## Interaction model",
+            // Added by M002/S05/T05. The section must carry the toast surface a consumer acts on:
+            // the code-first install/identity/event/button sample, the identity lifecycle with its
+            // override and removal, the coexistence sentence, the activation wording rule, the
+            // image temp-file lifetime and the failure taxonomy.
+            "## Toast notifications",
         ];
 
         foreach (string section in consumerSections)
@@ -577,7 +638,7 @@ public class PackagePurityTests
                 readme.Contains(section, StringComparison.Ordinal),
                 $"R010: the README must carry a '{section}' section. A consumer who installs the package reads this file first, "
                 + "and these are the questions they arrive with: how to install it, how to use it from code, how to declare it in markup, "
-                + "what a windowless application must do about shutdown, and how the interaction model behaves.");
+                + "what a windowless application must do about shutdown, how the interaction model behaves, and how to show a toast.");
         }
 
         // Repository-facing material belongs below the consumer material (T04), which is what keeps a
@@ -589,6 +650,32 @@ public class PackagePurityTests
             "R010: the README's repository-facing content must sit below the consumer content. "
             + "A '## Repository notes' heading that precedes the install line puts the repository's build instructions in front of a package user.");
 
+        // The two boundary sentences M002/S03 and S05 share, asserted verbatim in the README as well
+        // as in the generated documentation (ToastEventTests pins them there). The README ships
+        // inside the package, so the sentence a consumer reads must be the same sentence the XML
+        // documentation carries: pinning the same literal in both places is what keeps the two
+        // documents from drifting into two different promises.
+        string[] boundarySentences =
+        [
+            "Toasts and balloons are independent: showing a toast never suppresses, replaces or re-routes a balloon tip, "
+            + "and showing a balloon tip never replaces or re-routes a toast.",
+            "Activated reports that the toast's launch or button argument arrived; it is not a report that the user clicked the body.",
+        ];
+
+        // Whitespace is collapsed before the comparison because the README hard-wraps its prose: the
+        // sentence is the same words in the same order, but a line break sits where markdown renders
+        // a space. Only wrapping is tolerated - a reworded or reordered sentence still fails.
+        string unwrapped = string.Join(' ', readme.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        foreach (string sentence in boundarySentences)
+        {
+            Assert.True(
+                unwrapped.Contains(sentence, StringComparison.Ordinal),
+                $"R010: the README must carry this boundary sentence verbatim: '{sentence}'. "
+                + "It is the same promise the generated XML documentation makes (ToastEventTests.The_two_boundary_sentences_appear_verbatim_in_the_generated_documentation), "
+                + "and the README travels inside the package, so the two documents must not drift apart.");
+        }
+
         Type[] documentedTypes =
         [
             typeof(TrayIcon),
@@ -598,6 +685,19 @@ public class PackagePurityTests
             typeof(TrayMenuActivation),
             typeof(BalloonTipIcon),
             typeof(BalloonTipOptions),
+            typeof(ToastContent),
+            typeof(ToastSeverity),
+            typeof(ToastSound),
+            typeof(ToastButton),
+            typeof(ToastImage),
+            typeof(ToastImagePlacement),
+            typeof(ToastNotifier),
+            typeof(ToastException),
+            typeof(ToastActivatedEventArgs),
+            typeof(ToastDismissedEventArgs),
+            typeof(ToastDismissalReason),
+            typeof(ToastErrorEventArgs),
+            typeof(ToastNotificationSetting),
         ];
 
         string[] unnamed = [.. documentedTypes.Select(type => type.Name).Where(name => !readme.Contains(name, StringComparison.Ordinal))];
